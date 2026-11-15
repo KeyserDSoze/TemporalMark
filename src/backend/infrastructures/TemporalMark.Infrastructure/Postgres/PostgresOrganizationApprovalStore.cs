@@ -9,6 +9,28 @@ public sealed class PostgresOrganizationApprovalStore(NpgsqlDataSource database)
     public Task<Guid> RequestAsync(VerifiedOrganizationEnrollment request, CancellationToken ct) =>
         ExecuteEnrollmentAsync("request_enrollment", request, ct);
 
+    public async Task<PendingOrganizationReview?> ReadPendingReviewAsync(
+        Guid requestId, string issuer, string reviewerSubject, CancellationToken ct)
+    {
+        await using var conn = await database.OpenConnectionAsync(ct);
+        await using var cmd = new NpgsqlCommand("""
+            SELECT request_id, organization_name, identity_issuer,
+                   operator_subject, first_admin_subject, expires_utc
+            FROM public.read_pending_enrollment(@id,@issuer,@reviewer)
+            """, conn);
+        cmd.Parameters.AddWithValue("id", requestId);
+        cmd.Parameters.AddWithValue("issuer", issuer);
+        cmd.Parameters.AddWithValue("reviewer", reviewerSubject);
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        if (!await reader.ReadAsync(ct)) return null;
+        var result = new PendingOrganizationReview(reader.GetGuid(0),
+            reader.GetString(1), reader.GetString(2), reader.GetString(3),
+            reader.GetString(4), reader.GetFieldValue<DateTimeOffset>(5));
+        if (await reader.ReadAsync(ct))
+            throw new InvalidOperationException("Review returned ambiguous pending requests.");
+        return result;
+    }
+
     public Task<Guid> CompleteAsync(VerifiedOrganizationEnrollment completion, CancellationToken ct) =>
         ExecuteEnrollmentAsync("complete_enrollment", completion, ct);
 

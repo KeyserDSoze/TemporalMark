@@ -22,9 +22,43 @@ public interface ICurrentOidcAccountDirectory
     Task<CurrentOidcAccount> GetAccountAsync(string issuer, string subject, CancellationToken ct);
 }
 
+/// <summary>
+/// Exact pending record returned by the APPROVER-ONLY database routine.
+/// The hash binds fields unambiguously; it does NOT sign a human decision.
+/// </summary>
+public sealed record PendingOrganizationReview(
+    Guid RequestId, string OrganizationName, string IdentityIssuer,
+    string OperatorSubject, string FirstAdminSubject, DateTimeOffset ExpiresUtc)
+{
+    public string ReviewSha256
+    {
+        get
+        {
+            using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+            hash.AppendData(Encoding.ASCII.GetBytes("TemporalMark.PendingReview.v1\\0".Replace("\\0", "\0")));
+            foreach (var field in new[]
+            {
+                RequestId.ToString("D"), OrganizationName, IdentityIssuer,
+                OperatorSubject, FirstAdminSubject,
+                ExpiresUtc.UtcDateTime.Ticks.ToString(System.Globalization.CultureInfo.InvariantCulture)
+            })
+            {
+                var bytes = Encoding.UTF8.GetBytes(field);
+                Span<byte> length = stackalloc byte[4];
+                System.Buffers.Binary.BinaryPrimitives.WriteInt32BigEndian(length, bytes.Length);
+                hash.AppendData(length);
+                hash.AppendData(bytes);
+            }
+            return Convert.ToHexString(hash.GetHashAndReset());
+        }
+    }
+}
+
 public interface IOrganizationApprovalStore
 {
     Task<Guid> RequestAsync(VerifiedOrganizationEnrollment request, CancellationToken ct);
+    Task<PendingOrganizationReview?> ReadPendingReviewAsync(Guid requestId,
+        string issuer, string reviewerSubject, CancellationToken ct);
     Task<Guid> ApproveAsync(VerifiedOrganizationApproval approval, CancellationToken ct);
     Task<Guid> CompleteAsync(VerifiedOrganizationEnrollment completion, CancellationToken ct);
 }
@@ -51,6 +85,58 @@ public sealed class OrganizationApprovalWorkflow(
         var result = await store.RequestAsync(entry, ct);
         if (result != entry.OrganizationId) throw new InvalidOperationException("Approval request ID mismatch.");
         return result;
+    }
+
+    /// <summary>
+    /// Authenticate the distinct reviewer before reading the ORIGINAL SQL request.
+    /// No table-wide permission, caller-supplied name or operator-provided text.
+    /// </summary>
+    public async Task<PendingOrganizationReview> ReviewAsync(
+        Guid requestId, string approverToken, CancellationToken ct)
+    {
+        ValidateRequestId(requestId);
+        ValidateToken(approverToken);
+        if (string.IsNullOrWhiteSpace(approverAudience) || approverAudience.Length > 255)
+            throw new InvalidOperationException("Pinned approver audience required.");
+
+        var identity = await verifier.VerifyAsync(approverToken, approverAudience, ct);
+        RequireIdentity(identity, "platform_approver");
+        approverAuthentication.Require(identity);
+        await CheckLiveAsync(approverToken, approverAudience, identity, "platform_approver", ct);
+        await RequireDirectoryRoleAsync(identity, "platform_approver", ct);
+        var review = await store.ReadPendingReviewAsync(requestId, identity.Issuer, identity.Subject, ct);
+        if (review is null || review.RequestId != requestId ||
+            review.IdentityIssuer != policy.Issuer ||
+            review.OperatorSubject == identity.Subject ||
+            review.FirstAdminSubject == identity.Subject ||
+            review.OperatorSubject == review.FirstAdminSubject ||
+            review.ExpiresUtc <= DateTimeOffset.UtcNow)
+            throw new UnauthorizedAccessException("No active independently reviewable request.");
+        ValidateName(review.OrganizationName);
+        ValidateSubject(review.OperatorSubject);
+        ValidateSubject(review.FirstAdminSubject);
+        return review;
+    }
+
+    /// <summary>
+    /// Requires the reviewer to explicitly confirm the digest obtained from a
+    /// fresh DB-backed read; this is not a reviewer-held cryptographic signature.
+    /// </summary>
+    public async Task<Guid> ApproveReviewedAsync(Guid requestId,
+        string reviewSha256, string approverToken, CancellationToken ct)
+    {
+        if (reviewSha256 is null || reviewSha256.Length != 64 ||
+            reviewSha256.Any(ch => !(ch is >= '0' and <= '9' or >= 'A' and <= 'F')))
+            throw new UnauthorizedAccessException("A canonical uppercase review SHA-256 is required.");
+        var review = await ReviewAsync(requestId, approverToken, ct);
+        if (!CryptographicOperations.FixedTimeEquals(
+            Convert.FromHexString(reviewSha256), Convert.FromHexString(review.ReviewSha256)))
+            throw new UnauthorizedAccessException("Reviewed scope differs from current pending request.");
+
+        // Existing DB approval routine cross-checks issuer/name/all subjects
+        // again and consumes only the original unexpired request.
+        return await ApproveAsync(requestId, review.OrganizationName,
+            review.FirstAdminSubject, review.OperatorSubject, approverToken, ct);
     }
 
     public async Task<Guid> ApproveAsync(Guid requestId, string organizationName,

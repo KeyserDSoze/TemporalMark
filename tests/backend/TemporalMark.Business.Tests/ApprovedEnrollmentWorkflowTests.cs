@@ -70,7 +70,7 @@ public sealed class ApprovedEnrollmentWorkflowTests
     }
 
     [Fact]
-    public async Task CanonicalDigestIsBoundToEveryOriginalFieldAndExpiry()
+    public void CanonicalDigestIsBoundToEveryOriginalFieldAndExpiry()
     {
         var id = Guid.NewGuid();
         var expiry = DateTimeOffset.UtcNow.AddMinutes(3);
@@ -203,6 +203,23 @@ public sealed class ApprovedEnrollmentWorkflowTests
     private sealed class PendingStore : IOrganizationApprovalStore
     {
         public List<VerifiedOrganizationEnrollment> Requests { get; } = [];
+        public bool Expired { get; set; }
+        private readonly DateTimeOffset expiry = DateTimeOffset.UtcNow.AddMinutes(4);
+        public Task<PendingOrganizationReview?> ReadPendingReviewAsync(
+            Guid requestId, string issuer, string reviewerSubject, CancellationToken ct)
+        {
+            var input = Requests.SingleOrDefault(x => x.OrganizationId == requestId);
+            if (input is null || input.IdentityIssuer != issuer || Expired ||
+                input.ProvisionerSubject == reviewerSubject ||
+                input.FirstAdminSubject == reviewerSubject ||
+                Approvals.Any(x => x.OrganizationId == requestId) ||
+                Completions.Any(x => x.OrganizationId == requestId))
+                return Task.FromResult<PendingOrganizationReview?>(null);
+            return Task.FromResult<PendingOrganizationReview?>(
+                new PendingOrganizationReview(input.OrganizationId, input.OrganizationName,
+                    input.IdentityIssuer, input.ProvisionerSubject,
+                    input.FirstAdminSubject, expiry));
+        }
         public List<VerifiedOrganizationApproval> Approvals { get; } = [];
         public List<VerifiedOrganizationEnrollment> Completions { get; } = [];
 

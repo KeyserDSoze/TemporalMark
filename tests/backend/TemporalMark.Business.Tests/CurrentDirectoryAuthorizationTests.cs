@@ -123,6 +123,9 @@ public sealed class CurrentDirectoryAuthorizationTests
     private sealed class Storage : IOrganizationApprovalStore
     {
         public List<VerifiedOrganizationEnrollment> Requests { get; } = [];
+        public Task<PendingOrganizationReview?> ReadPendingReviewAsync(
+            Guid requestId, string issuer, string reviewerSubject, CancellationToken ct) =>
+            Task.FromResult<PendingOrganizationReview?>(null);
         public List<VerifiedOrganizationApproval> Approvals { get; } = [];
         public List<VerifiedOrganizationEnrollment> Completions { get; } = [];
         public Task<Guid> RequestAsync(VerifiedOrganizationEnrollment e, CancellationToken ct)
