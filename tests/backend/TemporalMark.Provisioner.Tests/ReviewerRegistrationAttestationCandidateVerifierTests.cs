@@ -174,9 +174,9 @@ public sealed class ReviewerRegistrationAttestationCandidateVerifierTests
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
             Make(fido).VerifyCandidateAsync(scope, options, null, Unique));
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
-            Make(fido).VerifyCandidateAsync(scope, options, Raw() withMalformedId(), Unique));
+            Make(fido).VerifyCandidateAsync(scope, options, withMalformedId(), Unique));
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
-            Make(fido).VerifyCandidateAsync(scope, options, Raw() withHugeAttestation(), Unique));
+            Make(fido).VerifyCandidateAsync(scope, options, withHugeAttestation(), Unique));
         Assert.Equal(0, fido.Calls);
     }
 
