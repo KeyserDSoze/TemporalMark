@@ -62,7 +62,6 @@ public sealed class ReviewerRegistrationAttestationCandidateVerifierTests
         string attestationType = "basic") => new()
     {
         Id = CredentialId.ToArray(),
-        RpId = Rp,
         User = options.User,
         PublicKey = Enumerable.Repeat((byte)0x38, 77).ToArray(),
         AttestationType = attestationType,
@@ -228,17 +227,12 @@ public sealed class ReviewerRegistrationAttestationCandidateVerifierTests
         {
             new RegisteredPublicKeyCredential
             {
-                Id = new byte[32], RpId = Rp, User = options.User,
+                Id = new byte[32], User = options.User,
                 PublicKey = original.PublicKey, AttestationType = "basic", AttestationFormat = "packed"
             },
             new RegisteredPublicKeyCredential
             {
-                Id = CredentialId, RpId = "wrong.example.org", User = options.User,
-                PublicKey = original.PublicKey, AttestationType = "basic", AttestationFormat = "packed"
-            },
-            new RegisteredPublicKeyCredential
-            {
-                Id = CredentialId, RpId = Rp,
+                Id = CredentialId,
                 User = new Fido2User { Id = new byte[32], Name = "wrong", DisplayName = "wrong" },
                 PublicKey = original.PublicKey, AttestationType = "basic", AttestationFormat = "packed"
             }
@@ -250,7 +244,7 @@ public sealed class ReviewerRegistrationAttestationCandidateVerifierTests
             await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
                 Make(fido).VerifyCandidateAsync(Ceremony(options), options, Raw(), Unique));
         }
-        Assert.Equal(3, fido.Calls);
+        Assert.Equal(2, fido.Calls);
     }
 
     [Fact]
@@ -287,11 +281,6 @@ public sealed class ReviewerRegistrationAttestationCandidateVerifierTests
             throw new NotSupportedException();
         public Task<VerifyAssertionResult> MakeAssertionAsync(MakeAssertionParams args,
             CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public UnknownCredentialOptions GetUnknownCredentialOptions(byte[] credentialId) =>
-            throw new NotSupportedException();
-        public AllAcceptedCredentialsOptions GetAllAcceptedCredentialsOptions(
-            byte[] userId, IReadOnlyList<byte[]> ids) => throw new NotSupportedException();
-        public CurrentUserDetailsOptions GetCurrentUserDetailsOptions(Fido2User user) =>
-            throw new NotSupportedException();
+
     }
 }
