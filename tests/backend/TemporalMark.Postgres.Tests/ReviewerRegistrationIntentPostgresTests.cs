@@ -67,6 +67,39 @@ public sealed class ReviewerRegistrationIntentPostgresTests
     }
 
     [Fact]
+    public async Task V015FreezesRegistrarNoLoginGroupFunctionExecuteUntilSignedCeremonyExists()
+    {
+        // RED on V014: this group STILL has EXECUTE. No owner-only legacy
+        // unconsumable intent may be handed to a stolen registrar SQL login
+        // while approved FIDO2 signer + signed one-time SQL consume is absent.
+        await using var owner = Owner();
+        await owner.OpenAsync();
+        await using var query = new NpgsqlCommand("""
+            SELECT
+              has_function_privilege(
+                'temporalmark_credential_registrar_group',
+                'public.issue_reviewer_registration_intent(text,text,text,text,text)',
+                'EXECUTE'),
+              has_function_privilege(
+                'temporalmark_approver_group',
+                'public.issue_reviewer_registration_intent(text,text,text,text,text)',
+                'EXECUTE'),
+              has_function_privilege(
+                'temporalmark_provisioner_group',
+                'public.issue_reviewer_registration_intent(text,text,text,text,text)',
+                'EXECUTE'),
+              has_function_privilege(
+                'temporalmark_runtime_group',
+                'public.issue_reviewer_registration_intent(text,text,text,text,text)',
+                'EXECUTE')
+            """, owner);
+        await using var rows = await query.ExecuteReaderAsync();
+        Assert.True(await rows.ReadAsync());
+        for (var i = 0; i < 4; i++) Assert.False(rows.GetBoolean(i));
+        Assert.False(await rows.ReadAsync());
+    }
+
+    [Fact]
     public async Task NarrowDisposableRegistrarSqlLoginCanOnlyIssueNonceAndCannotReadTablesOrApproveTenant()
     {
         var rp = Policy();
