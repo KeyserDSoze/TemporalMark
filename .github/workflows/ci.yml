@@ -87,6 +87,9 @@ jobs:
         run: dotnet test tests/backend/TemporalMark.Postgres.Tests/TemporalMark.Postgres.Tests.csproj --configuration Release
       - name: OIDC-signed operator enrollment and database replay smoke
         run: bash tests/integration/provisioning-smoke.sh
+      - name: Real browser Keycloak TOTP and PKCE MFA smoke (separate disposable realm)
+        working-directory: tests/frontend
+        run: npx playwright test --config mfa.config.ts
       - name: OIDC admin login and disabled external TSA smoke
         working-directory: tests/frontend
         run: npx playwright test --config authenticated.config.ts
