@@ -1,0 +1,52 @@
+# Registrar-only SQL registration-intent CLI — operator runbook (#49)
+
+**Status: scoped standalone, non-authorizing V013/V014 intent issuer. It does NOT register a WebAuthn credential, verify FIDO2 attestation, enroll keys, consume a challenge, approve/reject an organization, or prove independently witnessed human consent.** See [ADR 0024](../adr/0024-isolated-registrar-sql-intent-workflow.md), [ADR 0021](../adr/0021-registrar-only-unconsumable-credential-intent.md) and parent [#46](https://github.com/KeyserDSoze/TemporalMark/issues/46).
+
+## Strict operator prerequisites (on-prem and Azure)
+
+Before use, an independent change approval/security review must record the **real HTTPS** Keycloak issuer, RP ID and exact origin `https://<rp-id>`, the selected reviewer stable subject, the independent registrar and reviewer roles, physical-factor MFA/ACR proof (step-up, recovery, disabled-user handling), and the V013 owner-pinned RP policy row + ticket. An HTTPS realm/TLS host and the database's migration owner are needed separately. **There is no automatic policy, trust anchor, LDAP/Entra service account, approver, registrar login, password or group membership** installed by these changes.
+
+The separate `temporalmark_credential_registrar_group` is **NOLOGIN** with only function EXECUTE and no default members. A production database administrator, after CAB review and segregated operator approval, must independently create an application-executor LOGIN, with no superuser, CREATEDB, CREATEROLE, table DML/SELECT, or membership in the API/provisioner/approver roles, and grant it **only** the NOLOGIN registrar group. No SQL grant script is supplied for automatic deployment. A production dedicated LOGIN should be named `temporalmark_registrar_executor` and be restricted by PostgreSQL TLS, narrow network/host ACL and a vault-managed, short-lived rotated secret. The CLI requires that `session_user=current_user` exactly match its expected role, that the login has registrar-group membership, is nonprivileged, and has no direct rights on the RP policy or nonce tables.
+
+**Threat and trust limitation:** A stolen dedicated registrar SQL LOGIN can call `public.issue_reviewer_registration_intent` directly, bypassing the dual OIDC CLI check. The function merely creates a short-lived, one-ever **unconsumable** intent. It cannot install a key or approve an organization. Release of a real credential-verifying service requires a stronger transaction-bound, independently witnessed registrar authorization and audit, separately tracked under #46/#44. Restrict database credentials to the operator host, vault and monitored change-control workflow; do not expose them in the API/PWA, general provisioning or Keycloak realms. PostgreSQL owner/superuser can bypass append-only triggers; they are not legal WORM.
+
+## Environment configuration
+
+All required variables come from **privileged deployment/operator configuration**, not CLI command arguments or browser data:
+
+| Variable | Required intent |
+|---|---|
+| `REGISTRAR_LIVE_PROVIDER` | exactly `keycloak` |
+| `REGISTRAR_OIDC_ISSUER` | explicit non-loopback **HTTPS** issuer |
+| `REGISTRAR_AUDIENCE` | registrar token audience, e.g. `temporalmark-credential-registrar` |
+| `REGISTRAR_REVIEWER_AUDIENCE` | distinct reviewer audience, e.g. `temporalmark-approval` |
+| `REGISTRAR_REQUIRED_ACR` | reviewed actual password+MFA/step-up ACR, no disposable bypass |
+| `REGISTRAR_APPROVED_REVIEWER_SUBJECT` | CAB-approved exact current reviewer subject |
+| `REGISTRAR_RP_ID` | owner-pinned exact lowercase DNS WebAuthn RP ID |
+| `REGISTRAR_ORIGIN` | exact `https://<rp-id>` (default 443, no suffix) |
+| `REGISTRAR_INTROSPECTION_CLIENT_ID`, `REGISTRAR_INTROSPECTION_CLIENT_SECRET` | separate confidential Keycloak RFC7662 client |
+| `REGISTRAR_DIRECTORY_CLIENT_ID`, `REGISTRAR_DIRECTORY_CLIENT_SECRET` | separate read-only current-user/effective-realm-role client |
+| `TEMPORALMARK_REGISTRAR_DB` | **dedicated** vault-backed PostgreSQL connection (not owner, app, approver or provisioner) |
+| `REGISTRAR_EXPECTED_SQL_LOGIN` | exact dedicated restricted SQL role, e.g. `temporalmark_registrar_executor` |
+
+The exact reviewer subject is change-controlled deployment configuration. It is not automatically tied to an organization request; there is **no** signed transaction scope or verified FIDO2 key registration. Do not use arbitrary JWT claims or user-selected values as policy configuration. Failing role, issuer, RP, SQL login, MFA freshness, live RFC7662 or effective role checks denies the entire issuance. The CLI **never allows HTTP**, including the disposable Keycloak CI MFA issuer from ADR 0023.
+
+## Standalone invocation (conceptual; no production deployment automatically enabled)
+
+Run with the dedicated operator executable and two separately protected **owner-readable, mode 0600** token files, obtained after fresh independent Keycloak MFA login:
+
+```text
+TemporalMark.Provisioner registrar-intent --registrar-token-file /protected/registrar.jwt --reviewer-token-file /protected/reviewer.jwt
+```
+
+The command checks both real JWTs, distinct audiences/roles, exact ACR/auth_time, live RFC7662 and current enabled/effective directory roles before any SQL write. Then the independent, dedicated SQL connection calls the V013 function using *only* the verified issuer/subjects and pinned RP/origin. Output includes only the public-looking issuer, RP, subjects, UUID, expiry and a 96-hex challenge. Treat printed metadata as operationally sensitive; never upload tokens or SSH logs. It is a **nonce, not a key or legal evidence**.
+
+The V013 database contract intentionally permits **one intent ever** for each issuer/reviewer/RP. If it expires or is lost, there is NO automatic second attempt or safe manual reissue. A future audited rotation/recovery ADR and versioned migration is required. Do not UPDATE/DELETE a prior intent or bypass uniqueness.
+
+## Test and deployment scope
+
+Business xUnit tests use controlled signed-claim/live/directory fakes to prove all gates precede DB writes. The PostgreSQL test temporarily creates a random restricted CI LOGIN, gives it just membership in the NOLOGIN group, checks actual Npgsql role/privilege restrictions, issues one nonce, denies duplicate replay and direct reads, then drops the login in `finally`. **No membership is committed by application migrations.** CI compiles the standalone CLI but does not execute real production HTTPS registrar or actual attestation; the disposable Keycloak browser MFA tests remain separate #48 tests.
+
+On-prem must use independently managed TLS, vault/secret injection, offline recovery and monitor dedicated LOGIN. Azure must enforce a similarly segregated Azure Database for PostgreSQL role, Azure Key Vault-backed secret and approved private network access under CAB review. Both modes need further production hardening (#19/#18). Entra requires its own native live role/account checks (#28), not Keycloak confidential clients. WORM evidence and qualified status remain #17/#13.
+
+A passing CI test is not proof of actual Keycloak production MFA, trusted credential signing, human review, legal preservation or timestamp qualification.
