@@ -4,6 +4,8 @@ Multi-tenant timestamp evidence platform: **ASP.NET Core 10 + DDD, PostgreSQL, R
 
 > **NOT QUALIFIED:** the project is a pre-qualification foundation. It cannot issue legal qualified timestamps, is not a qualified trust service provider, and must not be represented as such until the legal entity AND specific service are approved and listed in the Trusted List.
 
+> **V015 SECURITY INTERLOCK:** standalone `registrar-intent` issuance is **SUSPENDED**. The original arbitrary-subject SQL function has no EXECUTE grant for the registrar group, and the .NET CLI denies **before reading tokens or connecting to IdP/SQL**. See [ADR 0025](adr/0025-fail-closed-registrar-sql-issuance-interlock.md). Do not regrant or bypass this pending verified signed registration.
+
 ## Current features
 - Validated OIDC/JWT and **database-verified tenant admin** identity, no client-selected tenant.
 - Database-scoped audit trail for prepared evidence ZIP/receipt downloads and tenant-admin audit history (NOT WORM or independently sealed).

@@ -1,6 +1,6 @@
 # Registrar-only SQL registration-intent CLI — operator runbook (#49)
 
-**Status: scoped standalone, non-authorizing V013/V014 intent issuer. It does NOT register a WebAuthn credential, verify FIDO2 attestation, enroll keys, consume a challenge, approve/reject an organization, or prove independently witnessed human consent.** See [ADR 0024](../adr/0024-isolated-registrar-sql-intent-workflow.md), [ADR 0021](../adr/0021-registrar-only-unconsumable-credential-intent.md) and parent [#46](https://github.com/KeyserDSoze/TemporalMark/issues/46).
+**CURRENT STATUS: SUSPENDED BY V015 SECURITY INTERLOCK. The `registrar-intent` command always denies before reading JWT files, contacting Keycloak or opening a database connection. The NOLOGIN registrar group has no EXECUTE on V013. The procedures below document previous development groundwork and MUST NOT be used to enable a registrar without a new independently signed, transaction-bound WebAuthn release.** See [ADR 0024](../adr/0024-isolated-registrar-sql-intent-workflow.md), [ADR 0021](../adr/0021-registrar-only-unconsumable-credential-intent.md) and parent [#46](https://github.com/KeyserDSoze/TemporalMark/issues/46).
 
 ## Strict operator prerequisites (on-prem and Azure)
 

@@ -19,3 +19,7 @@ V013 grants `EXECUTE` on `public.issue_reviewer_registration_intent(text,text,te
 Commit failing SQL/adapter tests first; add the immutable V015 script and update code/tests in subsequent commits. CI must apply fifteen checksum-verified migrations and pass all four exact-head jobs before closing #51. **#50, #46, #44 and #38 remain OPEN**. The original #49 completion is accurately described as *groundwork*, not an operational production registrar after the explicit security freeze.
 
 Sources: PostgreSQL role and function permissions https://www.postgresql.org/docs/17/sql-revoke.html and https://www.postgresql.org/docs/17/sql-createfunction.html, WebAuthn registration https://www.w3.org/TR/webauthn-3/
+
+## Standalone CLI stop-line test
+
+The standalone operator executable denies `registrar-intent` **before any secret-file read, IdP request or SQL connection**, returning a fixed V015 suspension message and nonzero process status. CI checks that invoking with nonexistent token files and no registrar environment variables returns this exact interlock, **not** an unrelated missing-configuration error. This prevents operators from interpreting a successful JWT/MFA ceremony as permission to open an unsigned V013 SQL issuance path. It is intentionally impossible to reenable with environment variables; later approved signing requires a new reviewed command and SQL function.
