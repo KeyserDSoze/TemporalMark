@@ -23,7 +23,8 @@ public sealed class ReviewerPackedAttestationCryptographyTests
                 fixture.TestOnlyUniqueCredentialId);
         Assert.Equal("UNAPPROVED", result.ReviewStatus);
         Assert.Equal("packed", result.AttestationFormat);
-        Assert.Equal("basic", result.AttestationType);
+        // Fido2 4.3.3 classifies certificate-backed packed as attca, not basic.
+        Assert.Equal("attca", result.AttestationType);
         Assert.Equal("review.example.org", result.RelyingPartyId);
         Assert.Equal(Convert.ToHexString(SHA256.HashData(fixture.CredentialId)),
             result.CredentialIdSha256);
