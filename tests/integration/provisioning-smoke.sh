@@ -74,6 +74,22 @@ admin_sub="00000000-0000-0000-0000-000000000003"
 request_id="$(sed -n 's/^Approval requested: //p' "$temp_dir/requested.log")"
 [[ "$request_id" =~ ^[0-9a-f-]{36}$ ]] || { echo "Missing approval request ID" >&2; exit 1; }
 
+# Reviewer independently fetches ORIGINAL immutable request scope using only
+# approver JWT + ID. No operator-supplied name or subject values are displayed.
+"${cli[@]}" review --request-id "$request_id" \
+  --approver-token-file "$temp_dir/approver.jwt" > "$temp_dir/review.log"
+grep -Fq "Organization: CI verification org" "$temp_dir/review.log"
+grep -Fq "Operator subject: $operator_sub" "$temp_dir/review.log"
+grep -Fq "Initial admin subject: $admin_sub" "$temp_dir/review.log"
+review_hash="$(sed -n 's/^Review SHA-256: //p' "$temp_dir/review.log")"
+[[ "$review_hash" =~ ^[0-9A-F]{64}$ ]] || {
+    echo "SECURITY FAILURE: missing canonical reviewer SHA-256" >&2; exit 1
+}
+if "${cli[@]}" review --request-id "00000000-0000-0000-0000-000000000001" \
+    --approver-token-file "$temp_dir/approver.jwt" > "$temp_dir/missing-review.log" 2>&1; then
+    echo "SECURITY FAILURE: reviewer could see a nonexistent request" >&2; exit 1
+fi
+
 # No enrollment before the independent reviewer's signoff.
 if "${cli[@]}" complete --request-id "$request_id" \
     --organization-name "CI verification org" \
@@ -82,8 +98,7 @@ if "${cli[@]}" complete --request-id "$request_id" \
     echo "SECURITY FAILURE: unapproved organization was created" >&2; exit 1
 fi
 if "${cli[@]}" approve --request-id "$request_id" \
-    --organization-name "Wrong organization" \
-    --expected-initial-admin-sub "$admin_sub" --expected-operator-sub "$operator_sub" \
+    --review-sha256 "0000000000000000000000000000000000000000000000000000000000000000" \
     --approver-token-file "$temp_dir/approver.jwt" > "$temp_dir/changed-scope.log" 2>&1; then
     echo "SECURITY FAILURE: mismatched organization was approved" >&2; exit 1
 fi
@@ -91,25 +106,26 @@ fi
 # The disposable password-grant approver token has NO MFA. Without the
 # tightly scoped fixture exception it MUST fail even though role and JWT are valid.
 if PROVISIONING_DEVELOPMENT_PASSWORD_GRANT_NO_MFA=false "${cli[@]}" approve --request-id "$request_id" \
-    --organization-name "CI verification org" \
-    --expected-initial-admin-sub "$admin_sub" --expected-operator-sub "$operator_sub" \
+    --review-sha256 "$review_hash" \
     --approver-token-file "$temp_dir/approver.jwt" > "$temp_dir/no-mfa.log" 2>&1; then
     echo "SECURITY FAILURE: password-only approver accepted without explicit test exception" >&2
     exit 1
 fi
 if env -u PROVISIONING_APPROVER_REQUIRED_ACR "${cli[@]}" approve --request-id "$request_id" \
-    --organization-name "CI verification org" \
-    --expected-initial-admin-sub "$admin_sub" --expected-operator-sub "$operator_sub" \
+    --review-sha256 "$review_hash" \
     --approver-token-file "$temp_dir/approver.jwt" > "$temp_dir/no-policy.log" 2>&1; then
     echo "SECURITY FAILURE: approver accepted without pinned ACR policy" >&2
     exit 1
 fi
 
 "${cli[@]}" approve --request-id "$request_id" \
-  --organization-name "CI verification org" \
-  --expected-initial-admin-sub "$admin_sub" --expected-operator-sub "$operator_sub" \
+  --review-sha256 "$review_hash" \
   --approver-token-file "$temp_dir/approver.jwt" > "$temp_dir/approved.log"
 grep -Fq "Approval recorded: $request_id" "$temp_dir/approved.log"
+if "${cli[@]}" review --request-id "$request_id" \
+    --approver-token-file "$temp_dir/approver.jwt" > "$temp_dir/after-approval.log" 2>&1; then
+    echo "SECURITY FAILURE: approved request remains reviewable" >&2; exit 1
+fi
 # The existing password-grant fixture MUST be labeled NON_MFA in the audit.
 # Do not silently promote its tokens to assurance of a second factor.
 fixture_kind="$(docker compose -f docker/compose.yml exec -T postgres psql -U temporalmark     -d temporalmark -tAc "SELECT approver_assurance_kind FROM organization_enrollment_requests WHERE id='$request_id'")"
@@ -179,10 +195,13 @@ PY
   --first-admin-token-file "$temp_dir/first-admin-fresh.jwt" > "$temp_dir/revoked-request.log"
 revoked_id="$(sed -n 's/^Approval requested: //p' "$temp_dir/revoked-request.log")"
 [[ "$revoked_id" =~ ^[0-9a-f-]{36}$ ]] || { echo "Missing second request ID" >&2; exit 1; }
+"${cli[@]}" review --request-id "$revoked_id" \
+  --approver-token-file "$temp_dir/approver-fresh.jwt" > "$temp_dir/revoked-review.log"
+revoked_review_hash="$(sed -n 's/^Review SHA-256: //p' "$temp_dir/revoked-review.log")"
+[[ "$revoked_review_hash" =~ ^[0-9A-F]{64}$ ]] || { echo "Missing review digest" >&2; exit 1; }
 
 "${cli[@]}" approve --request-id "$revoked_id" \
-  --organization-name "Revoked first admin" \
-  --expected-initial-admin-sub "$admin_sub" --expected-operator-sub "$operator_sub" \
+  --review-sha256 "$revoked_review_hash" \
   --approver-token-file "$temp_dir/approver-fresh.jwt" > "$temp_dir/revoked-approved.log"
 
 # Separate pending request to prove that removing an approver's CURRENT directory
@@ -192,6 +211,10 @@ revoked_id="$(sed -n 's/^Approval requested: //p' "$temp_dir/revoked-request.log
   --first-admin-token-file "$temp_dir/admin-role.jwt" > "$temp_dir/role-request.log"
 role_request_id="$(sed -n 's/^Approval requested: //p' "$temp_dir/role-request.log")"
 [[ "$role_request_id" =~ ^[0-9a-f-]{36}$ ]] || { echo "Missing role-test request ID" >&2; exit 1; }
+"${cli[@]}" review --request-id "$role_request_id" \
+  --approver-token-file "$temp_dir/approver-role.jwt" > "$temp_dir/role-review.log"
+role_review_hash="$(sed -n 's/^Review SHA-256: //p' "$temp_dir/role-review.log")"
+[[ "$role_review_hash" =~ ^[0-9A-F]{64}$ ]] || { echo "Missing role-review digest" >&2; exit 1; }
 
 # Disable the admin only AFTER a valid, independent approval has been recorded.
 python3 - "$temp_dir" <<'PY'
@@ -300,8 +323,7 @@ if status.get("active") is not True:
 PY
 count_before_role="$(count_events)"
 if "${cli[@]}" approve --request-id "$role_request_id" \
-   --organization-name "Removed approver current role" \
-   --expected-initial-admin-sub "$admin_sub" --expected-operator-sub "$operator_sub" \
+   --review-sha256 "$role_review_hash" \
    --approver-token-file "$temp_dir/approver-role.jwt" > "$temp_dir/role-removed.log" 2>&1; then
     echo "SECURITY FAILURE: revoked directory role was ignored" >&2
     exit 1
