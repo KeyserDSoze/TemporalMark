@@ -67,6 +67,35 @@ public sealed class ReviewerRegistrationIntentPostgresTests
     }
 
     [Fact]
+    public async Task OwnerCannotPinIpAddressOversizedDnsLabelOrNumericTldAsReviewerRp()
+    {
+        await using var owner = Owner();
+        await owner.OpenAsync();
+        foreach (var rp in new[]
+        {
+            "127.0.0.1",
+            new string('a', 64) + ".example.org",
+            "review.example.123",
+            "review..example.org",
+            "review.example.org."
+        })
+        {
+            var issuer = "https://identity.example.org/realms/" + Guid.NewGuid().ToString("N");
+            await using var cmd = new NpgsqlCommand("""
+                INSERT INTO public.reviewer_registration_rp_policies
+                    (identity_issuer,rp_id,trusted_origin,change_reference)
+                VALUES (@issuer,@rp,@origin,'CAB-REJECTED-INPUT')
+                """, owner);
+            cmd.Parameters.AddWithValue("issuer", issuer);
+            cmd.Parameters.AddWithValue("rp", rp);
+            cmd.Parameters.AddWithValue("origin", "https://" + rp);
+            var error = await Assert.ThrowsAsync<PostgresException>(
+                async () => await cmd.ExecuteNonQueryAsync());
+            Assert.Equal(PostgresErrorCodes.CheckViolation, error.SqlState);
+        }
+    }
+
+    [Fact]
     public async Task RegistrarIsNoLoginWithNoMembersAndOnlyNarrowExecutePermission()
     {
         await using var db = Owner();
