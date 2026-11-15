@@ -25,6 +25,15 @@ jobs:
         run: dotnet publish src/backend/applications/TemporalMark.Api/TemporalMark.Api.csproj --configuration Release --output /tmp/temporalmark-api
       - name: Publish isolated operator provisioning CLI
         run: dotnet publish src/backend/applications/TemporalMark.Provisioner/TemporalMark.Provisioner.csproj --configuration Release --output /tmp/temporalmark-provisioner
+      - name: Registrar V015 CLI cannot run before signed ceremony
+        run: |
+          set -eu
+          if output="$(dotnet run --project src/backend/applications/TemporalMark.Provisioner/TemporalMark.Provisioner.csproj --configuration Release -- registrar-intent --registrar-token-file /dev/null --reviewer-token-file /dev/null 2>&1)"; then
+            echo "Unexpected successful registrar issue command"; exit 1
+          fi
+          # Exact explanatory denial is required; missing config/invalid
+          # token or Keycloak outage must not masquerade as the interlock.
+          printf '%s\n' "$output" | grep -Fq 'V015 registrar intent issuance suspended'
 
   frontend:
     # Playwright 1.56.x Chromium does not support GitHub's Ubuntu 26.04 runner.
