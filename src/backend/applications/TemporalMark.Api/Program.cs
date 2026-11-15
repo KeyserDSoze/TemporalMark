@@ -5,6 +5,7 @@ using Npgsql;
 using TemporalMark.Business.Registry;
 using TemporalMark.Business.Tenancy;
 using TemporalMark.Business.Stamping;
+using TemporalMark.Business.Audit;
 using TemporalMark.Domain.Stamping;
 using TemporalMark.Infrastructure.Postgres;
 using TemporalMark.Infrastructure.Timestamping;
@@ -24,6 +25,8 @@ builder.Services.AddScoped<ITenantAuthorization, PostgresTenantAuthorization>();
 builder.Services.AddScoped<TimestampRegistryService>();
 builder.Services.AddScoped<ITimestampWriter, PostgresTimestampWriter>();
 builder.Services.AddScoped<TimestampIssueService>();
+builder.Services.AddScoped<ITenantAuditRepository, PostgresTenantAuditRepository>();
+builder.Services.AddScoped<TenantAuditService>();
 builder.Services.AddHttpClient("external-tsa", http =>
 {
     http.Timeout = TimeSpan.FromSeconds(20);
@@ -130,28 +133,59 @@ api.MapGet("/stamps", async Task<IResult> (
     }
 });
 
+// Server-selected tenant, DB-verified membership. Audit events never expose evidence bytes.
+api.MapGet("/audit", async Task<IResult> (
+    ClaimsPrincipal user, ITenantAuthorization access, TenantAuditService audit,
+    DateTimeOffset fromUtc, DateTimeOffset toUtcExclusive, int? offset, int? limit, CancellationToken ct) =>
+{
+    var tenant = await TenantAdminAsync(user, access, ct);
+    if (!tenant.HasValue) return Results.Forbid();
+    try
+    {
+        var entries = await audit.PageAsync(tenant.Value, new UtcPeriod(fromUtc, toUtcExclusive),
+            offset ?? 0, limit ?? 25, ct);
+        return Results.Ok(entries.Select(entry => new
+        {
+            entry.Id, entry.OrganizationId, entry.ActorSubjectId,
+            action = entry.Action.ToString(),
+            entry.OccurredUtc, entry.ReceiptId, entry.PeriodFromUtc,
+            entry.PeriodToUtcExclusive
+        }));
+    }
+    catch (ArgumentException error)
+    {
+        return Results.BadRequest(new { error = error.Message });
+    }
+});
+
 api.MapGet("/stamps/{id:guid}/receipt", async Task<IResult> (
     Guid id, ClaimsPrincipal user, ITenantAuthorization access,
-    TimestampRegistryService registry, CancellationToken ct) =>
+    TimestampRegistryService registry, TenantAuditService audit, HttpContext http,
+    CancellationToken ct) =>
 {
     var tenant = await TenantAdminAsync(user, access, ct);
     if (!tenant.HasValue) return Results.Forbid();
     var der = await registry.DownloadReceiptAsync(tenant.Value, id, ct);
-    return der is null
-        ? Results.NotFound()
-        : Results.File(der, "application/timestamp-reply", $"timestamp-{id:N}.tsr");
+    if (der is null) return Results.NotFound();
+    // Fail closed on audit persistence failure before responding with receipt bytes.
+    await audit.PrepareReceiptDownloadAsync(tenant.Value, user.FindFirstValue("sub")!, id, ct);
+    http.Response.Headers.CacheControl = "no-store";
+    return Results.File(der, "application/timestamp-reply", $"timestamp-{id:N}.tsr");
 });
 
 api.MapGet("/stamps/export", async Task<IResult> (
     HttpContext http, ClaimsPrincipal user, ITenantAuthorization access,
-    TimestampRegistryService registry, ILogger<Program> log,
+    TimestampRegistryService registry, TenantAuditService audit, ILogger<Program> log,
     DateTimeOffset fromUtc, DateTimeOffset toUtcExclusive, CancellationToken ct) =>
 {
     var tenant = await TenantAdminAsync(user, access, ct);
     if (!tenant.HasValue) return Results.Forbid();
     try
     {
-        var bytes = await registry.ExportZipAsync(tenant.Value, new UtcPeriod(fromUtc, toUtcExclusive), ct);
+        var period = new UtcPeriod(fromUtc, toUtcExclusive);
+        var bytes = await registry.ExportZipAsync(tenant.Value, period, ct);
+        // Ready for delivery, not proof of HTTP delivery. Fail closed if audit insert fails.
+        await audit.PreparePeriodExportAsync(tenant.Value, user.FindFirstValue("sub")!, period, ct);
         http.Response.Headers.CacheControl = "no-store";
         log.LogInformation("Export issued for organization {OrganizationId} by {Subject}, range {From}..{To}",
             tenant.Value, user.FindFirstValue("sub"), fromUtc, toUtcExclusive);

@@ -6,6 +6,7 @@ Multi-tenant timestamp evidence platform: **ASP.NET Core 10 + DDD, PostgreSQL, R
 
 ## Current features
 - Validated OIDC/JWT and **database-verified tenant admin** identity, no client-selected tenant.
+- Database-scoped audit trail for prepared evidence ZIP/receipt downloads and tenant-admin audit history (NOT WORM or independently sealed).
 - Tenant-scoped registry summary and pagination in UTC; ZIP export includes `manifest.json` + original `.tsr` bytes (limit: 10,000 records per request).
 - Domain invariants for UTC periods and retaining at least one active tenant administrator; PostgreSQL trigger as defence in depth.
 - Optional external RFC 3161 provider connector accepts only SHA-256 imprint and returns a stored DER receipt marked **Unverified**; HTTP 503 when no external provider configured. This is not own QTSP issuance and not yet historic Trusted List validation.
@@ -52,6 +53,7 @@ cd ../../tests/frontend && npm install && npx playwright install chromium && npm
 - `GET /api/v1/me` — current authorized tenant; OIDC required.
 - `GET /api/v1/stamps/summary?fromUtc=...&toUtcExclusive=...`
 - `GET /api/v1/stamps?fromUtc=...&toUtcExclusive=...&offset=0&limit=50`
+- `GET /api/v1/audit?fromUtc=...&toUtcExclusive=...&offset=0&limit=25` — recent tenant-scoped access audit (maximum 200/page), **not legally tamper-proof**.
 - `GET /api/v1/stamps/{id}/receipt` — authenticated, tenant-protected raw RFC 3161 DER `.tsr` download.
 - `GET /api/v1/stamps/export?fromUtc=...&toUtcExclusive=...`
 - `POST /api/v1/stamps/issue` — admin-only, JSON `{"digestBase64":"..."}` (32-byte SHA-256 Base64), delegates to server-configured HTTPS RFC 3161 TSA; returns 503 if absent and stores receipts as **Unverified**, NEVER qualified by default.
@@ -66,3 +68,6 @@ Read [Architecture decisions](adr/0001-architecture-and-deployments.md), [compli
 **Retention:** indefinite retention is the initial business intent, not a verified GDPR retention policy or proof of immutable storage. Future work includes GDPR assessment, WORM evidence and real offline verification.
 
 **Branch convention:** changes are made directly on `main`; automated tests and reviews are strongly recommended before protected production rollout.
+
+## Audit MVP (#21)
+When the tenant administrator prepares an export or an individual TSR download, the API persists an audit event **before** returning bytes; write failures prevent the download. History is visible via `GET /api/v1/audit` and in the PWA. `Prepared` means the response was ready, **not** that it reached the client. This pilot table has an update/delete guard, but DB owners can bypass it: it is not independent WORM, tamper-evident or legally qualified audit storage. See [ADR 0005](adr/0005-tenant-audit-mvp.md) and [issue #17](https://github.com/KeyserDSoze/TemporalMark/issues/17) for further work. To upgrade an existing local development DB, apply `scripts/postgres-init/003_tenant_audit.sql` manually or rebuild via `docker compose -f docker/compose.yml down -v` (**destroys local data**). Production still needs versioned migrations.
