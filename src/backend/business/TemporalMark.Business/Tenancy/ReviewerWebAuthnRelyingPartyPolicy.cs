@@ -20,6 +20,7 @@ public sealed class ReviewerWebAuthnRelyingPartyPolicy
     public ReviewerWebAuthnRelyingPartyPolicy(string relyingPartyId, string trustedOrigin)
     {
         if (string.IsNullOrEmpty(trustedOrigin) ||
+            trustedOrigin.Any(c => c > 0x7f) ||
             !Uri.TryCreate(trustedOrigin, UriKind.Absolute, out var uri) ||
             !string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.Ordinal) ||
             uri.HostNameType != UriHostNameType.Dns ||
