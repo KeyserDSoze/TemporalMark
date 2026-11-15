@@ -178,7 +178,10 @@ for username, password, filename in [
     ("demo-approver", "local-approver-only", "approver-fresh.jwt"),
     ("demo-provisioner", "local-provisioner-only", "operator-role.jwt"),
     ("demo-initial-admin", "local-admin-only", "admin-role.jwt"),
-    ("demo-approver", "local-approver-only", "approver-role.jwt")
+    ("demo-approver", "local-approver-only", "approver-role.jwt"),
+    ("demo-provisioner", "local-provisioner-only", "operator-deny.jwt"),
+    ("demo-initial-admin", "local-admin-only", "admin-deny.jwt"),
+    ("demo-approver", "local-approver-only", "approver-deny.jwt")
 ]:
     token = form(realm + "/protocol/openid-connect/token", {
         "client_id": "temporalmark-local-provisioning-tests",
@@ -189,6 +192,72 @@ for username, password, filename in [
     os.chmod(path, 0o600)
 
 PY
+
+# A separately signed reviewer must be able to explicitly reject the
+# original pending legal entity. Unlike approval, rejection is terminal and
+# cannot be re-accepted by either the legacy SQL function or normal completion.
+"${cli[@]}" request --organization-name "Rejected legal review" \
+  --operator-token-file "$temp_dir/operator-deny.jwt" \
+  --first-admin-token-file "$temp_dir/admin-deny.jwt" > "$temp_dir/deny-request.log"
+deny_id="$(sed -n 's/^Approval requested: //p' "$temp_dir/deny-request.log")"
+[[ "$deny_id" =~ ^[0-9a-f-]{36}$ ]] || {
+    echo "SECURITY FAILURE: rejection fixture has no request ID" >&2; exit 1
+}
+"${cli[@]}" review --request-id "$deny_id" \
+  --approver-token-file "$temp_dir/approver-deny.jwt" > "$temp_dir/deny-review.log"
+deny_hash="$(sed -n 's/^Review SHA-256: //p' "$temp_dir/deny-review.log")"
+[[ "$deny_hash" =~ ^[0-9A-F]{64}$ ]] || {
+    echo "SECURITY FAILURE: missing rejection scope hash" >&2; exit 1
+}
+if "${cli[@]}" reject --request-id "$deny_id" \
+    --review-sha256 "0000000000000000000000000000000000000000000000000000000000000000" --reason-code UNVERIFIED_IDENTITY \
+    --approver-token-file "$temp_dir/approver-deny.jwt" > "$temp_dir/bad-deny.log" 2>&1; then
+    echo "SECURITY FAILURE: incorrect reviewed digest allowed rejection" >&2; exit 1
+fi
+if "${cli[@]}" reject --request-id "$deny_id" \
+    --review-sha256 "$deny_hash" --reason-code "Untrusted freeform data" \
+    --approver-token-file "$temp_dir/approver-deny.jwt" > "$temp_dir/bad-reason.log" 2>&1; then
+    echo "SECURITY FAILURE: freeform reason was accepted" >&2; exit 1
+fi
+count_before_deny="$(count_events)"
+"${cli[@]}" reject --request-id "$deny_id" \
+  --review-sha256 "$deny_hash" --reason-code UNVERIFIED_IDENTITY \
+  --approver-token-file "$temp_dir/approver-deny.jwt" > "$temp_dir/denied.log"
+grep -Fq "Enrollment rejected: $deny_id" "$temp_dir/denied.log"
+deny_row="$(docker compose -f docker/compose.yml exec -T postgres psql -U temporalmark \
+    -d temporalmark -tAc "SELECT rejection_reason_code FROM organization_enrollment_requests WHERE id='$deny_id'")"
+test "$deny_row" = "UNVERIFIED_IDENTITY" || {
+    echo "SECURITY FAILURE: rejection reason not durably recorded" >&2; exit 1
+}
+if "${cli[@]}" review --request-id "$deny_id" \
+    --approver-token-file "$temp_dir/approver-deny.jwt" > "$temp_dir/review-denied.log" 2>&1; then
+    echo "SECURITY FAILURE: rejected request still reviewable" >&2; exit 1
+fi
+if "${cli[@]}" reject --request-id "$deny_id" \
+    --review-sha256 "$deny_hash" --reason-code UNVERIFIED_IDENTITY \
+    --approver-token-file "$temp_dir/approver-deny.jwt" > "$temp_dir/replay-deny.log" 2>&1; then
+    echo "SECURITY FAILURE: rejection replay accepted" >&2; exit 1
+fi
+if "${cli[@]}" approve --request-id "$deny_id" \
+    --review-sha256 "$deny_hash" \
+    --approver-token-file "$temp_dir/approver-deny.jwt" > "$temp_dir/approve-denied.log" 2>&1; then
+    echo "SECURITY FAILURE: rejected request approved" >&2; exit 1
+fi
+if "${cli[@]}" complete --request-id "$deny_id" \
+    --organization-name "Rejected legal review" \
+    --operator-token-file "$temp_dir/operator-deny.jwt" \
+    --first-admin-token-file "$temp_dir/admin-deny.jwt" > "$temp_dir/complete-denied.log" 2>&1; then
+    echo "SECURITY FAILURE: rejected tenant was activated" >&2; exit 1
+fi
+count_after_deny="$(count_events)"
+test "$count_before_deny" = "$count_after_deny" || {
+    echo "SECURITY FAILURE: rejected request caused tenant provisioning audit" >&2; exit 1
+}
+deny_orgs="$(docker compose -f docker/compose.yml exec -T postgres psql -U temporalmark \
+    -d temporalmark -tAc "SELECT count(*) FROM organizations WHERE id='$deny_id'")"
+test "$deny_orgs" = "0" || {
+    echo "SECURITY FAILURE: rejected request created an organization" >&2; exit 1
+}
 
 "${cli[@]}" request --organization-name "Revoked first admin" \
   --operator-token-file "$temp_dir/operator-fresh.jwt" \
