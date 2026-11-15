@@ -154,6 +154,14 @@ try
     }
     return 0;
 }
+catch (UnauthorizedAccessException) when (args.Length > 0 && args[0] == "registrar-intent")
+{
+    // Intentionally clear release stop-line. Do not output token contents,
+    // SQL credentials, or a config hint that could bypass the interlock.
+    Console.Error.WriteLine(
+        "V015 registrar intent issuance suspended: signed one-time WebAuthn registration is not implemented.");
+    return 1;
+}
 catch (Exception exception)
 {
     // No token or SQL detail in terminal logs; status only.
@@ -192,6 +200,12 @@ static async Task<int> IssueUnconsumableRegistrarIntentAsync(string[] argv)
         throw new ArgumentException(
             "Usage: registrar-intent --registrar-token-file PATH --reviewer-token-file PATH. " +
             "RP, issuer and expected reviewer are pinned configuration, not arguments.");
+
+    // V015 revokes SQL registrar issuance and this explicit CLI gate refuses
+    // BEFORE reading JWT files, contacting an IdP or opening any SQL login.
+    // Never add a secret/environment override. A future signed and consumed
+    // ceremony requires a NEW operator command and reviewed SQL function.
+    EnforceRegistrarV015ReleaseInterlock();
 
     // This command is standalone operator-only and deliberately never runs
     // against the Docker HTTP MFA realm or password-only development issuer.
@@ -249,3 +263,7 @@ static async Task<int> IssueUnconsumableRegistrarIntentAsync(string[] argv)
         "tenant approval, or qualified legal evidence.");
     return 0;
 }
+
+static void EnforceRegistrarV015ReleaseInterlock() =>
+    throw new UnauthorizedAccessException(
+        "V015 registrar issuance is suspended until independently signed, consumed WebAuthn registration is implemented.");
