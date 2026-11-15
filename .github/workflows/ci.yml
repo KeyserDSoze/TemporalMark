@@ -19,8 +19,12 @@ jobs:
         run: dotnet test tests/backend/TemporalMark.Domain.Tests/TemporalMark.Domain.Tests.csproj --configuration Release
       - name: Business tests
         run: dotnet test tests/backend/TemporalMark.Business.Tests/TemporalMark.Business.Tests.csproj --configuration Release
+      - name: Provisioning JWT signature and expiry tests
+        run: dotnet test tests/backend/TemporalMark.Provisioner.Tests/TemporalMark.Provisioner.Tests.csproj --configuration Release
       - name: Publish API
         run: dotnet publish src/backend/applications/TemporalMark.Api/TemporalMark.Api.csproj --configuration Release --output /tmp/temporalmark-api
+      - name: Publish isolated operator provisioning CLI
+        run: dotnet publish src/backend/applications/TemporalMark.Provisioner/TemporalMark.Provisioner.csproj --configuration Release --output /tmp/temporalmark-provisioner
 
   frontend:
     # Playwright 1.56.x Chromium does not support GitHub's Ubuntu 26.04 runner.
@@ -72,9 +76,13 @@ jobs:
           dotnet-version: 10.0.x
       - name: Reapply migrations to prove checksum-safe idempotency
         run: docker compose -f docker/compose.yml run --rm migrate
+      - name: Verify versioned migration state is persistent
+        run: |
+          test "$(docker compose -f docker/compose.yml exec -T postgres psql -U temporalmark -d temporalmark -tAc 'SELECT count(*) FROM schema_migrations')" = "4"
       - name: PostgreSQL migration and tenant concurrency tests
         env:
           TEMPORALMARK_TEST_DB: "Host=127.0.0.1;Port=5432;Database=temporalmark;Username=temporalmark;Password=local-dev-only"
+          TEMPORALMARK_PROVISIONING_TEST_DB: "Host=127.0.0.1;Port=5432;Database=temporalmark;Username=temporalmark_provisioner;Password=local-provisioner-only"
         run: dotnet test tests/backend/TemporalMark.Postgres.Tests/TemporalMark.Postgres.Tests.csproj --configuration Release
       - name: OIDC admin login and disabled external TSA smoke
         working-directory: tests/frontend

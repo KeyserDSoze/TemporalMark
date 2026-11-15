@@ -21,8 +21,8 @@ services:
     # Runs versioned migrations against both new and existing development volumes.
     image: postgres:17.6-alpine
     restart: "no"
-    entrypoint: ["/bin/sh", "-c"]
-    command: "/bin/sh /scripts/apply-migrations.sh && /bin/sh /scripts/setup-local-db-roles.sh"
+    # Full shell command is ONE exec-form argument to -c, not a Compose-split command array.
+    entrypoint: ["/bin/sh", "-c", "/bin/sh /scripts/apply-migrations.sh && /bin/sh /scripts/setup-local-db-roles.sh"]
     environment:
       PGHOST: postgres
       PGPORT: "5432"
