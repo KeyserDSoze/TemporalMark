@@ -28,3 +28,7 @@ The PWA is served via HTTP on localhost (secure context exception); deploy with 
 ## Existing databases and organization bootstrap (#22)
 
 The stack now runs `migrate` before starting the API, tracking versioned SQL migrations with SHA-256 checksums. For existing volumes, run `docker compose -f docker/compose.yml run --rm migrate`; **do not use `down -v` to perform an upgrade**, because it destroys persisted data. Details, restrictions, and operator-only enrollment: [database migrations](../docs/DATABASE_MIGRATIONS.md) and [ADR 0006](../adr/0006-tenant-bootstrap-and-admin-integrity.md). Operator identity verification is still manual and not sufficient for a production tenant onboarding flow.
+
+## Disposable MFA integration fixture
+
+For CI only, `docker/compose.yml` imports `docker/keycloak/temporalmark-mfa-ci-realm.json` alongside the existing local realm. It contains a dedicated demo Keycloak user and browser PKCE client, not connected to production approvals. Conditional Keycloak LoA1 (password) and LoA2 (required OTP) implement an interactive regression test, and the browser automation verifies actual code acceptance after a new session. The file, its demo password and localhost-only HTTP **must never be used in production**, even for an on-prem installation. See [ADR 0013](../adr/0013-disposable-keycloak-real-otp-pkce.md) and #31.
