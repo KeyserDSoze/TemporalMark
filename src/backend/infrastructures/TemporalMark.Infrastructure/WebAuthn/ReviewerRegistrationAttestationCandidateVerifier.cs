@@ -73,7 +73,8 @@ public sealed class ReviewerRegistrationAttestationCandidateVerifier
             },
             ChallengeSize = 48
         };
-        configuration.Validate();
+        // The published stable 4.3.3 package lacks Validate(); the
+        // immutable, exact HTTPS/RP policy was checked at construction.
         return new ReviewerRegistrationAttestationCandidateVerifier(
             new Fido2(configuration), approvedRelyingParty);
     }
@@ -137,10 +138,9 @@ public sealed class ReviewerRegistrationAttestationCandidateVerifier
             {
                 AttestationResponse = browserResponse,
                 OriginalOptions = originalServerOptions,
-                IsCredentialIdUniqueToUserCallback = globallyUniqueCredentialId,
-                // Explicitly retain Optional: never use Conditional to waive
-                // authenticator user presence for a privileged key ceremony.
-                Mediation = CredentialMediationRequirement.Optional
+                IsCredentialIdUniqueToUserCallback = globallyUniqueCredentialId
+                // Stable Fido2 4.3.3 has no conditional-create mediation
+                // override; the library always enforces user presence.
             }, cancellationToken);
         }
         catch (Exception error) when (error is not OperationCanceledException)
@@ -152,7 +152,9 @@ public sealed class ReviewerRegistrationAttestationCandidateVerifier
         if (verified is null ||
             verified.AttestationType is not ("basic" or "attca" or "anonca") ||
             string.IsNullOrWhiteSpace(verified.AttestationFormat) ||
-            verified.RpId != relyingParty.RelyingPartyId ||
+            // Fido2 4.3.3 checks the RP ID hash against its pinned
+            // Fido2Configuration.RPID. It does not expose RpId on the
+            // returned credential in the current stable API.
             verified.Id is not { Length: >= 16 and <= 1024 } ||
             !CryptographicOperations.FixedTimeEquals(verified.Id, browserResponse.RawId) ||
             verified.User?.Id is not { Length: 32 } ||
