@@ -131,6 +131,87 @@ public sealed class ApprovedEnrollmentPostgresTests
     }
 
     [Fact]
+    public async Task CompetingCompletionsConsumeApprovalExactlyOnce()
+    {
+        var id = Guid.NewGuid();
+        var name = "Concurrent " + id.ToString("N");
+        var unique = id.ToString("N").ToUpperInvariant();
+        var requestOperator = unique + new string('A', 32);
+        var requestAdmin = unique + new string('B', 32);
+        var approvalProof = unique + new string('C', 32);
+        var finalOperator = unique + new string('D', 32);
+        var finalAdmin = unique + new string('E', 32);
+
+        await using (var op = Operator())
+        {
+            await op.OpenAsync();
+            await using var request = new NpgsqlCommand("""
+                SELECT public.request_enrollment(@id,@name,'https://issuer.example.test',
+                    'op-sub','admin-sub',@a::char(64),@b::char(64))
+                """, op);
+            request.Parameters.AddWithValue("id", id);
+            request.Parameters.AddWithValue("name", name);
+            request.Parameters.AddWithValue("a", requestOperator);
+            request.Parameters.AddWithValue("b", requestAdmin);
+            Assert.Equal(id, Assert.IsType<Guid>(await request.ExecuteScalarAsync()));
+        }
+        await using (var approver = Approver())
+        {
+            await approver.OpenAsync();
+            await using var approve = new NpgsqlCommand("""
+                SELECT public.approve_enrollment(@id,@name,'https://issuer.example.test',
+                    'op-sub','admin-sub','different-approver',@hash::char(64))
+                """, approver);
+            approve.Parameters.AddWithValue("id", id);
+            approve.Parameters.AddWithValue("name", name);
+            approve.Parameters.AddWithValue("hash", approvalProof);
+            Assert.Equal(id, Assert.IsType<Guid>(await approve.ExecuteScalarAsync()));
+        }
+
+        async Task<(bool Success, string? Failure)> CompeteAsync()
+        {
+            await using var op = Operator();
+            await op.OpenAsync();
+            await using var complete = new NpgsqlCommand("""
+                SELECT public.complete_enrollment(@id,@name,'https://issuer.example.test',
+                    'op-sub','admin-sub',@a::char(64),@b::char(64))
+                """, op);
+            complete.Parameters.AddWithValue("id", id);
+            complete.Parameters.AddWithValue("name", name);
+            complete.Parameters.AddWithValue("a", finalOperator);
+            complete.Parameters.AddWithValue("b", finalAdmin);
+            try
+            {
+                return (Assert.IsType<Guid>(await complete.ExecuteScalarAsync()) == id, null);
+            }
+            catch (PostgresException e)
+            {
+                return (false, e.SqlState);
+            }
+        }
+
+        var results = await Task.WhenAll(CompeteAsync(), CompeteAsync());
+        Assert.Single(results.Where(x => x.Success));
+        Assert.Single(results.Where(x => !x.Success && x.Failure == PostgresErrorCodes.CheckViolation));
+
+        await using var owner = Owner();
+        await owner.OpenAsync();
+        await using var check = new NpgsqlCommand("""
+            SELECT
+             (SELECT count(*) FROM public.organizations WHERE id=@id),
+             (SELECT count(*) FROM public.organization_memberships WHERE organization_id=@id
+                 AND role='tenant_admin' AND is_active),
+             (SELECT count(*) FROM public.organization_provisioning_events WHERE organization_id=@id)
+            """, owner);
+        check.Parameters.AddWithValue("id", id);
+        await using var reader = await check.ExecuteReaderAsync();
+        Assert.True(await reader.ReadAsync());
+        Assert.Equal(1L, reader.GetInt64(0));
+        Assert.Equal(1L, reader.GetInt64(1));
+        Assert.Equal(1L, reader.GetInt64(2));
+    }
+
+    [Fact]
     public async Task ExpiredRequestCannotBeApprovedOrCompleted()
     {
         var id=Guid.NewGuid();
