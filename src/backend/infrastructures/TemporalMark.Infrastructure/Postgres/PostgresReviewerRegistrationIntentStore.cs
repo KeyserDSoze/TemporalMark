@@ -71,39 +71,18 @@ public sealed class PostgresReviewerRegistrationIntentStore : IReviewerRegistrat
                 guardReader.GetBoolean(4) || !guardReader.GetBoolean(5) ||
                 guardReader.GetBoolean(6) || guardReader.GetBoolean(7) ||
                 guardReader.GetBoolean(8) || guardReader.GetBoolean(9) ||
-                guardReader.GetBoolean(10) || !guardReader.GetBoolean(11) ||
+                guardReader.GetBoolean(10) || guardReader.GetBoolean(11) ||
                 await guardReader.ReadAsync(ct))
                 throw new UnauthorizedAccessException(
-                    "Registrar SQL issuance disabled until a signed one-time registration ceremony is authorized.");
+                    "Invalid registrar SQL executor or unreviewed legacy issuance regrant.");
         }
 
-        // This call is reached only if a FUTURE reviewed migration supplies
-        // a separate signed release protocol. V015 explicitly denies it
-        // for the ordinary registrar group, so this legacy function does
-        // NOT execute with a current restricted registrar login.
-        // This is the ONLY SQL call permitted by this adapter. V013 enforces
-        // owner-pinned issuer/RP/origin, one-ever uniqueness, and a short-lived
-        // cryptographically unpredictable database-issued NONCONSUMABLE nonce.
-        // The database login itself remains a separate privileged secret.
-        await using var command = new NpgsqlCommand("""
-            SELECT intent_id,challenge_hex,issued_utc,expires_utc
-            FROM public.issue_reviewer_registration_intent(
-                @issuer,@reviewer,@registrar,@rp,@origin)
-            """, connection);
-        command.Parameters.AddWithValue("issuer", request.IdentityIssuer);
-        command.Parameters.AddWithValue("reviewer", request.ReviewerSubject);
-        command.Parameters.AddWithValue("registrar", request.RegistrarSubject);
-        command.Parameters.AddWithValue("rp", request.RelyingPartyId);
-        command.Parameters.AddWithValue("origin", request.TrustedOrigin);
-        await using var reader = await command.ExecuteReaderAsync(ct);
-        if (!await reader.ReadAsync(ct))
-            throw new InvalidOperationException("No registrar registration intent returned.");
-        var result = new RegistrarIntentStorageResult(
-            reader.GetGuid(0), reader.GetString(1),
-            reader.GetFieldValue<DateTimeOffset>(2),
-            reader.GetFieldValue<DateTimeOffset>(3));
-        if (await reader.ReadAsync(ct))
-            throw new InvalidOperationException("Ambiguous registrar intent result.");
-        return result;
+        // Deliberately NO SQL issuance call. The old V013 entry point
+        // accepted unsigned arbitrary SQL subjects; even if someone REGRANTS
+        // its EXECUTE privilege this application MUST remain fail closed.
+        // Future FIDO2-verified, one-time signed release requires a NEW
+        // versioned SQL function and separately audited .NET call path.
+        throw new UnauthorizedAccessException(
+            "V015 registrar issuance is suspended pending an independently signed and consumed registration ceremony.");
     }
 }
