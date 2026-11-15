@@ -1,0 +1,76 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Domain tests
+        run: dotnet test tests/backend/TemporalMark.Domain.Tests/TemporalMark.Domain.Tests.csproj --configuration Release
+      - name: Business tests
+        run: dotnet test tests/backend/TemporalMark.Business.Tests/TemporalMark.Business.Tests.csproj --configuration Release
+      - name: Publish API
+        run: dotnet publish src/backend/applications/TemporalMark.Api/TemporalMark.Api.csproj --configuration Release --output /tmp/temporalmark-api
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install and build React PWA
+        working-directory: src/frontend
+        run: |
+          npm install --no-audit --no-fund
+          npm run build
+      - name: Install Playwright
+        working-directory: tests/frontend
+        run: |
+          npm install --no-audit --no-fund
+          npx playwright install --with-deps chromium
+      - name: Playwright desktop/mobile smoke
+        working-directory: tests/frontend
+        run: npm test
+
+  docker-smoke:
+    runs-on: ubuntu-latest
+    needs: [backend, frontend]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build local application containers
+        run: docker compose -f docker/compose.yml build api web
+      - name: Run local integration stack
+        run: docker compose -f docker/compose.yml up -d
+      - name: API/frontend health
+        run: |
+          curl -fsS --retry 35 --retry-delay 3 --retry-connrefused http://127.0.0.1:8080/healthz
+          curl -fsS --retry 35 --retry-delay 3 --retry-connrefused http://127.0.0.1:3000/
+      - name: Diagnostics
+        if: failure()
+        run: docker compose -f docker/compose.yml logs --no-color --tail=200
+      - name: Tear down
+        if: always()
+        run: docker compose -f docker/compose.yml down -v
+
+  terraform:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - name: Terraform format
+        run: terraform -chdir=infra/azure fmt -check -recursive
+      - name: Terraform init without remote backend
+        run: terraform -chdir=infra/azure init -backend=false
+      - name: Terraform validate
+        run: terraform -chdir=infra/azure validate

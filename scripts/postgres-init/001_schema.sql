@@ -18,9 +18,17 @@ CREATE INDEX IF NOT EXISTS ix_memberships_active_admin
 -- Ensures last-admin removal/demotion is blocked even under competing transactions.
 CREATE OR REPLACE FUNCTION protect_last_active_tenant_admin()
 RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+    removing_admin boolean := false;
 BEGIN
-    IF OLD.is_active AND OLD.role = 'tenant_admin' AND
-       (TG_OP = 'DELETE' OR NOT NEW.is_active OR NEW.role <> 'tenant_admin') THEN
+    IF OLD.is_active AND OLD.role = 'tenant_admin' THEN
+        IF TG_OP = 'DELETE' THEN
+            removing_admin := true;
+        ELSE
+            removing_admin := NOT NEW.is_active OR NEW.role <> 'tenant_admin';
+        END IF;
+    END IF;
+    IF removing_admin THEN
         PERFORM pg_advisory_xact_lock(hashtext(OLD.organization_id::text));
         IF NOT EXISTS (
             SELECT 1 FROM organization_memberships

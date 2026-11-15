@@ -60,7 +60,7 @@ app.MapHealthChecks("/healthz");
 // Claim-based admission AND authoritative membership lookup: never accept tenant IDs from caller.
 var api = app.MapGroup("/api/v1").RequireAuthorization();
 
-api.MapGet("/me", async (ClaimsPrincipal user, ITenantAuthorization access, CancellationToken ct) =>
+api.MapGet("/me", async Task<IResult> (ClaimsPrincipal user, ITenantAuthorization access, CancellationToken ct) =>
 {
     var tenant = await TenantAdminAsync(user, access, ct);
     return tenant.HasValue
@@ -68,7 +68,7 @@ api.MapGet("/me", async (ClaimsPrincipal user, ITenantAuthorization access, Canc
         : Results.Forbid();
 });
 
-api.MapGet("/stamps/summary", async (
+api.MapGet("/stamps/summary", async Task<IResult> (
     ClaimsPrincipal user, ITenantAuthorization access, TimestampRegistryService registry,
     DateTimeOffset fromUtc, DateTimeOffset toUtcExclusive, CancellationToken ct) =>
 {
@@ -84,7 +84,7 @@ api.MapGet("/stamps/summary", async (
     }
 });
 
-api.MapGet("/stamps", async (
+api.MapGet("/stamps", async Task<IResult> (
     ClaimsPrincipal user, ITenantAuthorization access, TimestampRegistryService registry,
     DateTimeOffset fromUtc, DateTimeOffset toUtcExclusive, int? offset, int? limit, CancellationToken ct) =>
 {
@@ -107,7 +107,7 @@ api.MapGet("/stamps", async (
     }
 });
 
-api.MapGet("/stamps/export", async (
+api.MapGet("/stamps/export", async Task<IResult> (
     HttpContext http, ClaimsPrincipal user, ITenantAuthorization access,
     TimestampRegistryService registry, ILogger<Program> log,
     DateTimeOffset fromUtc, DateTimeOffset toUtcExclusive, CancellationToken ct) =>

@@ -27,6 +27,6 @@ public sealed class UtcPeriodTests
     public void RejectsNonUtcInputs()
     {
         Assert.Throws<ArgumentException>(() =>
-            new UtcPeriod(DateTimeOffset.Now, DateTimeOffset.UtcNow.AddDays(1)));
+            new UtcPeriod(new DateTimeOffset(2026, 11, 1, 0, 0, 0, TimeSpan.FromHours(2)), DateTimeOffset.UtcNow.AddDays(1)));
     }
 }
