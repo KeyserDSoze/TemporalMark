@@ -230,6 +230,140 @@ public sealed class ApprovedEnrollmentPostgresTests
     }
 
     [Fact]
+    public async Task CompetingApproveAndRejectTransactionsAllowExactlyOneTerminalDecision()
+    {
+        var id = Guid.NewGuid();
+        var digest = id.ToString("N").ToUpperInvariant();
+        var name = "Race decision " + id.ToString("N");
+        const string issuer = "https://issuer.example.test";
+        await using (var op = Operator())
+        {
+            await op.OpenAsync();
+            await using var request = new NpgsqlCommand("""
+                SELECT public.request_enrollment(@id,@name,@issuer,'operator','admin',
+                    @opHash::char(64),@adminHash::char(64))
+                """, op);
+            request.Parameters.AddWithValue("id", id);
+            request.Parameters.AddWithValue("name", name);
+            request.Parameters.AddWithValue("issuer", issuer);
+            request.Parameters.AddWithValue("opHash", digest + new string('1', 32));
+            request.Parameters.AddWithValue("adminHash", digest + new string('2', 32));
+            Assert.Equal(id, Assert.IsType<Guid>(await request.ExecuteScalarAsync()));
+        }
+
+        async Task<(bool Success, string? SqlState)> Decide(bool rejection)
+        {
+            await using var connection = Approver();
+            await connection.OpenAsync();
+            await using var command = new NpgsqlCommand(rejection ? """
+                SELECT public.reject_enrollment(@id,@name,@issuer,'operator','admin',
+                    'reviewer',@proof::char(64),@review::char(64),'POLICY_DENIED')
+                """ : """
+                SELECT public.approve_enrollment(@id,@name,@issuer,'operator','admin',
+                    'reviewer',@proof::char(64),
+                    'OIDC_ACR_ASSERTED','urn:temporalmark:loa:2',@authTime)
+                """, connection);
+            command.Parameters.AddWithValue("id", id);
+            command.Parameters.AddWithValue("name", name);
+            command.Parameters.AddWithValue("issuer", issuer);
+            command.Parameters.AddWithValue("proof", digest + new string(rejection ? '4' : '3', 32));
+            if (rejection)
+                command.Parameters.AddWithValue("review", digest + new string('5', 32));
+            else
+                command.Parameters.AddWithValue("authTime", DateTimeOffset.UtcNow.ToUnixTimeSeconds() - 10);
+            try
+            {
+                return (Assert.IsType<Guid>(await command.ExecuteScalarAsync()) == id, null);
+            }
+            catch (PostgresException error)
+            {
+                return (false, error.SqlState);
+            }
+        }
+
+        var outcomes = await Task.WhenAll(Decide(false), Decide(true));
+        Assert.Single(outcomes, x => x.Success);
+        Assert.Single(outcomes, x => !x.Success && x.SqlState == PostgresErrorCodes.CheckViolation);
+        await using var owner = Owner();
+        await owner.OpenAsync();
+        await using var state = new NpgsqlCommand("""
+            SELECT (approved_utc IS NOT NULL)::int + (rejected_utc IS NOT NULL)::int,
+                (SELECT count(*) FROM public.organization_reviewer_decision_proofs WHERE request_id=@id),
+                (SELECT count(*) FROM public.organizations WHERE id=@id),
+                (SELECT count(*) FROM public.organization_provisioning_events WHERE organization_id=@id)
+            FROM public.organization_enrollment_requests WHERE id=@id
+            """, owner);
+        state.Parameters.AddWithValue("id", id);
+        await using var reader = await state.ExecuteReaderAsync();
+        Assert.True(await reader.ReadAsync());
+        Assert.Equal(1, reader.GetInt32(0));
+        Assert.Equal(1L, reader.GetInt64(1));
+        Assert.Equal(0L, reader.GetInt64(2));
+        Assert.Equal(0L, reader.GetInt64(3));
+    }
+
+    [Fact]
+    public async Task ReviewerTokenProofCannotAuthorizeBothApprovalAndRejection()
+    {
+        const string issuer = "https://issuer.example.test";
+        var firstId = Guid.NewGuid();
+        var secondId = Guid.NewGuid();
+        var firstTag = firstId.ToString("N").ToUpperInvariant();
+        var secondTag = secondId.ToString("N").ToUpperInvariant();
+        var tokenProof = firstTag + new string('F', 32);
+
+        await using var op = Operator();
+        await op.OpenAsync();
+        foreach (var (id,tag) in new[] { (firstId,firstTag), (secondId,secondTag) })
+        {
+            await using var request = new NpgsqlCommand("""
+                SELECT public.request_enrollment(@id,'One-use decision proof',@issuer,
+                    'operator','admin',@opHash::char(64),@adminHash::char(64))
+                """, op);
+            request.Parameters.AddWithValue("id", id);
+            request.Parameters.AddWithValue("issuer", issuer);
+            request.Parameters.AddWithValue("opHash", tag + new string('A', 32));
+            request.Parameters.AddWithValue("adminHash", tag + new string('B', 32));
+            Assert.Equal(id, Assert.IsType<Guid>(await request.ExecuteScalarAsync()));
+        }
+        await using var reviewer = Approver();
+        await reviewer.OpenAsync();
+        await using (var approve = new NpgsqlCommand("""
+            SELECT public.approve_enrollment(@id,'One-use decision proof',@issuer,
+                'operator','admin','reviewer',@proof::char(64),
+                'OIDC_ACR_ASSERTED','urn:temporalmark:loa:2',@authTime)
+            """,reviewer))
+        {
+            approve.Parameters.AddWithValue("id", firstId);
+            approve.Parameters.AddWithValue("issuer",issuer);
+            approve.Parameters.AddWithValue("proof",tokenProof);
+            approve.Parameters.AddWithValue("authTime",DateTimeOffset.UtcNow.ToUnixTimeSeconds()-10);
+            Assert.Equal(firstId,Assert.IsType<Guid>(await approve.ExecuteScalarAsync()));
+        }
+        await using (var reject = new NpgsqlCommand("""
+            SELECT public.reject_enrollment(@id,'One-use decision proof',@issuer,
+                'operator','admin','reviewer',@proof::char(64),@review::char(64),
+                'POLICY_DENIED')
+            """,reviewer))
+        {
+            reject.Parameters.AddWithValue("id",secondId);
+            reject.Parameters.AddWithValue("issuer",issuer);
+            reject.Parameters.AddWithValue("proof",tokenProof);
+            reject.Parameters.AddWithValue("review",secondTag+new string('C',32));
+            var denial=await Assert.ThrowsAsync<PostgresException>(
+                async()=>await reject.ExecuteScalarAsync());
+            Assert.Equal(PostgresErrorCodes.UniqueViolation,denial.SqlState);
+        }
+        await using var owner=Owner();
+        await owner.OpenAsync();
+        await using var verify=new NpgsqlCommand("""
+            SELECT rejected_utc IS NULL FROM public.organization_enrollment_requests WHERE id=@id
+            """,owner);
+        verify.Parameters.AddWithValue("id",secondId);
+        Assert.True(Assert.IsType<bool>(await verify.ExecuteScalarAsync()));
+    }
+
+    [Fact]
     public async Task CanOnlyCompleteApprovedMatchingRequestOnce()
     {
         var id = Guid.NewGuid();
