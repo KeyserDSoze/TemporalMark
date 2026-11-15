@@ -85,6 +85,43 @@ review_hash="$(sed -n 's/^Review SHA-256: //p' "$temp_dir/review.log")"
 [[ "$review_hash" =~ ^[0-9A-F]{64}$ ]] || {
     echo "SECURITY FAILURE: missing canonical reviewer SHA-256" >&2; exit 1
 }
+# Server-generated challenge is NOT APPROVE/REJECT authorization and must not
+# mutate the pending request. The stored nonce cannot be reissued/rebound.
+if "${cli[@]}" challenge --request-id "$request_id" \
+    --review-sha256 "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" --decision APPROVE --reason-code NONE \
+    --approver-token-file "$temp_dir/approver.jwt" > "$temp_dir/invalid-challenge.log" 2>&1; then
+    echo "SECURITY FAILURE: forged review digest minted a challenge" >&2; exit 1
+fi
+if "${cli[@]}" challenge --request-id "$request_id" \
+    --review-sha256 "$review_hash" --decision REJECT --reason-code NONE \
+    --approver-token-file "$temp_dir/approver.jwt" > "$temp_dir/invalid-decision.log" 2>&1; then
+    echo "SECURITY FAILURE: rejected decision intent has no reason" >&2; exit 1
+fi
+"${cli[@]}" challenge --request-id "$request_id" \
+  --review-sha256 "$review_hash" --decision APPROVE --reason-code NONE \
+  --approver-token-file "$temp_dir/approver.jwt" > "$temp_dir/challenge.log"
+challenge_id="$(sed -n 's/^Decision challenge issued: //p' "$temp_dir/challenge.log")"
+challenge_hex="$(sed -n 's/^Challenge hex: //p' "$temp_dir/challenge.log")"
+[[ "$challenge_id" =~ ^[0-9a-f-]{36}$ && "$challenge_hex" =~ ^[0-9A-F]{96}$ ]] || {
+    echo "SECURITY FAILURE: missing server-generated challenge" >&2; exit 1
+}
+grep -Fq "UNSIGNED CHALLENGE ONLY" "$temp_dir/challenge.log"
+challenge_row="$(docker compose -f docker/compose.yml exec -T postgres psql -U temporalmark \
+    -d temporalmark -tAc "SELECT decision FROM organization_decision_challenges WHERE request_id='$request_id'")"
+test "$challenge_row" = "APPROVE" || {
+    echo "SECURITY FAILURE: challenge missing bound decision" >&2; exit 1
+}
+challenge_pending="$(docker compose -f docker/compose.yml exec -T postgres psql -U temporalmark \
+    -d temporalmark -tAc "SELECT (approved_utc IS NULL AND rejected_utc IS NULL)::text FROM organization_enrollment_requests WHERE id='$request_id'")"
+test "$challenge_pending" = "true" || test "$challenge_pending" = "t" || {
+    echo "SECURITY FAILURE: a challenge implicitly decided the request" >&2; exit 1
+}
+if "${cli[@]}" challenge --request-id "$request_id" \
+    --review-sha256 "$review_hash" --decision APPROVE --reason-code NONE \
+    --approver-token-file "$temp_dir/approver.jwt" > "$temp_dir/replay-challenge.log" 2>&1; then
+    echo "SECURITY FAILURE: same request minted another challenge" >&2; exit 1
+fi
+
 if "${cli[@]}" review --request-id "00000000-0000-0000-0000-000000000001" \
     --approver-token-file "$temp_dir/approver.jwt" > "$temp_dir/missing-review.log" 2>&1; then
     echo "SECURITY FAILURE: reviewer could see a nonexistent request" >&2; exit 1
