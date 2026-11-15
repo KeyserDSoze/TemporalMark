@@ -8,7 +8,7 @@ Multi-tenant timestamp evidence platform: **ASP.NET Core 10 + DDD, PostgreSQL, R
 - Validated OIDC/JWT and **database-verified tenant admin** identity, no client-selected tenant.
 - Tenant-scoped registry summary and pagination in UTC; ZIP export includes `manifest.json` + original `.tsr` bytes (limit: 10,000 records per request).
 - Domain invariants for UTC periods and retaining at least one active tenant administrator; PostgreSQL trigger as defence in depth.
-- Explicit fail-closed issuance endpoint: `POST /api/v1/stamps/issue` returns HTTP 503 until a real compliant TSA integration is implemented.
+- Optional external RFC 3161 provider connector accepts only SHA-256 imprint and returns a stored DER receipt marked **Unverified**; HTTP 503 when no external provider configured. This is not own QTSP issuance and not yet historic Trusted List validation.
 - Responsive administration UI with Italian/English translations, theme toggle and PWA service worker setup.
 - Local Compose bootstrap for PostgreSQL, Keycloak, .NET API and Nginx-hosted UI.
 
@@ -53,12 +53,14 @@ cd ../../tests/frontend && npm install && npx playwright install chromium && npm
 - `GET /api/v1/stamps/summary?fromUtc=...&toUtcExclusive=...`
 - `GET /api/v1/stamps?fromUtc=...&toUtcExclusive=...&offset=0&limit=50`
 - `GET /api/v1/stamps/export?fromUtc=...&toUtcExclusive=...`
-- `POST /api/v1/stamps/issue` — **503 unavailable** until qualified issuance prerequisites exist.
+- `POST /api/v1/stamps/issue` — admin-only, JSON `{"digestBase64":"..."}` (32-byte SHA-256 Base64), delegates to server-configured HTTPS RFC 3161 TSA; returns 503 if absent and stores receipts as **Unverified**, NEVER qualified by default.
 
 UTC filters are inclusive at the start, exclusive at the end. Exports are bounded to 10,000 entries and are **not yet legal/audit-ready** because the WORM manifest, complete RFC 3161 validation and trust-list evidence are unimplemented.
 
 ## Architecture and compliance
 Read [Architecture decisions](adr/0001-architecture-and-deployments.md), [compliance gap register](docs/COMPLIANCE.md), [roadmap](docs/ROADMAP.md) and [threat model](docs/THREAT_MODEL.md). Relevant primary law includes eIDAS 910/2014 as amended, the timestamp-specific EU 2025/1929, and AgID/CAB procedures.
+
+**External TSA config (optional):** set `TimestampProvider__Url` to an explicitly approved HTTPS RFC3161 endpoint and `TimestampProvider__Id` to its controlled provider identifier. For local Compose: `TIMESTAMP_PROVIDER_URL` and `TIMESTAMP_PROVIDER_ID` in your environment. The application parses and checks token signature/imprint/nonce; it does not yet check historic Trusted List status or revocation, so receipts remain *Unverified* and no qualified claim is made. Do not configure production until WORM, full verifier and audit controls are completed.
 
 **Retention:** indefinite retention is the initial business intent, not a verified GDPR retention policy or proof of immutable storage. Future work includes GDPR assessment, WORM evidence and real offline verification.
 

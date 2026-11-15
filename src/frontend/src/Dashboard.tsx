@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Download, FileClock, LockKeyhole, RefreshCw } from "lucide-react";
+import { Download, FileClock, LockKeyhole, RefreshCw, FileUp } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Badge } from "./components/ui/badge";
 import { Button } from "./components/ui/button";
@@ -34,6 +34,9 @@ export default function Dashboard({ accessToken }: { accessToken: string }) {
   const [records, setRecords] = useState<RegistryItem[]>([]);
   const [busy, setBusy] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [issuing, setIssuing] = useState(false);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [issueMessage, setIssueMessage] = useState("");
   const [error, setError] = useState("");
 
   const get = useCallback(async (path: string) => {
@@ -85,6 +88,38 @@ export default function Dashboard({ accessToken }: { accessToken: string }) {
     }
   };
 
+  const issueExternal = async () => {
+    if (!selectedFile || issuing) return;
+    setIssuing(true);
+    setError("");
+    setIssueMessage("");
+    try {
+      // Only the SHA-256 imprint is transmitted. Never upload the original document.
+      const imprint = await window.crypto.subtle.digest("SHA-256", await selectedFile.arrayBuffer());
+      const base64Digest = btoa(String.fromCharCode(...new Uint8Array(imprint)));
+      const response = await fetch("/api/v1/stamps/issue", {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer " + accessToken,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ digestBase64: base64Digest }),
+        cache: "no-store"
+      });
+      if (!response.ok) {
+        throw new Error(response.status === 503 ? t("providerNotConfigured") :
+          response.status === 403 ? t("noTenant") : t("error"));
+      }
+      setIssueMessage(t("issueUnverified"));
+      setSelectedFile(null);
+      await load();
+    } catch (exception) {
+      setError(exception instanceof Error ? exception.message : t("error"));
+    } finally {
+      setIssuing(false);
+    }
+  };
+
   const labelFor = (state: string) => ({
     Unverified: t("unverified"),
     VerifiedNonQualified: t("nonQualified"),
@@ -109,6 +144,26 @@ export default function Dashboard({ accessToken }: { accessToken: string }) {
           <Button variant="outline" disabled={busy} onClick={() => void load()}><RefreshCw size={16} />{t("apply")}</Button>
           <Button disabled={exporting || busy} onClick={() => void download()}><Download size={16} />{exporting ? t("exportBusy") : t("export")}</Button>
         </div>
+      </CardContent>
+    </Card>
+
+    <Card>
+      <CardHeader><h2 className="flex items-center gap-2 text-lg font-semibold"><FileUp size={18} />{t("externalTimestamp")}</h2></CardHeader>
+      <CardContent className="space-y-4">
+        <p className="max-w-3xl text-sm text-muted-foreground">{t("localDigestNotice")}</p>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+          <label className="flex-1 space-y-1 text-sm">
+            <span className="block text-muted-foreground">{t("selectDocument")}</span>
+            <input type="file" aria-label={t("selectDocument")} className="block w-full rounded-lg border border-border bg-background p-2 text-sm" onChange={event => {
+              setSelectedFile(event.currentTarget.files?.[0] ?? null);
+              setIssueMessage("");
+            }} />
+          </label>
+          <Button disabled={!selectedFile || issuing} onClick={() => void issueExternal()}>
+            <FileUp size={16} />{issuing ? t("issuing") : t("requestTimestamp")}
+          </Button>
+        </div>
+        {issueMessage && <p role="status" className="text-sm text-foreground">{issueMessage}</p>}
       </CardContent>
     </Card>
 

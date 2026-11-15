@@ -14,7 +14,7 @@ docker compose -f docker/compose.yml ps
 
 **Local fixture only:** login `demo-admin` / `local-dev-only`. This credential must never be carried into any non-development environment. Local Keycloak admin login: `local-admin` / `dev-only-change-me`. The demo organization is `11111111-1111-1111-1111-111111111111`.
 
-The registry starts empty. A blank dashboard is expected. API `POST /api/v1/stamps/issue` deliberately returns 503 until conformant issuance and verification are implemented.
+The registry starts empty. A blank dashboard is expected. API `POST /api/v1/stamps/issue` deliberately returns 503 with no external provider configured. For a development-only RFC3161 interop test, set `TIMESTAMP_PROVIDER_URL` (HTTPS TSA endpoint) and `TIMESTAMP_PROVIDER_ID` before Compose startup. The request contains a SHA-256 digest only; the persisted response is marked `Unverified` and does not establish legal qualification.
 
 To remove ephemeral developer data:
 ```sh

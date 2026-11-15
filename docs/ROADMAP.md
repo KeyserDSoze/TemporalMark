@@ -14,7 +14,7 @@ Progress is recorded in issues and CI, not inferred from this file. Every slice 
 
 ## 2. Timestamp MVP
 - [ ] RFC 3161 request and response, DER parsing, CMS signature and messageImprint/nonce checks, negative test corpus.
-- [ ] Delegated qualified TSA connector, historical EU Trusted List checks and qualified-status evidence.
+- [ ] Basic RFC3161 connector (not yet interoperability-tested against a real TSA); historical EU Trusted List checks and qualified-status evidence.
 - [ ] Content-addressed WORM evidence objects, signed manifests and offline verification/exports.
 - [ ] No simulated/demo mark may be labelled qualified.
 
