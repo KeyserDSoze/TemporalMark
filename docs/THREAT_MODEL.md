@@ -37,3 +37,7 @@ The operator CLI now independently queries Keycloak user.enabled and effective r
 ## ACR / authentication freshness for approvers (#32)
 
 The standalone CLI now requires a policy-pinned `acr` and recent `auth_time` read only from a cryptographically verified access token; password-only/weak, missing or stale values are rejected **before** consulting Keycloak current role state or granting SQL approval. The disposable password-grant CI realm has a strictly scoped non-MFA exception to preserve other integration tests; it does not test or guarantee a second factor. An arbitrary ACR configured in the IdP might still misrepresent its real authentication flow: actual MFA ceremony and independent human confirmation remain #31. A stolen high-assurance bearer token, service credential, SQL approver login, IdP-to-DB race or missing sealed evidence still threaten enrollment. ADR 0011 applies; not QTSP-qualified.
+
+## Approval assurance provenance (#33)
+
+The pilot now stores only signed OIDC ACR/auth_time assertions and policy IDs, clearly distinct from an explicitly **non-MFA** local password-grant fixture and `LEGACY_UNVERIFIED` historic approvals. The restricted SQL approver cannot invoke the old proof-free function; unconsumed legacy approvals cannot activate tenants. A privileged SQL account can still forge metadata, and the IdP may misconfigure ACR without actually requiring two factors. Neither the audit record nor tokens are independently sealed. See ADR 0012, #31 (real MFA), #17 (WORM).
