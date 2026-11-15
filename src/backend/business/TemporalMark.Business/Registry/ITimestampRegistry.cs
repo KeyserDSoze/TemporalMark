@@ -5,6 +5,7 @@ namespace TemporalMark.Business.Registry;
 /// <summary>Every operation must be tenant-filtered; implementation must not expose cross-tenant reads.</summary>
 public interface ITimestampRegistry
 {
+    Task<TimestampRecord?> FindByIdAsync(Guid organizationId, Guid recordId, CancellationToken cancellationToken);
     Task<long> CountAsync(Guid organizationId, UtcPeriod period, CancellationToken cancellationToken);
     Task<IReadOnlyList<TimestampRecord>> PageAsync(
         Guid organizationId, UtcPeriod period, int offset, int limit, CancellationToken cancellationToken);

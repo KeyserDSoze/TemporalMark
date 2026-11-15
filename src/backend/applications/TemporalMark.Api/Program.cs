@@ -130,6 +130,18 @@ api.MapGet("/stamps", async Task<IResult> (
     }
 });
 
+api.MapGet("/stamps/{id:guid}/receipt", async Task<IResult> (
+    Guid id, ClaimsPrincipal user, ITenantAuthorization access,
+    TimestampRegistryService registry, CancellationToken ct) =>
+{
+    var tenant = await TenantAdminAsync(user, access, ct);
+    if (!tenant.HasValue) return Results.Forbid();
+    var der = await registry.DownloadReceiptAsync(tenant.Value, id, ct);
+    return der is null
+        ? Results.NotFound()
+        : Results.File(der, "application/timestamp-reply", $"timestamp-{id:N}.tsr");
+});
+
 api.MapGet("/stamps/export", async Task<IResult> (
     HttpContext http, ClaimsPrincipal user, ITenantAuthorization access,
     TimestampRegistryService registry, ILogger<Program> log,
@@ -169,7 +181,7 @@ api.MapPost("/stamps/issue", async Task<IResult> (
         var record = await issue.IssueAsync(tenant.Value, input.DigestBase64, ct);
         log.LogInformation("External timestamp stored as UNVERIFIED for organization {OrganizationId}, record {RecordId}",
             tenant.Value, record.Id);
-        return Results.Created($"/api/v1/stamps/{record.Id:N}", new
+        return Results.Created($"/api/v1/stamps/{record.Id:N}/receipt", new
         {
             record.Id,
             record.IssuedUtc,

@@ -13,6 +13,19 @@ public sealed class TimestampRegistryService(ITimestampRegistry registry)
 {
     public const int ExportLimit = 10000;
 
+    public async Task<byte[]?> DownloadReceiptAsync(
+        Guid organizationId, Guid recordId, CancellationToken cancellationToken)
+    {
+        RequireTenant(organizationId);
+        if (recordId == Guid.Empty) throw new ArgumentException("Record ID is required.", nameof(recordId));
+        var record = await registry.FindByIdAsync(organizationId, recordId, cancellationToken);
+        if (record is null) return null;
+        if (record.OrganizationId != organizationId)
+            throw new InvalidOperationException("Repository returned a record outside authorized tenant.");
+        record.Validate();
+        return record.ResponseDer;
+    }
+
     public async Task<RegistrySummary> SummaryAsync(
         Guid organizationId, UtcPeriod period, CancellationToken cancellationToken)
     {

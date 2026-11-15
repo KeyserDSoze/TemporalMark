@@ -17,6 +17,24 @@ public sealed class TimestampRegistryServiceTests
         new DateTimeOffset(2026, 12, 1, 0, 0, 0, TimeSpan.Zero));
 
     [Fact]
+    public async Task DownloadReceiptRejectsCrossTenantLeak()
+    {
+        var other = MakeRecord(TenantB);
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            new TimestampRegistryService(new MaliciousRegistry(other)).DownloadReceiptAsync(
+                TenantA, other.Id, default));
+    }
+
+    [Fact]
+    public async Task DownloadReceiptForOwnerReturnsExactDer()
+    {
+        var own = MakeRecord(TenantA);
+        var result = await new TimestampRegistryService(new FakeRegistry([own])).DownloadReceiptAsync(
+            TenantA, own.Id, default);
+        Assert.Equal(own.ResponseDer, result);
+    }
+
+    [Fact]
     public async Task PageRejectsRepositoryCrossTenantLeak()
     {
         var repository = new MaliciousRegistry(MakeRecord(TenantB));
@@ -67,6 +85,8 @@ public sealed class TimestampRegistryServiceTests
     {
         private IEnumerable<TimestampRecord> Filter(Guid org, UtcPeriod period) =>
             data.Where(x => x.OrganizationId == org && period.Contains(x.IssuedUtc));
+        public Task<TimestampRecord?> FindByIdAsync(Guid org, Guid id, CancellationToken ct) =>
+            Task.FromResult(data.FirstOrDefault(x => x.OrganizationId == org && x.Id == id));
         public Task<long> CountAsync(Guid org, UtcPeriod period, CancellationToken ct) =>
             Task.FromResult((long)Filter(org, period).Count());
         public Task<IReadOnlyList<TimestampRecord>> PageAsync(Guid org, UtcPeriod period, int offset, int limit, CancellationToken ct) =>
@@ -77,6 +97,7 @@ public sealed class TimestampRegistryServiceTests
 
     private sealed class MaliciousRegistry(TimestampRecord record) : ITimestampRegistry
     {
+        public Task<TimestampRecord?> FindByIdAsync(Guid org, Guid id, CancellationToken ct) => Task.FromResult<TimestampRecord?>(record);
         public Task<long> CountAsync(Guid org, UtcPeriod period, CancellationToken ct) => Task.FromResult(1L);
         public Task<IReadOnlyList<TimestampRecord>> PageAsync(Guid org, UtcPeriod period, int off, int lim, CancellationToken ct) =>
             Task.FromResult<IReadOnlyList<TimestampRecord>>(new[] { record });
