@@ -100,7 +100,7 @@ public sealed class ReviewerRegistrationIntentPostgresTests
     }
 
     [Fact]
-    public async Task NarrowDisposableRegistrarSqlLoginCanOnlyIssueNonceAndCannotReadTablesOrApproveTenant()
+    public async Task NarrowDisposableRegistrarSqlLoginCannotMintNonceDuringV015SecurityInterlock()
     {
         var rp = Policy();
         var login = "ci_registrar_" + Guid.NewGuid().ToString("N")[..20];
@@ -129,17 +129,28 @@ public sealed class ReviewerRegistrationIntentPostgresTests
                     .PostgresReviewerRegistrationIntentStore(database, login);
                 var request = new TemporalMark.Business.Tenancy.PreflightedRegistrarRegistrationIntent(
                     rp.Issuer, "reviewer-sub", "independent-registrar-sub", rp.Rp, rp.Origin);
-                var issued = await store.IssueAsync(request, CancellationToken.None);
-                Assert.NotEqual(Guid.Empty, issued.IntentId);
-                Assert.Matches("^[0-9A-F]{96}$", issued.ChallengeHex);
-                Assert.InRange(issued.ExpiresUtc - issued.IssuedUtc,
-                    TimeSpan.FromSeconds(1), TimeSpan.FromMinutes(2));
-                var duplicate = await Assert.ThrowsAsync<PostgresException>(() =>
+                // The legitimate narrow SQL LOGIN is STILL NOT a cryptographic
+                // registrar. Before V015 it could call V013 with arbitrary
+                // subject strings and mint a forged "registration intent".
+                var denied = await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
                     store.IssueAsync(request, CancellationToken.None));
-                Assert.Equal(PostgresErrorCodes.UniqueViolation, duplicate.SqlState);
+                Assert.Contains("signed", denied.Message, StringComparison.OrdinalIgnoreCase);
 
                 await using var restricted = new NpgsqlConnection(connection);
                 await restricted.OpenAsync();
+                var sqlDenied = await Assert.ThrowsAsync<PostgresException>(() =>
+                    Issue(restricted, rp.Issuer, rp.Rp, rp.Origin));
+                Assert.Equal(PostgresErrorCodes.InsufficientPrivilege, sqlDenied.SqlState);
+
+                await using (var none = new NpgsqlCommand("""
+                    SELECT count(*) FROM public.reviewer_registration_intents
+                    WHERE identity_issuer=@issuer AND rp_id=@rp
+                    """, owner))
+                {
+                    none.Parameters.AddWithValue("issuer", rp.Issuer);
+                    none.Parameters.AddWithValue("rp", rp.Rp);
+                    Assert.Equal(0L, Assert.IsType<long>(await none.ExecuteScalarAsync()));
+                }
                 foreach (var sql in new[]
                 {
                     "SELECT count(*) FROM public.reviewer_registration_intents",
@@ -152,9 +163,9 @@ public sealed class ReviewerRegistrationIntentPostgresTests
                         async () => await command.ExecuteScalarAsync());
                     Assert.Equal(PostgresErrorCodes.InsufficientPrivilege, error.SqlState);
                 }
-                // The registrar executor must NOT acquire approver,
-                // provisioner or runtime group membership even if it still
-                // has the narrow registrar EXECUTE grant.
+                // The registrar executor must NEVER acquire app/approval
+                // group membership. The V015 interlock denies even when it
+                // remains solely a member of the NOLOGIN registrar group.
                 foreach (var conflicting in new[]
                 {
                     "temporalmark_approver_group",
@@ -234,7 +245,7 @@ public sealed class ReviewerRegistrationIntentPostgresTests
     }
 
     [Fact]
-    public async Task RegistrarIsNoLoginWithNoMembersAndOnlyNarrowExecutePermission()
+    public async Task RegistrarNoLoginGroupHasNoMembersAndNoDirectFunctionExecuteAfterV015()
     {
         await using var db = Owner();
         await db.OpenAsync();
@@ -269,8 +280,8 @@ public sealed class ReviewerRegistrationIntentPostgresTests
             """, db);
         await using var reader = await cmd.ExecuteReaderAsync();
         Assert.True(await reader.ReadAsync());
-        for (var i = 0; i < 3; i++) Assert.True(reader.GetBoolean(i));
-        for (var i = 3; i < 11; i++) Assert.False(reader.GetBoolean(i));
+        for (var i = 0; i < 2; i++) Assert.True(reader.GetBoolean(i));
+        for (var i = 2; i < 11; i++) Assert.False(reader.GetBoolean(i));
         Assert.False(await reader.ReadAsync());
     }
 
