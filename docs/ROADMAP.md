@@ -8,9 +8,9 @@ Progress is recorded in issues and CI, not inferred from this file. Every slice 
 - [ ] Local docker compose up: PostgreSQL, OIDC IdP, API, frontend, object store and observability.
 
 ## 1. Multi-tenant core
-- [ ] Organizations, memberships, invite/accept, last-active-admin invariant, per-tenant roles. PostgreSQL atomic bootstrap/commit-time invariant and concurrency integration tests delivered in #22; signed-token OIDC operator CLI and DB role separation are pilot-complete (#24); Keycloak RFC7662 live token-status gate implemented under #26; independent current-role/account lookup, operator approvals, invite/claim sync, management and RLS remain open (#25/#23/#14).
+- [ ] Organizations, memberships, invite/accept, last-active-admin invariant, per-tenant roles. PostgreSQL atomic bootstrap/commit-time invariant and concurrency integration tests delivered in #22; signed-token OIDC operator CLI and DB role separation are pilot-complete (#24); Keycloak RFC7662 live token-status gate implemented under #26; independent current-role/account lookup, approval-gated pilot request/approve/complete implemented (#29); real MFA and independent human signoff, invite/claim sync, management and RLS remain open (#25/#23/#14).
 - [ ] Server-side isolation, fail-closed authentication, **legally sealed** audit logs, tenant-specific dashboards and complete period exports. Pilot tenant access audit (#21) covers prepared ZIP/TSR downloads only; independent WORM sealing, issuance audit and RLS remain.
-- [ ] Versioned PostgreSQL migrations (V001–V003 implemented), **RLS and cross-tenant** integration tests. Dedicated development DB roles and signed-token checks delivered in #24; production secret injection, migration job and full IdP account/role state and formal approval remain required; Keycloak token introspection implemented in #26 but no Entra adapter.
+- [ ] Versioned PostgreSQL migrations (V001–V003 implemented), **RLS and cross-tenant** integration tests. Dedicated development DB roles and signed-token checks delivered in #24; production secret injection, migration job and full IdP account/role state and formally attested approval remain required; Keycloak token introspection implemented in #26 but no Entra adapter.
 
 ## 2. Timestamp MVP
 - [ ] RFC 3161 request and response, DER parsing, CMS signature and messageImprint/nonce checks, negative test corpus.

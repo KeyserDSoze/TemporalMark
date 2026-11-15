@@ -25,3 +25,7 @@ Separate signed OIDC access tokens from the same pinned issuer are verified agai
 
 ## Live-token status prior to provisioning (#26)
 Both signed operator/first-admin access tokens now undergo a fresh Keycloak RFC7662 confidential-client introspection check before DB bootstrap; no positive status caching, redirect following, untrusted IdP URL or offline fallback. Fail closed on disabled/revoked token or provider outage. **Residual:** a token's returned role may be an issuance-time snapshot, the account may change after introspection (TOCTOU), and a compromised provisioner SQL login bypasses application-layer checks. There is no separate live directory-role reconciliation, independent approval ceremony, Entra adapter or sealed audit yet (#25/#23).
+
+## Independent approval gate (pilot, #29)
+
+PostgreSQL V006/V007 now requires a pending request bound to issuer, exact organization name, operator/admin subjects and generated organization UUID, a third separately authenticated Keycloak `platform_approver` role and distinct SQL login, and an atomic approval consumption during organization+audit creation. The pending request expires after five minutes. Threats still outstanding: stolen approver bearer credential/DB login can simulate approval, no MFA/step-up or certified independent human signoff, privilege escalation via migration owner, token-state TOCTOU, unenforced identity-account role changes, unsealed approval evidence. See ADR 0009 and #27; not legally qualified.
