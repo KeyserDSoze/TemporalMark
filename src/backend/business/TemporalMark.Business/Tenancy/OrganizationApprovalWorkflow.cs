@@ -30,27 +30,26 @@ public sealed record PendingOrganizationReview(
     Guid RequestId, string OrganizationName, string IdentityIssuer,
     string OperatorSubject, string FirstAdminSubject, DateTimeOffset ExpiresUtc)
 {
-    public string ReviewSha256
+    public string ReviewSha256 => ComputeReviewSha256();
+
+    private string ComputeReviewSha256()
     {
-        get
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        hash.AppendData(Encoding.ASCII.GetBytes("TemporalMark.PendingReview.v1\\0".Replace("\\0", "\0")));
+        Span<byte> length = stackalloc byte[4];
+        foreach (var value in new[]
         {
-            using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-            hash.AppendData(Encoding.ASCII.GetBytes("TemporalMark.PendingReview.v1\\0".Replace("\\0", "\0")));
-            foreach (var field in new[]
-            {
-                RequestId.ToString("D"), OrganizationName, IdentityIssuer,
-                OperatorSubject, FirstAdminSubject,
-                ExpiresUtc.UtcDateTime.Ticks.ToString(System.Globalization.CultureInfo.InvariantCulture)
-            })
-            {
-                var bytes = Encoding.UTF8.GetBytes(field);
-                Span<byte> length = stackalloc byte[4];
-                System.Buffers.Binary.BinaryPrimitives.WriteInt32BigEndian(length, bytes.Length);
-                hash.AppendData(length);
-                hash.AppendData(bytes);
-            }
-            return Convert.ToHexString(hash.GetHashAndReset());
+            RequestId.ToString("D"), OrganizationName, IdentityIssuer,
+            OperatorSubject, FirstAdminSubject,
+            ExpiresUtc.UtcDateTime.Ticks.ToString(System.Globalization.CultureInfo.InvariantCulture)
+        })
+        {
+            var bytes = Encoding.UTF8.GetBytes(value);
+            System.Buffers.Binary.BinaryPrimitives.WriteInt32BigEndian(length, bytes.Length);
+            hash.AppendData(length);
+            hash.AppendData(bytes);
         }
+        return Convert.ToHexString(hash.GetHashAndReset());
     }
 }
 
