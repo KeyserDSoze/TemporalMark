@@ -29,3 +29,8 @@ The [FIDO MDS changelog](https://fidoalliance.org/mds-changelog/) documents Augu
 - [FIDO MDS changelog](https://fidoalliance.org/mds-changelog/)
 - [FIDO MDS 3.1](https://fidoalliance.org/specs/mds/fido-metadata-service-v3.1-ps-20250521.html)
 - [Fido2 4.3.3 tagged metadata repository](https://github.com/passwordless-lib/fido2-net-lib/blob/4.3.3/Src/Fido2/Metadata/Fido2MetadataServiceRepository.cs)
+
+
+## Offline direct-issuer CRL check remains independent (#59)
+
+ADR 0030 and the [offline CRL runbook](WEBAUTHN_MDS_OFFLINE_CRL.md) add **real DER CRL signature/serial negative tests** for one explicitly supplied CA + direct leaf using BouncyCastle 2.7.0, without a network connection. This is **not wired** to the signed JWS candidate verifier above: no combined trusted FIDO MDS validation exists. Even if the test-only CRL is fresh and signed, a caller-supplied CA is not an approved FIDO R46 trust anchor and multi-hop revocation and CRL rollback remain open under #57/#55. Every output is `UNAPPROVED`; V015/V016 remain frozen.
