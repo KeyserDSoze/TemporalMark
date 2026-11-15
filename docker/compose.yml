@@ -17,6 +17,25 @@ services:
       retries: 20
       timeout: 3s
 
+  migrate:
+    # Runs versioned migrations against both new and existing development volumes.
+    image: postgres:17.6-alpine
+    restart: "no"
+    entrypoint: ["/bin/sh", "/scripts/apply-migrations.sh"]
+    environment:
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGUSER: temporalmark
+      PGPASSWORD: local-dev-only
+      PGDATABASE: temporalmark
+      MIGRATIONS_DIR: /migrations
+    volumes:
+      - ../scripts/apply-migrations.sh:/scripts/apply-migrations.sh:ro
+      - ../scripts/migrations:/migrations:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   keycloak:
     image: quay.io/keycloak/keycloak:26.4.0
     command: ["start-dev", "--import-realm", "--hostname=http://localhost:8081"]
@@ -42,6 +61,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       keycloak:
         condition: service_started
 
