@@ -67,6 +67,83 @@ public sealed class ReviewerRegistrationIntentPostgresTests
     }
 
     [Fact]
+    public async Task NarrowDisposableRegistrarSqlLoginCanOnlyIssueNonceAndCannotReadTablesOrApproveTenant()
+    {
+        var rp = Policy();
+        var login = "ci_registrar_" + Guid.NewGuid().ToString("N")[..20];
+        var secret = "ci-" + Guid.NewGuid().ToString("N");
+        var ownerString = Environment.GetEnvironmentVariable("TEMPORALMARK_TEST_DB")
+            ?? throw new InvalidOperationException("Owner test connection missing");
+        await using var owner = Owner();
+        await owner.OpenAsync();
+        await PinPolicy(owner, rp);
+        try
+        {
+            // Test-only role; never seed a login or membership through migrations.
+            // Identifier and password are random PRIVATE values, not log output.
+            await using (var setup = new NpgsqlCommand(
+                $"CREATE ROLE {login} LOGIN INHERIT PASSWORD '{secret}'; " +
+                $"GRANT temporalmark_credential_registrar_group TO {login}", owner))
+                await setup.ExecuteNonQueryAsync();
+
+            var connection = new NpgsqlConnectionStringBuilder(ownerString)
+            {
+                Username = login, Password = secret, Pooling = false
+            }.ConnectionString;
+            await using (var database = NpgsqlDataSource.Create(connection))
+            {
+                var store = new TemporalMark.Infrastructure.Postgres
+                    .PostgresReviewerRegistrationIntentStore(database, login);
+                var request = new TemporalMark.Business.Tenancy.PreflightedRegistrarRegistrationIntent(
+                    rp.Issuer, "reviewer-sub", "independent-registrar-sub", rp.Rp, rp.Origin);
+                var issued = await store.IssueAsync(request, CancellationToken.None);
+                Assert.NotEqual(Guid.Empty, issued.IntentId);
+                Assert.Matches("^[0-9A-F]{96}$", issued.ChallengeHex);
+                Assert.InRange(issued.ExpiresUtc - issued.IssuedUtc,
+                    TimeSpan.FromSeconds(1), TimeSpan.FromMinutes(2));
+                var duplicate = await Assert.ThrowsAsync<PostgresException>(() =>
+                    store.IssueAsync(request, CancellationToken.None));
+                Assert.Equal(PostgresErrorCodes.UniqueViolation, duplicate.SqlState);
+
+                await using var restricted = new NpgsqlConnection(connection);
+                await restricted.OpenAsync();
+                foreach (var sql in new[]
+                {
+                    "SELECT count(*) FROM public.reviewer_registration_intents",
+                    "SELECT count(*) FROM public.reviewer_registration_rp_policies",
+                    "SELECT count(*) FROM public.organization_enrollment_requests"
+                })
+                {
+                    await using var command = new NpgsqlCommand(sql, restricted);
+                    var error = await Assert.ThrowsAsync<PostgresException>(
+                        async () => await command.ExecuteScalarAsync());
+                    Assert.Equal(PostgresErrorCodes.InsufficientPrivilege, error.SqlState);
+                }
+                var wrongExpectedLogin = new TemporalMark.Infrastructure.Postgres
+                    .PostgresReviewerRegistrationIntentStore(database, login + "_wrong");
+                await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+                    wrongExpectedLogin.IssueAsync(request with { ReviewerSubject = "other" },
+                        CancellationToken.None));
+            }
+
+            // Existing owner credential must NEVER be accepted as an executor.
+            await using (var privileged = NpgsqlDataSource.Create(ownerString))
+            {
+                Assert.Throws<ArgumentException>(() => new TemporalMark.Infrastructure.Postgres
+                    .PostgresReviewerRegistrationIntentStore(privileged, "temporalmark"));
+            }
+        }
+        finally
+        {
+            // The test must not leave a registrar LOGIN or group membership
+            // behind, even if one of the assertions failed.
+            await using var cleanup = new NpgsqlCommand(
+                $"DROP ROLE IF EXISTS {login}", owner);
+            await cleanup.ExecuteNonQueryAsync();
+        }
+    }
+
+    [Fact]
     public async Task OwnerCannotPinIpAddressOversizedDnsLabelOrNumericTldAsReviewerRp()
     {
         await using var owner = Owner();
