@@ -12,6 +12,15 @@ public sealed record VerifiedOrganizationApproval(
     string ExpectedOperatorSubject, string ExpectedAdminSubject,
     string ApproverSubject, string ApprovalProofHashHex);
 
+/// <summary>Current directory state, not claims snapshotted in the JWT.</summary>
+public sealed record CurrentOidcAccount(string Issuer, string Subject, bool Enabled,
+    IReadOnlyCollection<string> EffectiveRealmRoles);
+
+public interface ICurrentOidcAccountDirectory
+{
+    Task<CurrentOidcAccount> GetAccountAsync(string issuer, string subject, CancellationToken ct);
+}
+
 public interface IOrganizationApprovalStore
 {
     Task<Guid> RequestAsync(VerifiedOrganizationEnrollment request, CancellationToken ct);
@@ -26,6 +35,7 @@ public interface IOrganizationApprovalStore
 public sealed class OrganizationApprovalWorkflow(
     IVerifiedOidcTokenSource verifier,
     ILiveOidcTokenStatus liveStatus,
+    ICurrentOidcAccountDirectory directory,
     IOrganizationApprovalStore store,
     ProvisioningPolicy policy,
     string approverAudience)
@@ -60,6 +70,7 @@ public sealed class OrganizationApprovalWorkflow(
             throw new UnauthorizedAccessException("Approver, operator and admin must be distinct.");
 
         await CheckLiveAsync(approverToken, approverAudience, identity, "platform_approver", ct);
+        await RequireDirectoryRoleAsync(identity, "platform_approver", ct);
         var entry = new VerifiedOrganizationApproval(
             requestId, organizationName, identity.Issuer, expectedOperatorSubject,
             expectedAdminSubject, identity.Subject, HashToken(approverToken));
@@ -96,6 +107,9 @@ public sealed class OrganizationApprovalWorkflow(
             throw new UnauthorizedAccessException("A person cannot be both operator and first admin.");
         await CheckLiveAsync(operatorToken, policy.OperatorAudience, op, "platform_provisioner", ct);
         await CheckLiveAsync(adminToken, policy.AdminAudience, admin, "tenant_admin", ct);
+        // Verify CURRENT effective realm role/account independently of JWT/introspection snapshots.
+        await RequireDirectoryRoleAsync(op, "platform_provisioner", ct);
+        await RequireDirectoryRoleAsync(admin, "tenant_admin", ct);
         return (op, admin);
     }
 
@@ -115,6 +129,17 @@ public sealed class OrganizationApprovalWorkflow(
             status.Audiences is null || !status.Audiences.Contains(audience, StringComparer.Ordinal) ||
             status.Roles is null || !status.Roles.Contains(requiredRole, StringComparer.Ordinal))
             throw new UnauthorizedAccessException("Live OIDC status failed identity binding.");
+    }
+
+    private async Task RequireDirectoryRoleAsync(
+        VerifiedOidcToken verified, string requiredRole, CancellationToken ct)
+    {
+        var current = await directory.GetAccountAsync(policy.Issuer, verified.Subject, ct);
+        if (current is null || current.Issuer != policy.Issuer ||
+            current.Subject != verified.Subject || !current.Enabled ||
+            current.EffectiveRealmRoles is null ||
+            !current.EffectiveRealmRoles.Contains(requiredRole, StringComparer.Ordinal))
+            throw new UnauthorizedAccessException("Current OIDC directory identity or role denied.");
     }
 
     private VerifiedOrganizationEnrollment BuildEnrollment(
