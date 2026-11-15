@@ -14,7 +14,7 @@ public sealed class OrganizationProvisioningServiceTests
     public async Task TrustedOperatorAndFirstAdminAreDerivedFromSeparateTokens()
     {
         var store = new Store();
-        var service = new OrganizationProvisioningService(new Tokens(), store, Policy);
+        var service = new OrganizationProvisioningService(new Tokens(), new LiveStatuses(), store, Policy);
         var id = await service.CreateAsync("Example Client", "valid-operator", "valid-admin", default);
         var entry = Assert.Single(store.Saved);
         Assert.Equal(id, entry.OrganizationId);
@@ -39,7 +39,7 @@ public sealed class OrganizationProvisioningServiceTests
     public async Task UntrustedIdentityOrRoleNeverCreatesOrganization(string operatorProof, string adminProof)
     {
         var store = new Store();
-        var service = new OrganizationProvisioningService(new Tokens(), store, Policy);
+        var service = new OrganizationProvisioningService(new Tokens(), new LiveStatuses(), store, Policy);
         await Assert.ThrowsAnyAsync<Exception>(() =>
             service.CreateAsync("Example Client", operatorProof, adminProof, default));
         Assert.Empty(store.Saved);
@@ -55,7 +55,7 @@ public sealed class OrganizationProvisioningServiceTests
         var store = new Store();
         var verifier = new Tokens();
         await Assert.ThrowsAsync<ArgumentException>(() =>
-            new OrganizationProvisioningService(verifier, store, Policy)
+            new OrganizationProvisioningService(verifier, new LiveStatuses(), store, Policy)
                 .CreateAsync(name, "valid-operator", "valid-admin", default));
         Assert.Equal(0, verifier.Verifications);
         Assert.Empty(store.Saved);
@@ -66,8 +66,20 @@ public sealed class OrganizationProvisioningServiceTests
     {
         var store = new Store { Reject = true };
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            new OrganizationProvisioningService(new Tokens(), store, Policy)
+            new OrganizationProvisioningService(new Tokens(), new LiveStatuses(), store, Policy)
                 .CreateAsync("Example Client", "valid-operator", "valid-admin", default));
+    }
+
+
+    private sealed class LiveStatuses : ILiveOidcTokenStatus
+    {
+        public Task<LiveOidcTokenState> CheckAsync(string token, string audience, CancellationToken ct)
+        {
+            var operatorToken = audience == Policy.OperatorAudience;
+            return Task.FromResult(new LiveOidcTokenState(true, Issuer,
+                operatorToken ? "operator-sub" : "initial-admin-sub",
+                [audience], [operatorToken ? "platform_provisioner" : "tenant_admin"]));
+        }
     }
 
     private sealed class Tokens : IVerifiedOidcTokenSource
