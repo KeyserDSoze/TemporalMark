@@ -78,11 +78,12 @@ jobs:
         run: docker compose -f docker/compose.yml run --rm migrate
       - name: Verify versioned migration state is persistent
         run: |
-          test "$(docker compose -f docker/compose.yml exec -T postgres psql -U temporalmark -d temporalmark -tAc 'SELECT count(*) FROM schema_migrations')" = "5"
+          test "$(docker compose -f docker/compose.yml exec -T postgres psql -U temporalmark -d temporalmark -tAc 'SELECT count(*) FROM schema_migrations')" = "6"
       - name: PostgreSQL migration and tenant concurrency tests
         env:
           TEMPORALMARK_TEST_DB: "Host=127.0.0.1;Port=5432;Database=temporalmark;Username=temporalmark;Password=local-dev-only"
           TEMPORALMARK_PROVISIONING_TEST_DB: "Host=127.0.0.1;Port=5432;Database=temporalmark;Username=temporalmark_provisioner;Password=local-provisioner-only"
+          TEMPORALMARK_APPROVER_TEST_DB: "Host=127.0.0.1;Port=5432;Database=temporalmark;Username=temporalmark_approver;Password=local-approver-only"
         run: dotnet test tests/backend/TemporalMark.Postgres.Tests/TemporalMark.Postgres.Tests.csproj --configuration Release
       - name: OIDC-signed operator enrollment and database replay smoke
         run: bash tests/integration/provisioning-smoke.sh

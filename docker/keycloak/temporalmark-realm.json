@@ -20,6 +20,10 @@
       {
         "name": "platform_provisioner",
         "description": "Controls isolated org enrollment (development only)"
+      },
+      {
+        "name": "platform_approver",
+        "description": "DEV ONLY independent organization approval role"
       }
     ]
   },
@@ -144,6 +148,16 @@
             "included.client.audience": "temporalmark-live-introspector",
             "access.token.claim": "true"
           }
+        },
+        {
+          "name": "local-approval-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "temporalmark-approval",
+            "access.token.claim": "true"
+          }
         }
       ]
     },
@@ -167,6 +181,13 @@
       "implicitFlowEnabled": false,
       "serviceAccountsEnabled": false,
       "fullScopeAllowed": false
+    },
+    {
+      "clientId": "temporalmark-approval",
+      "name": "Approval token audience",
+      "protocol": "openid-connect",
+      "enabled": true,
+      "bearerOnly": true
     }
   ],
   "users": [
@@ -228,6 +249,25 @@
         {
           "type": "password",
           "value": "local-admin-only",
+          "temporary": false
+        }
+      ]
+    },
+    {
+      "id": "00000000-0000-0000-0000-000000000004",
+      "username": "demo-approver",
+      "firstName": "Independent",
+      "lastName": "Approver",
+      "email": "demo-approver@example.invalid",
+      "emailVerified": true,
+      "enabled": true,
+      "realmRoles": [
+        "platform_approver"
+      ],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "local-approver-only",
           "temporary": false
         }
       ]

@@ -36,52 +36,18 @@ public sealed class ProvisioningPrivilegeTests
     }
 
     [Fact]
-    public async Task ProvisionerHasOnlyNarrowVerifiedBootstrapAndProofsAreOneTime()
+    public async Task ProvisionerCannotCallLegacyDirectBootstrapEvenWithValidLookingClaims()
     {
-        var org = Guid.NewGuid();
         await using var c = Operator();
         await c.OpenAsync();
         await using var old = new NpgsqlCommand(
-            "SELECT public.bootstrap_organization(@org,'Forbidden','fabricated-sub')", c);
+            "SELECT public.bootstrap_verified_organization(@org,'Forbidden','fabricated-admin'," +
+            "'https://issuer.example.test','fabricated-operator',@a::char(64),@b::char(64))", c);
         old.Parameters.AddWithValue("org", Guid.NewGuid());
+        old.Parameters.AddWithValue("a", new string('A', 64));
+        old.Parameters.AddWithValue("b", new string('B', 64));
         var denied = await Assert.ThrowsAsync<PostgresException>(async () => await old.ExecuteScalarAsync());
         Assert.Equal(PostgresErrorCodes.InsufficientPrivilege, denied.SqlState);
-
-        const string opHash = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
-        const string adminHash = "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB";
-        async Task<Guid> Enroll(Guid id, string operatorTokenHash, string adminTokenHash)
-        {
-            await using var cmd = new NpgsqlCommand("""
-                SELECT public.bootstrap_verified_organization(@id,@name,@admin,@issuer,@operator,
-                       @operatorHash::char(64),@adminHash::char(64))
-                """, c);
-            cmd.Parameters.AddWithValue("id", id);
-            cmd.Parameters.AddWithValue("name", "Privileged " + id.ToString("N"));
-            cmd.Parameters.AddWithValue("admin", "admin-subject");
-            cmd.Parameters.AddWithValue("issuer", "http://localhost:8081/realms/temporalmark");
-            cmd.Parameters.AddWithValue("operator", "operator-subject");
-            cmd.Parameters.AddWithValue("operatorHash", operatorTokenHash);
-            cmd.Parameters.AddWithValue("adminHash", adminTokenHash);
-            return Assert.IsType<Guid>(await cmd.ExecuteScalarAsync());
-        }
-
-        Assert.Equal(org, await Enroll(org, opHash, adminHash));
-        var replay = await Assert.ThrowsAsync<PostgresException>(async () =>
-            await Enroll(Guid.NewGuid(), opHash, adminHash));
-        Assert.Equal(PostgresErrorCodes.UniqueViolation, replay.SqlState);
-
-        await using var owner = MigrationOwner();
-        await owner.OpenAsync();
-        await using var audit = new NpgsqlCommand("""
-            SELECT first_admin_subject, identity_issuer, provisioner_subject
-            FROM public.organization_provisioning_events WHERE organization_id = @org
-            """, owner);
-        audit.Parameters.AddWithValue("org", org);
-        await using var rows = await audit.ExecuteReaderAsync();
-        Assert.True(await rows.ReadAsync());
-        Assert.Equal("admin-subject", rows.GetString(0));
-        Assert.Equal("http://localhost:8081/realms/temporalmark", rows.GetString(1));
-        Assert.Equal("operator-subject", rows.GetString(2));
     }
 
     [Fact]
