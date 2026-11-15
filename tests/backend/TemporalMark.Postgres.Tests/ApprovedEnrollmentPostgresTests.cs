@@ -149,7 +149,9 @@ public sealed class ApprovedEnrollmentPostgresTests
         await using var owner=Owner();
         await owner.OpenAsync();
         await using(var age=new NpgsqlCommand("""
-            UPDATE public.organization_enrollment_requests SET expires_utc=clock_timestamp()-interval '1 minute'
+            UPDATE public.organization_enrollment_requests
+            SET requested_utc=clock_timestamp()-interval '10 minutes',
+                expires_utc=clock_timestamp()-interval '6 minutes'
             WHERE id=@id
             """,owner))
         {
