@@ -96,3 +96,7 @@ The pilot reviewer CLI supports `challenge`, which issues an **unconsumable, uns
 ## WebAuthn relying-party policy groundwork (#40)
 
 A new .NET 10 **validation-only** WebAuthn reviewer RP policy rejects insecure/noncanonical HTTPS origins and requires an explicitly pinned RP hostname exactly matching the trusted origin. It does **not** register credentials, validate signatures or authorize/reject enrollment. See [ADR 0017](adr/0017-pinned-webauthn-rp-origin-policy.md) and [on-prem/Azure security checklist](docs/WEBAUTHN_RP_POLICY.md). Reviewer-held cryptographic consent, verified browser assertions and legacy SQL grant cutover remain #38; no QTSP or WORM status is implied.
+
+## WebAuthn assertion client-data guard (#41)
+
+The standalone .NET business layer also contains a **non-authorizing**, bounded WebAuthn Level 3 `clientDataJSON` preflight that checks exact V012 nonce/base64url, assertion type, pinned origin and top-level context; malicious duplicates, invalid UTF-8 and malformed JSON are denied. This parser is **not wired into any approval/registration endpoint** and does NOT verify an authenticator signature, reviewer-held key, user verification, decision or challenge consumption. See [ADR 0018](adr/0018-webauthn-clientdata-preflight.md) and [reviewer security guide](docs/WEBAUTHN_CLIENT_DATA.md). Production signer, SQL grants and governance remain #38; no legal qualification implied.
