@@ -220,6 +220,10 @@ resource "azurerm_container_app" "web" {
         name  = "API_UPSTREAM"
         value = "http://${azurerm_container_app.api.name}"
       }
+      env {
+        name  = "NGINX_ENVSUBST_FILTER"
+        value = "^API_UPSTREAM$"
+      }
     }
   }
 
