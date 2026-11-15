@@ -4,7 +4,7 @@
 
 ## Prerequisites and non-goals
 
-- PostgreSQL 17+, versioned migrations through V013 executed via the **migration owner**. Earlier migration scripts and their SHA-256 checksums cannot be edited.
+- PostgreSQL 17+, versioned migrations through V014 executed via the **migration owner**. Earlier migration scripts and their SHA-256 checksums cannot be edited.
 - The deployment's independently reviewed, exact **HTTPS identity issuer and RP hostname** must be approved by security/change control. This first profile pins an origin equal to `https://<rp-id>`, without explicit custom ports, related origins, HTTP localhost or browser-selected headers. Some on-prem nonstandard port setups will require a separately audited profile before enrollment.
 - There is **no default trusted RP row** and **no registrar login or role membership** in the development stack. The group `temporalmark_credential_registrar_group NOLOGIN` does not gain possession or role assurance by its existence.
 - No public registration/assertion API, WebAuthn library/attestation verification, approved key registration, credential store, key acceptance, registered counter, registration consumption or approved tenant decision is implemented. Existing restricted reviewer SQL approval/rejection functions remain a separate explicit blocker (#38).
@@ -45,8 +45,13 @@ The routine takes plain SQL subject strings. **It does not cryptographically aut
 ## Verification
 
 - xUnit live PostgreSQL tests: `tests/backend/TemporalMark.Postgres.Tests/ReviewerRegistrationIntentPostgresTests.cs`.
-- Expected versioned migration count in CI: **13**; `schema_migrations` provides checksum evidence.
+- Expected versioned migration count in CI: **14**; `schema_migrations` provides checksum evidence.
 - RED test-first commit `d213bb68f2daae58598de89e0fcf28866d195b52`; V013 implementation `9ef4550c9861fdaf4058a4e0fc8f6273868c7154`, CI version update `446a196b91cc1611818df1cbd5713493a00a612f`.
 - See #45 for final exact-head CI result; never declare success without backend, frontend, Terraform and docker-smoke all green.
 
 Sources: [W3C WebAuthn Level 3](https://www.w3.org/TR/2026/REC-webauthn-3-20260825/#sctn-registering-a-new-credential), [PostgreSQL SECURITY DEFINER](https://www.postgresql.org/docs/17/sql-createfunction.html), [privileges](https://www.postgresql.org/docs/17/ddl-priv.html).
+
+
+## V014 RP DNS integrity hardening
+
+The originally published V013 migration is immutable and must never be rewritten. Forward-only V014 adds a strict owner-pinned DNS constraint: reject IPv4 literal RP IDs, all-numeric final DNS labels and labels exceeding 63 characters, even if the earlier basic regex matched. Live PostgreSQL negative tests cover these failures. Existing bad policy rows stop the migration for change-controlled repair; do not disable the constraint. This correction **does not create or trust any WebAuthn credential**. Exact CI count: **14**.

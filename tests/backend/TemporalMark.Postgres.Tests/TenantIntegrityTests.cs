@@ -49,7 +49,7 @@ public sealed class TenantIntegrityTests
         await using var conn = Connection();
         await conn.OpenAsync();
         await using var cmd = new NpgsqlCommand("SELECT count(*) FROM public.schema_migrations", conn);
-        Assert.Equal(13L, Assert.IsType<long>(await cmd.ExecuteScalarAsync()));
+        Assert.Equal(14L, Assert.IsType<long>(await cmd.ExecuteScalarAsync()));
     }
 
     [Fact]

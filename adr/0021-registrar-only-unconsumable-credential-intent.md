@@ -29,3 +29,8 @@ For Azure and on-prem, require independently approved HTTPS FQDN, matching signe
 - W3C Web Authentication Level 3, §7.1 registration: https://www.w3.org/TR/2026/REC-webauthn-3-20260825/#sctn-registering-a-new-credential
 - PostgreSQL 17 SECURITY DEFINER and safe search_path: https://www.postgresql.org/docs/17/sql-createfunction.html
 - PostgreSQL privileges and default EXECUTE grants: https://www.postgresql.org/docs/17/ddl-priv.html
+
+
+## Forward-only V014 addendum — 2026-11-15
+
+Subsequent RED PostgreSQL tests revealed the V013 initial RP regex would accept raw dotted IPv4, a >63-character DNS label and numeric-only final label; these are inconsistent with the strict .NET RP profile in ADR 0017. V013 was **already published and applied in CI**, so it is never rewritten. New versioned `V014__registrar_rp_dns_integrity.sql` adds an immutable SQL helper/constraint over owner-pinned RP rows to deny those names, and intentionally rejects existing incompatible owner policies on migration. No app/SQL credential activation or additional role grants are introduced. The exact migration count is **14**. Change-control and no-login boundaries are unchanged.
