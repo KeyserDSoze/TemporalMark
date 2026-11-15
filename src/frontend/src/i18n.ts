@@ -47,6 +47,7 @@ const resources = {
     technicalStatus: "Stato del servizio",
     servicePaused: "Emissione propria disabilitata",
     actions: "Operazioni",
+    downloadReceipt: "Scarica .tsr",
     logoutHelp: "Esci dalla sessione"
   }},
   en: { translation: {
@@ -94,6 +95,7 @@ const resources = {
     technicalStatus: "Service status",
     servicePaused: "Own issuance disabled",
     actions: "Actions",
+    downloadReceipt: "Download .tsr",
     logoutHelp: "End session"
   }}
 };

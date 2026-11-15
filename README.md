@@ -52,6 +52,7 @@ cd ../../tests/frontend && npm install && npx playwright install chromium && npm
 - `GET /api/v1/me` — current authorized tenant; OIDC required.
 - `GET /api/v1/stamps/summary?fromUtc=...&toUtcExclusive=...`
 - `GET /api/v1/stamps?fromUtc=...&toUtcExclusive=...&offset=0&limit=50`
+- `GET /api/v1/stamps/{id}/receipt` — authenticated, tenant-protected raw RFC 3161 DER `.tsr` download.
 - `GET /api/v1/stamps/export?fromUtc=...&toUtcExclusive=...`
 - `POST /api/v1/stamps/issue` — admin-only, JSON `{"digestBase64":"..."}` (32-byte SHA-256 Base64), delegates to server-configured HTTPS RFC 3161 TSA; returns 503 if absent and stores receipts as **Unverified**, NEVER qualified by default.
 

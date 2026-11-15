@@ -88,6 +88,22 @@ export default function Dashboard({ accessToken }: { accessToken: string }) {
     }
   };
 
+  const downloadReceipt = async (id: string) => {
+    setError("");
+    try {
+      const response = await get(`stamps/${id}/receipt`);
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `timestamp-${id}.tsr`;
+      link.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (exception) {
+      setError(exception instanceof Error ? exception.message : t("error"));
+    }
+  };
+
   const issueExternal = async () => {
     if (!selectedFile || issuing) return;
     setIssuing(true);
@@ -174,8 +190,8 @@ export default function Dashboard({ accessToken }: { accessToken: string }) {
         {records.length === 0 ? <p className="py-10 text-center text-muted-foreground">{busy ? t("loading") : t("noResults")}</p> :
           <div className="overflow-x-auto">
             <table className="w-full min-w-[640px] text-left text-sm">
-              <thead><tr className="border-b border-border text-muted-foreground"><th className="pb-3 font-medium">{t("issued")}</th><th className="pb-3 font-medium">{t("provider")}</th><th className="pb-3 font-medium">{t("digest")}</th><th className="pb-3 font-medium">{t("status")}</th></tr></thead>
-              <tbody>{records.map(record => <tr className="border-b border-border/50" key={record.id}><td className="py-4 pr-4 whitespace-nowrap">{new Date(record.issuedUtc).toLocaleString(i18n.language, { timeZone: "UTC" })}</td><td className="py-4 pr-4">{record.providerId}</td><td className="max-w-[220px] truncate py-4 pr-4 font-mono text-xs" title={record.digestBase64}>{record.digestBase64}</td><td className="py-4"><Badge>{labelFor(record.validationState)}</Badge></td></tr>)}</tbody>
+              <thead><tr className="border-b border-border text-muted-foreground"><th className="pb-3 font-medium">{t("issued")}</th><th className="pb-3 font-medium">{t("provider")}</th><th className="pb-3 font-medium">{t("digest")}</th><th className="pb-3 font-medium">{t("status")}</th><th className="pb-3 font-medium">{t("actions")}</th></tr></thead>
+              <tbody>{records.map(record => <tr className="border-b border-border/50" key={record.id}><td className="py-4 pr-4 whitespace-nowrap">{new Date(record.issuedUtc).toLocaleString(i18n.language, { timeZone: "UTC" })}</td><td className="py-4 pr-4">{record.providerId}</td><td className="max-w-[220px] truncate py-4 pr-4 font-mono text-xs" title={record.digestBase64}>{record.digestBase64}</td><td className="py-4"><Badge>{labelFor(record.validationState)}</Badge></td><td className="py-4"><Button size="sm" variant="outline" aria-label={t("downloadReceipt")} onClick={() => void downloadReceipt(record.id)}><Download size={15} />{t("downloadReceipt")}</Button></td></tr>)}</tbody>
             </table>
           </div>}
         {summary && summary.count > 50 && <p className="mt-4 text-xs text-muted-foreground">50 / {summary.count}</p>}
