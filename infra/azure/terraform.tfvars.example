@@ -1,0 +1,12 @@
+# Copy to terraform.tfvars (gitignored). Never commit secrets.
+subscription_id          = "00000000-0000-0000-0000-000000000000"
+prefix                   = "temporalmark-dev"
+location                 = "westeurope"
+storage_account_name     = "tmreplacewithunique"
+api_image                = "registry.example.invalid/temporalmark-api:tag"
+web_image                = "registry.example.invalid/temporalmark-web:tag"
+oidc_authority           = "https://id.example.com/realms/temporalmark"
+postgres_admin           = "temporalmarkadmin"
+postgres_password        = "SET_VIA_TF_VAR_postgres_password_INSTEAD"
+registry_connection_string = "SET_VIA_TF_VAR_registry_connection_string_INSTEAD"
+evidence_retention_days  = 3650
