@@ -50,4 +50,26 @@ roles = [call("GET", base + f"/clients/{management_client}/roles/{role}", master
          for role in ("view-users", "view-realm", "query-users")]
 call("POST", base + f"/users/{account_id}/role-mappings/clients/{management_client}",
      master, roles)
-print("Disposable directory service client granted Keycloak read-only user/realm roles.")
+# Probe permission boundaries through an ACTUAL service-account token: the
+# realm-management client roles must appear in the role-scoped access token.
+# No token, user attributes or role names are logged.
+import base64
+client_body = urllib.parse.urlencode({
+    "client_id": "temporalmark-directory-checker",
+    "client_secret": "local-directory-only",
+    "grant_type": "client_credentials"
+}).encode()
+with urllib.request.urlopen(urllib.request.Request(
+    origin + "/realms/temporalmark/protocol/openid-connect/token",
+    data=client_body
+), timeout=20) as response:
+    service_token = json.load(response)["access_token"]
+user_id = "00000000-0000-0000-0000-000000000002"
+current = call("GET", base + "/users/" + user_id, service_token)
+if current.get("id") != user_id or not current.get("enabled"):
+    raise AssertionError("Directory service account could not read target user")
+mappings = call("GET", base + "/users/" + user_id +
+                "/role-mappings/realm/composite", service_token)
+if not any(role.get("name") == "platform_provisioner" for role in mappings):
+    raise AssertionError("Directory service account cannot read current effective role")
+print("Disposable Keycloak directory service-account read-only checks passed.")
