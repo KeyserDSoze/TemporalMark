@@ -136,6 +136,27 @@ public sealed class ReviewerRegistrationIntentPostgresTests
                     store.IssueAsync(request, CancellationToken.None));
                 Assert.Contains("signed", denied.Message, StringComparison.OrdinalIgnoreCase);
 
+                // Defense in depth: even a manually mistaken privileged
+                // GRANT to this dedicated login MUST NOT make the old
+                // unsigned application call executable. The migration owner
+                // can always bypass SQL controls, so this is app fail-closed
+                // proof only, not WebAuthn signer trust.
+                await using (var grant = new NpgsqlCommand(
+                    $"GRANT EXECUTE ON FUNCTION public.issue_reviewer_registration_intent(text,text,text,text,text) TO {login}", owner))
+                    await grant.ExecuteNonQueryAsync();
+                try
+                {
+                    await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+                        store.IssueAsync(request with { ReviewerSubject = "overgranted-reviewer" },
+                            CancellationToken.None));
+                }
+                finally
+                {
+                    await using var revoke = new NpgsqlCommand(
+                        $"REVOKE EXECUTE ON FUNCTION public.issue_reviewer_registration_intent(text,text,text,text,text) FROM {login}", owner);
+                    await revoke.ExecuteNonQueryAsync();
+                }
+
                 await using var restricted = new NpgsqlConnection(connection);
                 await restricted.OpenAsync();
                 var sqlDenied = await Assert.ThrowsAsync<PostgresException>(() =>
