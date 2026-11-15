@@ -5,9 +5,16 @@ namespace TemporalMark.Business.Tenancy;
 /// OIDC access token. Requires deployment evidence that a pinned ACR genuinely
 /// maps to a two-factor Keycloak step-up flow; the ACR string alone is NOT MFA.
 /// </summary>
+/// <summary>
+/// OIDC_ACR_ASSERTED is a *signed IdP claim*, not independent MFA certification.
+/// DISPOSABLE_PASSWORD_ONLY is a deliberately labelled local test exception.
+/// </summary>
+public sealed record ApprovalAuthenticationEvidence(
+    string Kind, string? Context, long? AuthenticationTimeUnix, string PolicyId);
+
 public interface IApprovalAuthenticationPolicy
 {
-    void Require(VerifiedOidcToken verifiedApprover);
+    ApprovalAuthenticationEvidence Require(VerifiedOidcToken verifiedApprover);
 }
 
 public sealed class ApprovalAuthenticationPolicy : IApprovalAuthenticationPolicy
@@ -41,7 +48,7 @@ public sealed class ApprovalAuthenticationPolicy : IApprovalAuthenticationPolicy
         time = timeProvider ?? TimeProvider.System;
     }
 
-    public void Require(VerifiedOidcToken verifiedApprover)
+    public ApprovalAuthenticationEvidence Require(VerifiedOidcToken verifiedApprover)
     {
         if (verifiedApprover is null)
             throw new UnauthorizedAccessException("Missing validated approver identity.");
@@ -52,7 +59,8 @@ public sealed class ApprovalAuthenticationPolicy : IApprovalAuthenticationPolicy
         if (allowDisposableFixture &&
             verifiedApprover.Issuer == DisposableLocalIssuer &&
             verifiedApprover.Subject == DisposableApproverSubject)
-            return;
+            return new ApprovalAuthenticationEvidence("DISPOSABLE_PASSWORD_ONLY",
+                null, null, "disposable-keycloak-pilot-v1");
 
         var now = time.GetUtcNow().ToUnixTimeSeconds();
         if (verifiedApprover.AuthenticationContext != requiredAcr ||
@@ -65,5 +73,7 @@ public sealed class ApprovalAuthenticationPolicy : IApprovalAuthenticationPolicy
             issuedAt < now - 300)
             throw new UnauthorizedAccessException(
                 "Approved, recent OIDC authentication assurance is required.");
+        return new ApprovalAuthenticationEvidence("OIDC_ACR_ASSERTED",
+            requiredAcr, authTime, "pinned-oidc-acr-v1");
     }
 }

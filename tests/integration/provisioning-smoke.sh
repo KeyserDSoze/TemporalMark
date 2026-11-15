@@ -110,6 +110,13 @@ fi
   --expected-initial-admin-sub "$admin_sub" --expected-operator-sub "$operator_sub" \
   --approver-token-file "$temp_dir/approver.jwt" > "$temp_dir/approved.log"
 grep -Fq "Approval recorded: $request_id" "$temp_dir/approved.log"
+# The existing password-grant fixture MUST be labeled NON_MFA in the audit.
+# Do not silently promote its tokens to assurance of a second factor.
+fixture_kind="$(docker compose -f docker/compose.yml exec -T postgres psql -U temporalmark     -d temporalmark -tAc "SELECT approver_assurance_kind FROM organization_enrollment_requests WHERE id='$request_id'")"
+test "$fixture_kind" = "DISPOSABLE_PASSWORD_ONLY" || {
+    echo "SECURITY FAILURE: password-only CI approver mislabeled as strong authentication" >&2
+    exit 1
+}
 
 "${cli[@]}" complete --request-id "$request_id" \
   --organization-name "CI verification org" \

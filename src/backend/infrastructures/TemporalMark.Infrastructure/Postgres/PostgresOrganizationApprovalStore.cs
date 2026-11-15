@@ -38,7 +38,7 @@ public sealed class PostgresOrganizationApprovalStore(NpgsqlDataSource database)
         await using var conn = await database.OpenConnectionAsync(ct);
         await using var cmd = new NpgsqlCommand("""
             SELECT public.approve_enrollment(@id,@name,@issuer,@operator,@admin,
-                    @approver,@proof::char(64))
+                    @approver,@proof::char(64),@kind,@context,@authTime)
             """, conn);
         cmd.Parameters.AddWithValue("id", approval.OrganizationId);
         cmd.Parameters.AddWithValue("name", approval.ExpectedOrganizationName);
@@ -47,6 +47,11 @@ public sealed class PostgresOrganizationApprovalStore(NpgsqlDataSource database)
         cmd.Parameters.AddWithValue("admin", approval.ExpectedAdminSubject);
         cmd.Parameters.AddWithValue("approver", approval.ApproverSubject);
         cmd.Parameters.AddWithValue("proof", approval.ApprovalProofHashHex);
+        cmd.Parameters.AddWithValue("kind", approval.AuthenticationEvidence.Kind);
+        var context = cmd.Parameters.Add("context", NpgsqlTypes.NpgsqlDbType.Text);
+        context.Value = (object?)approval.AuthenticationEvidence.Context ?? DBNull.Value;
+        var authTime = cmd.Parameters.Add("authTime", NpgsqlTypes.NpgsqlDbType.Bigint);
+        authTime.Value = (object?)approval.AuthenticationEvidence.AuthenticationTimeUnix ?? DBNull.Value;
         return AssertGuid(await cmd.ExecuteScalarAsync(ct));
     }
 

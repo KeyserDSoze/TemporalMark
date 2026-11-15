@@ -10,7 +10,8 @@ namespace TemporalMark.Business.Tenancy;
 public sealed record VerifiedOrganizationApproval(
     Guid OrganizationId, string ExpectedOrganizationName, string IdentityIssuer,
     string ExpectedOperatorSubject, string ExpectedAdminSubject,
-    string ApproverSubject, string ApprovalProofHashHex);
+    string ApproverSubject, string ApprovalProofHashHex,
+    ApprovalAuthenticationEvidence AuthenticationEvidence);
 
 /// <summary>Current directory state, not claims snapshotted in the JWT.</summary>
 public sealed record CurrentOidcAccount(string Issuer, string Subject, bool Enabled,
@@ -68,7 +69,7 @@ public sealed class OrganizationApprovalWorkflow(
         RequireIdentity(identity, "platform_approver");
         // No enrollment approval can rely on a signed role without recent
         // authentication context. The exact ACR must map to real MFA in the IdP.
-        approverAuthentication.Require(identity);
+        var assurance = approverAuthentication.Require(identity);
         if (identity.Subject == expectedOperatorSubject || identity.Subject == expectedAdminSubject ||
             expectedOperatorSubject == expectedAdminSubject)
             throw new UnauthorizedAccessException("Approver, operator and admin must be distinct.");
@@ -77,7 +78,7 @@ public sealed class OrganizationApprovalWorkflow(
         await RequireDirectoryRoleAsync(identity, "platform_approver", ct);
         var entry = new VerifiedOrganizationApproval(
             requestId, organizationName, identity.Issuer, expectedOperatorSubject,
-            expectedAdminSubject, identity.Subject, HashToken(approverToken));
+            expectedAdminSubject, identity.Subject, HashToken(approverToken), assurance);
         var result = await store.ApproveAsync(entry, ct);
         if (result != requestId) throw new InvalidOperationException("Approval ID mismatch.");
         return result;
