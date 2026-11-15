@@ -54,6 +54,12 @@ export PROVISIONING_DIRECTORY_CLIENT_SECRET="local-directory-only"
 export TEMPORALMARK_PROVISIONING_DB="Host=127.0.0.1;Port=5432;Database=temporalmark;Username=temporalmark_provisioner;Password=local-provisioner-only"
 export TEMPORALMARK_APPROVER_DB="Host=127.0.0.1;Port=5432;Database=temporalmark;Username=temporalmark_approver;Password=local-approver-only"
 
+# Read-only confirmation: the denied operation must not append any tenant audit.
+count_events() {
+    docker compose -f docker/compose.yml exec -T postgres \
+        psql -U temporalmark -d temporalmark -tAc 'SELECT count(*) FROM organization_provisioning_events'
+}
+
 cli=(dotnet run --project src/backend/applications/TemporalMark.Provisioner/TemporalMark.Provisioner.csproj --configuration Release --)
 operator_sub="00000000-0000-0000-0000-000000000002"
 admin_sub="00000000-0000-0000-0000-000000000003"
