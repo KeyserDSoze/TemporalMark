@@ -7,8 +7,9 @@ namespace TemporalMark.Infrastructure.Postgres;
 /// Separately configured registrar-only SQL LOGIN (NOT migration owner, API,
 /// provisioner or approver). The NOLOGIN group has no seeded membership.
 /// This adapter NEVER accepts a signing key, JWT, approval, WebAuthn response
-/// or organization request. A stolen SQL login can invoke V013 directly:
-/// host isolation, vault/custody and independent audit remain operational gates.
+/// or organization request. V015 revokes this LOGIN's inherited ability to
+/// invoke V013: an approved cryptographic ceremony is still absent and this
+/// method MUST fail closed for all ordinary registrar executors.
 /// </summary>
 public sealed class PostgresReviewerRegistrationIntentStore : IReviewerRegistrationIntentStore
 {
@@ -54,7 +55,10 @@ public sealed class PostgresReviewerRegistrationIntentStore : IReviewerRegistrat
                      'public.reviewer_registration_rp_policies','SELECT,INSERT,UPDATE,DELETE'),
                    pg_catalog.pg_has_role(current_user, 'temporalmark_approver_group', 'MEMBER'),
                    pg_catalog.pg_has_role(current_user, 'temporalmark_provisioner_group', 'MEMBER'),
-                   pg_catalog.pg_has_role(current_user, 'temporalmark_runtime_group', 'MEMBER')
+                   pg_catalog.pg_has_role(current_user, 'temporalmark_runtime_group', 'MEMBER'),
+                   pg_catalog.has_function_privilege(current_user,
+                     'public.issue_reviewer_registration_intent(text,text,text,text,text)',
+                     'EXECUTE')
             FROM pg_catalog.pg_roles AS r
             WHERE r.rolname = session_user
             """, connection))
@@ -67,11 +71,16 @@ public sealed class PostgresReviewerRegistrationIntentStore : IReviewerRegistrat
                 guardReader.GetBoolean(4) || !guardReader.GetBoolean(5) ||
                 guardReader.GetBoolean(6) || guardReader.GetBoolean(7) ||
                 guardReader.GetBoolean(8) || guardReader.GetBoolean(9) ||
-                guardReader.GetBoolean(10) || await guardReader.ReadAsync(ct))
+                guardReader.GetBoolean(10) || !guardReader.GetBoolean(11) ||
+                await guardReader.ReadAsync(ct))
                 throw new UnauthorizedAccessException(
-                    "Dedicated least-privilege registrar SQL login required.");
+                    "Registrar SQL issuance disabled until a signed one-time registration ceremony is authorized.");
         }
 
+        // This call is reached only if a FUTURE reviewed migration supplies
+        // a separate signed release protocol. V015 explicitly denies it
+        // for the ordinary registrar group, so this legacy function does
+        // NOT execute with a current restricted registrar login.
         // This is the ONLY SQL call permitted by this adapter. V013 enforces
         // owner-pinned issuer/RP/origin, one-ever uniqueness, and a short-lived
         // cryptographically unpredictable database-issued NONCONSUMABLE nonce.
