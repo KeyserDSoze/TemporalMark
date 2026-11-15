@@ -20,13 +20,23 @@ try
     var adminAudience = Environment.GetEnvironmentVariable("PROVISIONING_ADMIN_AUDIENCE")
         ?? "temporalmark-api";
     var localHttp = Environment.GetEnvironmentVariable("PROVISIONING_ALLOW_HTTP_LOOPBACK") == "true";
+    // A supported live provider is mandatory: never silently fall back to
+    // signature-only admission when introspection credentials are missing.
+    if (Environment.GetEnvironmentVariable("PROVISIONING_LIVE_PROVIDER") != "keycloak")
+        throw new InvalidOperationException("A supported live token-status provider is required.");
+    var introspectionId = Environment.GetEnvironmentVariable("PROVISIONING_INTROSPECTION_CLIENT_ID")
+        ?? throw new InvalidOperationException("Confidential introspection client ID required.");
+    var introspectionSecret = Environment.GetEnvironmentVariable("PROVISIONING_INTROSPECTION_CLIENT_SECRET")
+        ?? throw new InvalidOperationException("Confidential introspection client secret required.");
+    using var live = new KeycloakTokenIntrospector(issuer, localHttp,
+        introspectionId, introspectionSecret);
     var verifier = new OidcAccessTokenVerifier(issuer, localHttp);
     var policy = new ProvisioningPolicy(issuer.TrimEnd('/'), operatorAudience, adminAudience);
     await using var db = NpgsqlDataSource.Create(connection);
     var operatorToken = await ReadProtectedTokenFile(args[3]);
     var adminToken = await ReadProtectedTokenFile(args[5]);
     var service = new OrganizationProvisioningService(
-        verifier, new PostgresOrganizationProvisioningStore(db), policy);
+        verifier, live, new PostgresOrganizationProvisioningStore(db), policy);
     var organization = await service.CreateAsync(args[1], operatorToken, adminToken, default);
     Console.WriteLine($"Organization created: {organization:D}");
     Console.WriteLine("Operator must now configure the new organization's verified IdP claim mapping.");

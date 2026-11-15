@@ -13,6 +13,17 @@ public interface IVerifiedOidcTokenSource
     Task<VerifiedOidcToken> VerifyAsync(string accessToken, string expectedAudience, CancellationToken cancellationToken);
 }
 
+/// <summary>Live, non-cached status reported by the same trusted OIDC authority.</summary>
+public sealed record LiveOidcTokenState(
+    bool Active, string? Issuer, string? Subject,
+    IReadOnlyCollection<string> Audiences, IReadOnlyCollection<string> Roles);
+
+public interface ILiveOidcTokenStatus
+{
+    Task<LiveOidcTokenState> CheckAsync(
+        string accessToken, string expectedAudience, CancellationToken cancellationToken);
+}
+
 public sealed record VerifiedOrganizationEnrollment(
     Guid OrganizationId,
     string OrganizationName,
@@ -33,6 +44,7 @@ public interface IOrganizationProvisioningStore
 /// </summary>
 public sealed class OrganizationProvisioningService(
     IVerifiedOidcTokenSource verifier,
+    ILiveOidcTokenStatus liveStatus,
     IOrganizationProvisioningStore storage,
     ProvisioningPolicy policy)
 {
@@ -60,11 +72,32 @@ public sealed class OrganizationProvisioningService(
             !adminIdentity.Roles.Contains("tenant_admin", StringComparer.Ordinal))
             throw new UnauthorizedAccessException("Validated OIDC identities lack the required permissions or issuer.");
 
+        // Cryptographic JWT validity is insufficient if the IdP has since revoked
+        // the session or disabled the principal. Never cache a positive status;
+        // both checks must succeed before any write occurs.
+        await RequireLiveAsync(operatorAccessToken, policy.OperatorAudience,
+            operatorIdentity, "platform_provisioner", cancellationToken);
+        await RequireLiveAsync(firstAdminAccessToken, policy.AdminAudience,
+            adminIdentity, "tenant_admin", cancellationToken);
+
         var enrollment = new VerifiedOrganizationEnrollment(
             Guid.NewGuid(), organizationName, policy.Issuer, adminIdentity.Subject, operatorIdentity.Subject,
             HashToken(operatorAccessToken), HashToken(firstAdminAccessToken));
         await storage.CreateAsync(enrollment, cancellationToken);
         return enrollment.OrganizationId;
+    }
+
+    private async Task RequireLiveAsync(
+        string accessToken, string expectedAudience, VerifiedOidcToken signedIdentity,
+        string requiredRole, CancellationToken ct)
+    {
+        var state = await liveStatus.CheckAsync(accessToken, expectedAudience, ct);
+        if (!state.Active || state.Issuer != policy.Issuer ||
+            state.Issuer != signedIdentity.Issuer ||
+            state.Subject != signedIdentity.Subject ||
+            state.Audiences is null || !state.Audiences.Contains(expectedAudience, StringComparer.Ordinal) ||
+            state.Roles is null || !state.Roles.Contains(requiredRole, StringComparer.Ordinal))
+            throw new UnauthorizedAccessException("Live OIDC status does not match the signed identity.");
     }
 
     private static void RequireToken(string? token, string param)
