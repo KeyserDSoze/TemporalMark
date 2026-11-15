@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.15" />
+    <ProjectReference Include="../../business/TemporalMark.Business/TemporalMark.Business.csproj" />
+    <ProjectReference Include="../../infrastructures/TemporalMark.Infrastructure/TemporalMark.Infrastructure.csproj" />
+  </ItemGroup>
+</Project>
