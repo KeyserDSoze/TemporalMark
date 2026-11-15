@@ -123,3 +123,11 @@ Progress is recorded in issues and CI, not inferred from this file. Every slice 
 - [x] Test-first RED commit `7c80ede` ([expected CI failure](https://github.com/KeyserDSoze/TemporalMark/actions/runs/43770129697)); ephemeral signed fixture, real-library positive hashed-only `UNAPPROVED`, and mutation negatives added. `System.Formats.Cbor` pinned to patched 10.0.15 after CI detected CVE-2026-118747 in version 10.0.0.
 - [ ] #54 close only after **exact final-head** backend/frontend/terraform/docker-smoke CI success; no fake-positive success claim.
 - [ ] #53 production trust: signed FIDO MDS BLOB/chain and root governance, AAGUID model policy/status revocation, certificate renewal, integration with actual virtual/physical authenticator and tested fail-closed outage, privacy impact and CAB review. Actual reviewer-signed and SQL-atomic authorization remains #44/#50/#46/#38. No deployment of test CA/keys, ACTIVE enrollment, approval permissions, WORM or QTSP status.
+
+
+## Metadata model inspection and signed-MDS root blocker (#56 / #55)
+
+- [x] ADR 0028 before RED tests; conservative non-authorizing metadata policy inspection using actual pinned Fido2 4.3.3 **model classes**, NOT a verified MDS JWT or production hardware attestation. Focused child #56; [operator runbook](WEBAUTHN_MDS_POLICY.md).
+- [x] RED tests require refusal for revoked/security-bypassed/compromised/unknown status, missing duplicate/mismatched AAGUID, malformed/no attestation roots, unsupported protocol or attestation, serial rollback, stale/future observation, and non-`UNAPPROVED` result; GREEN pure `.NET 10` policy returns `UNAPPROVED` only.
+- [ ] #56 close only after **exact final-head** four-job GitHub CI GREEN; the metadata objects in tests are **unsigned**, so no trust claim.
+- [ ] #55 next work: true signed/JWS x5c and CRL/revocation validation, GlobalSign **R46** root transition with R3 cross-cert (August 2026, R3 and cross-cert expire **2029-03-18**), separate signed/persisted monotonic metadata checkpoint, AAGUID-specific attestation CA and trust policy, air-gap/DR/SSRF constraints and DPIA. Fido2 **4.3.3** upstream R3-pinned MDS repository requires independent root/CRL audit before production. Never re-enable V015/V016, credential trust or SQL approval merely from policy inspection. Parent #53 and #44/#50/#46/#38 remain OPEN.
