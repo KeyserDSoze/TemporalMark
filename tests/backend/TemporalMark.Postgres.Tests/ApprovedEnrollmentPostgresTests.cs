@@ -115,6 +115,121 @@ public sealed class ApprovedEnrollmentPostgresTests
     }
 
     [Fact]
+    public async Task RejectionIsTerminalScopedAndReadOnlyForOtherSqlRoles()
+    {
+        var id = Guid.NewGuid();
+        var tag = id.ToString("N").ToUpperInvariant();
+        const string issuer = "https://review.example.test/realm";
+        var tokenProof = tag + new string('F', 32);
+        var reviewProof = tag + new string('E', 32);
+        await using var op = Operator();
+        await using var reviewer = Approver();
+        await op.OpenAsync();
+        await reviewer.OpenAsync();
+        await using (var cmd = new NpgsqlCommand("""
+            SELECT public.request_enrollment(@id,'Denied Legal Entity',@issuer,
+                'requester','intended-admin',@operatorProof::char(64),@adminProof::char(64))
+            """, op))
+        {
+            cmd.Parameters.AddWithValue("id", id);
+            cmd.Parameters.AddWithValue("issuer", issuer);
+            cmd.Parameters.AddWithValue("operatorProof", tag + new string('A', 32));
+            cmd.Parameters.AddWithValue("adminProof", tag + new string('B', 32));
+            Assert.Equal(id, Assert.IsType<Guid>(await cmd.ExecuteScalarAsync()));
+        }
+        async Task<Guid> Reject(string reason, string scopeHash)
+        {
+            await using var cmd = new NpgsqlCommand("""
+                SELECT public.reject_enrollment(@id,'Denied Legal Entity',@issuer,
+                    'requester','intended-admin','third-reviewer',
+                    @proof::char(64),@review::char(64),@reason)
+                """, reviewer);
+            cmd.Parameters.AddWithValue("id", id);
+            cmd.Parameters.AddWithValue("issuer", issuer);
+            cmd.Parameters.AddWithValue("proof", tokenProof);
+            cmd.Parameters.AddWithValue("review", scopeHash);
+            cmd.Parameters.AddWithValue("reason", reason);
+            return Assert.IsType<Guid>(await cmd.ExecuteScalarAsync());
+        }
+        await Assert.ThrowsAsync<PostgresException>(() => Reject("OTHER CUSTOM TEXT", reviewProof));
+        await Assert.ThrowsAsync<PostgresException>(() => Reject("UNVERIFIED_ORGANIZATION", new string('A', 63)));
+        Assert.Equal(id, await Reject("UNVERIFIED_ORGANIZATION", reviewProof));
+        await Assert.ThrowsAsync<PostgresException>(() => Reject("UNVERIFIED_ORGANIZATION", reviewProof));
+        await using (var review = new NpgsqlCommand("""
+            SELECT count(*) FROM public.read_pending_enrollment(@id,@issuer,'third-reviewer')
+            """, reviewer))
+        {
+            review.Parameters.AddWithValue("id", id);
+            review.Parameters.AddWithValue("issuer", issuer);
+            Assert.Equal(0L, Assert.IsType<long>(await review.ExecuteScalarAsync()));
+        }
+        await using (var approve = new NpgsqlCommand("""
+            SELECT public.approve_enrollment(@id,'Denied Legal Entity',@issuer,
+                'requester','intended-admin','third-reviewer',@hash::char(64),
+                'OIDC_ACR_ASSERTED','urn:temporalmark:loa:2',@authTime)
+            """, reviewer))
+        {
+            approve.Parameters.AddWithValue("id", id);
+            approve.Parameters.AddWithValue("issuer", issuer);
+            approve.Parameters.AddWithValue("hash", tag + new string('C', 32));
+            approve.Parameters.AddWithValue("authTime", DateTimeOffset.UtcNow.ToUnixTimeSeconds() - 10);
+            await Assert.ThrowsAsync<PostgresException>(() => approve.ExecuteScalarAsync());
+        }
+        await using (var complete = new NpgsqlCommand("""
+            SELECT public.complete_enrollment(@id,'Denied Legal Entity',@issuer,
+                'requester','intended-admin',@hash1::char(64),@hash2::char(64))
+            """, op))
+        {
+            complete.Parameters.AddWithValue("id", id);
+            complete.Parameters.AddWithValue("issuer", issuer);
+            complete.Parameters.AddWithValue("hash1", tag + new string('D', 32));
+            complete.Parameters.AddWithValue("hash2", tag + new string('1', 32));
+            await Assert.ThrowsAsync<PostgresException>(() => complete.ExecuteScalarAsync());
+        }
+        await using var owner = Owner();
+        await owner.OpenAsync();
+        await using var audit = new NpgsqlCommand("""
+            SELECT r.rejected_by_subject,r.rejection_reason_code,
+                r.rejected_utc IS NOT NULL,r.rejection_review_sha256,
+                (SELECT count(*) FROM public.organizations WHERE id=r.id),
+                (SELECT count(*) FROM public.organization_provisioning_events WHERE organization_id=r.id)
+            FROM public.organization_enrollment_requests r WHERE r.id=@id
+            """, owner);
+        audit.Parameters.AddWithValue("id", id);
+        await using var reader = await audit.ExecuteReaderAsync();
+        Assert.True(await reader.ReadAsync());
+        Assert.Equal("third-reviewer",reader.GetString(0));
+        Assert.Equal("UNVERIFIED_ORGANIZATION",reader.GetString(1));
+        Assert.True(reader.GetBoolean(2));
+        Assert.Equal(reviewProof,reader.GetString(3));
+        Assert.Equal(0L,reader.GetInt64(4));
+        Assert.Equal(0L,reader.GetInt64(5));
+    }
+
+    [Fact]
+    public async Task OnlyApproverCanRejectAndOperatorCannotReadRejectionRecords()
+    {
+        await using var owner = Owner();
+        await owner.OpenAsync();
+        await using var cmd = new NpgsqlCommand("""
+            SELECT has_function_privilege('temporalmark_approver_group',
+                'public.reject_enrollment(uuid,text,text,text,text,text,char(64),char(64),text)','EXECUTE'),
+              has_function_privilege('temporalmark_provisioner_group',
+                'public.reject_enrollment(uuid,text,text,text,text,text,char(64),char(64),text)','EXECUTE'),
+              has_function_privilege('temporalmark_runtime_group',
+                'public.reject_enrollment(uuid,text,text,text,text,text,char(64),char(64),text)','EXECUTE'),
+              has_table_privilege('temporalmark_approver_group',
+                'public.organization_enrollment_requests','UPDATE')
+            """, owner);
+        await using var reader = await cmd.ExecuteReaderAsync();
+        Assert.True(await reader.ReadAsync());
+        Assert.True(reader.GetBoolean(0));
+        Assert.False(reader.GetBoolean(1));
+        Assert.False(reader.GetBoolean(2));
+        Assert.False(reader.GetBoolean(3));
+    }
+
+    [Fact]
     public async Task CanOnlyCompleteApprovedMatchingRequestOnce()
     {
         var id = Guid.NewGuid();

@@ -106,6 +106,60 @@ public sealed class ApprovedEnrollmentWorkflowTests
         Assert.Empty(store.Approvals);
     }
 
+    [Fact]
+    public async Task ReviewerCanRejectOnlyTheOriginallyReviewedScopeOnce()
+    {
+        var store = new PendingStore();
+        var workflow = new OrganizationApprovalWorkflow(new Tokens(), new Live(), new Directory(),
+            store, Policy, ApprovalAudience,
+            new ApprovalAuthenticationPolicy("urn:temporalmark:loa:2", TimeSpan.FromSeconds(120)));
+        var id = await workflow.RequestAsync("Real Legal Organization", "op.jwt", "admin.jwt", default);
+        var review = await workflow.ReviewAsync(id, "approver.jwt", default);
+
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            workflow.RejectReviewedAsync(id, new string('A', 64), "UNVERIFIED_IDENTITY",
+                "approver.jwt", default));
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            workflow.RejectReviewedAsync(id, review.ReviewSha256, "Freeform private reason",
+                "approver.jwt", default));
+        Assert.Empty(store.Rejections);
+
+        Assert.Equal(id, await workflow.RejectReviewedAsync(id, review.ReviewSha256,
+            "UNVERIFIED_IDENTITY", "approver.jwt", default));
+        Assert.Single(store.Rejections);
+        Assert.Equal("Real Legal Organization", store.Rejections[0].ExpectedOrganizationName);
+        Assert.Equal(review.ReviewSha256, store.Rejections[0].ReviewSha256);
+        Assert.Equal("UNVERIFIED_IDENTITY", store.Rejections[0].ReasonCode);
+        Assert.Equal("approver-sub", store.Rejections[0].ReviewerSubject);
+        Assert.Matches("^[0-9A-F]{64}$", store.Rejections[0].ReviewerProofHashHex);
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            workflow.ReviewAsync(id, "approver.jwt", default));
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            workflow.ApproveReviewedAsync(id, review.ReviewSha256, "approver.jwt", default));
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            workflow.RejectReviewedAsync(id, review.ReviewSha256,
+                "UNVERIFIED_IDENTITY", "approver.jwt", default));
+        Assert.Empty(store.Approvals);
+    }
+
+    [Theory]
+    [InlineData("unprivileged.jwt")]
+    [InlineData("unsigned.jwt")]
+    [InlineData("operator-approver.jwt")]
+    public async Task UnauthorizedRejectionCannotPersistAnything(string token)
+    {
+        var store = new PendingStore();
+        var workflow = new OrganizationApprovalWorkflow(new Tokens(), new Live(), new Directory(),
+            store, Policy, ApprovalAudience,
+            new ApprovalAuthenticationPolicy("urn:temporalmark:loa:2", TimeSpan.FromSeconds(120)));
+        var id = await workflow.RequestAsync("Deny Unauthorized", "op.jwt", "admin.jwt", default);
+        var review = await workflow.ReviewAsync(id, "approver.jwt", default);
+        await Assert.ThrowsAnyAsync<Exception>(() =>
+            workflow.RejectReviewedAsync(id, review.ReviewSha256,
+                "UNVERIFIED_ORGANIZATION", token, default));
+        Assert.Empty(store.Rejections);
+    }
+
     [Theory]
     [InlineData("missing-role")]
     [InlineData("same-identity")]
@@ -213,6 +267,7 @@ public sealed class ApprovedEnrollmentWorkflowTests
                 input.ProvisionerSubject == reviewerSubject ||
                 input.FirstAdminSubject == reviewerSubject ||
                 Approvals.Any(x => x.OrganizationId == requestId) ||
+                Rejections.Any(x => x.OrganizationId == requestId) ||
                 Completions.Any(x => x.OrganizationId == requestId))
                 return Task.FromResult<PendingOrganizationReview?>(null);
             return Task.FromResult<PendingOrganizationReview?>(
@@ -220,6 +275,7 @@ public sealed class ApprovedEnrollmentWorkflowTests
                     input.IdentityIssuer, input.ProvisionerSubject,
                     input.FirstAdminSubject, expiry));
         }
+        public List<VerifiedOrganizationRejection> Rejections { get; } = [];
         public List<VerifiedOrganizationApproval> Approvals { get; } = [];
         public List<VerifiedOrganizationEnrollment> Completions { get; } = [];
 
@@ -233,6 +289,14 @@ public sealed class ApprovedEnrollmentWorkflowTests
             Approvals.Add(input);
             return Task.FromResult(input.OrganizationId);
         }
+        public Task<Guid> RejectAsync(VerifiedOrganizationRejection input, CancellationToken ct)
+        {
+            if (Rejections.Any(x => x.OrganizationId == input.OrganizationId))
+                throw new UnauthorizedAccessException("Already rejected.");
+            Rejections.Add(input);
+            return Task.FromResult(input.OrganizationId);
+        }
+
         public Task<Guid> CompleteAsync(VerifiedOrganizationEnrollment input, CancellationToken ct)
         {
             Completions.Add(input);
