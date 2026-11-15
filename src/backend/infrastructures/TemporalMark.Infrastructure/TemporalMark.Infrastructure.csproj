@@ -7,6 +7,7 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Npgsql" Version="10.0.0" />
+    <PackageReference Include="Fido2" Version="4.3.3" />
     <PackageReference Include="System.Security.Cryptography.Pkcs" Version="10.0.15" />
     <ProjectReference Include="../../business/TemporalMark.Business/TemporalMark.Business.csproj" />
   </ItemGroup>
