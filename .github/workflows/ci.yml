@@ -55,8 +55,10 @@ jobs:
         run: docker compose -f docker/compose.yml up -d
       - name: API/frontend health
         run: |
-          curl -fsS --retry 35 --retry-delay 3 --retry-connrefused http://127.0.0.1:8080/healthz
-          curl -fsS --retry 35 --retry-delay 3 --retry-connrefused http://127.0.0.1:3000/
+          # Cold-start connection resets must be retried too.
+          curl -fsS --retry 40 --retry-delay 3 --retry-all-errors --retry-connrefused http://127.0.0.1:8080/healthz
+          curl -fsS --retry 40 --retry-delay 3 --retry-all-errors --retry-connrefused http://127.0.0.1:3000/
+          curl -fsS --retry 40 --retry-delay 3 --retry-all-errors --retry-connrefused http://127.0.0.1:8081/realms/temporalmark/.well-known/openid-configuration
       - name: Diagnostics
         if: failure()
         run: docker compose -f docker/compose.yml logs --no-color --tail=200
