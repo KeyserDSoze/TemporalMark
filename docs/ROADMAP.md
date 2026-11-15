@@ -115,3 +115,11 @@ Progress is recorded in issues and CI, not inferred from this file. Every slice 
 - [x] RED-first tests for immutable 48-byte stored challenge and 32-byte reviewer handle, pinned RP/HTTPS scope, independent registrar/reviewer identity, 2-minute lifetime, required UV and direct attestation, raw malformed/oversized attestation, self/none rejection and mismatched credential outputs. GREEN isolated `ReviewerRegistrationAttestationCandidateVerifier` invokes Fido2 `MakeNewCredentialAsync` and returns only **UNAPPROVED** digest/format metadata. Real stable library must reject bogus clientDataJSON/CBOR; fake-positive test ONLY exercises quarantined result, not hardware.
 - [ ] #52 exact-final-head GitHub backend/frontend/terraform/docker-smoke all SUCCESS before closing child.
 - [ ] #44/#50 still OPEN: real independent registrar and trusted reviewer authorizations, genuine browser/device positive attestation, approved metadata/CA trust and verified globally unique COSE key registry with atomic credential registration and revocation/recovery. #38 remains OPEN for signed decision and old direct SQL reviewer-grant removal. V015/V016 **remain frozen**, no user-visible registration API. WORM/AgID/QTSP #17/#13 gates untouched.
+
+
+## Real-library packed attestation regression (#54; parent #53 open)
+
+- [x] ADR 0027 before RED: real Fido2 4.3.3 x5c/ES256 packed attestation test scope, intentionally untrusted test-only PKI and signed-MDS trust obligations.
+- [x] Test-first RED commit `7c80ede` ([expected CI failure](https://github.com/KeyserDSoze/TemporalMark/actions/runs/43770129697)); ephemeral signed fixture, real-library positive hashed-only `UNAPPROVED`, and mutation negatives added. `System.Formats.Cbor` pinned to patched 10.0.15 after CI detected CVE-2026-118747 in version 10.0.0.
+- [ ] #54 close only after **exact final-head** backend/frontend/terraform/docker-smoke CI success; no fake-positive success claim.
+- [ ] #53 production trust: signed FIDO MDS BLOB/chain and root governance, AAGUID model policy/status revocation, certificate renewal, integration with actual virtual/physical authenticator and tested fail-closed outage, privacy impact and CAB review. Actual reviewer-signed and SQL-atomic authorization remains #44/#50/#46/#38. No deployment of test CA/keys, ACTIVE enrollment, approval permissions, WORM or QTSP status.
