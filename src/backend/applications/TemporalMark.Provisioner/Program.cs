@@ -8,7 +8,7 @@ using TemporalMark.Provisioner;
 // Identity proofs must be protected owner-only files, never command arguments.
 try
 {
-    if (args.Length == 0) throw new ArgumentException("Request, review, approve or complete mode required.");
+    if (args.Length == 0) throw new ArgumentException("Request, review, approve, reject or complete mode required.");
     var mode = args[0];
     var issuer = Environment.GetEnvironmentVariable("PROVISIONING_OIDC_ISSUER")
         ?? throw new InvalidOperationException("PROVISIONING_OIDC_ISSUER required.");
@@ -50,7 +50,7 @@ try
 
     // Approvers MUST NOT use the provisioning SQL login; the database itself
     // enforces approve-only versus request/complete-only EXECUTE permissions.
-    var connection = mode is "approve" or "review"
+    var connection = mode is "approve" or "review" or "reject"
         ? Environment.GetEnvironmentVariable("TEMPORALMARK_APPROVER_DB")
         : Environment.GetEnvironmentVariable("TEMPORALMARK_PROVISIONING_DB");
     if (string.IsNullOrWhiteSpace(connection))
@@ -96,6 +96,13 @@ try
                 await ReadProtectedTokenFile(args[6]), default);
             Console.WriteLine($"Approval recorded: {result:D}");
             break;
+        case "reject" when args.Length == 9 &&
+            args[1] == "--request-id" && args[3] == "--review-sha256" &&
+            args[5] == "--reason-code" && args[7] == "--approver-token-file":
+            result = await flow.RejectReviewedAsync(ParseId(args[2]), args[4],
+                args[6], await ReadProtectedTokenFile(args[8]), default);
+            Console.WriteLine($"Enrollment rejected: {result:D}");
+            break;
         case "complete" when args.Length == 9 &&
             args[1] == "--request-id" && args[3] == "--organization-name" &&
             args[5] == "--operator-token-file" && args[7] == "--first-admin-token-file":
@@ -110,6 +117,8 @@ try
                 "Usage: request --organization-name NAME --operator-token-file PATH --first-admin-token-file PATH | " +
                 "review --request-id UUID --approver-token-file PATH | " +
                 "approve --request-id UUID --review-sha256 HEX --approver-token-file PATH | " +
+                "reject --request-id UUID --review-sha256 HEX --reason-code CODE " +
+                "--approver-token-file PATH | " +
                 "complete --request-id UUID --organization-name NAME --operator-token-file PATH " +
                 "--first-admin-token-file PATH");
     }

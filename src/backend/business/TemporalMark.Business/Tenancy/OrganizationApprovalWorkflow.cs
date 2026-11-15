@@ -13,6 +13,13 @@ public sealed record VerifiedOrganizationApproval(
     string ApproverSubject, string ApprovalProofHashHex,
     ApprovalAuthenticationEvidence AuthenticationEvidence);
 
+/// <summary>A terminal, scope-bound rejection; NOT a signed human consent artifact.</summary>
+public sealed record VerifiedOrganizationRejection(
+    Guid OrganizationId, string ExpectedOrganizationName, string IdentityIssuer,
+    string ExpectedOperatorSubject, string ExpectedAdminSubject,
+    string ReviewerSubject, string ReviewerProofHashHex,
+    string ReviewSha256, string ReasonCode);
+
 /// <summary>Current directory state, not claims snapshotted in the JWT.</summary>
 public sealed record CurrentOidcAccount(string Issuer, string Subject, bool Enabled,
     IReadOnlyCollection<string> EffectiveRealmRoles);
@@ -59,6 +66,7 @@ public interface IOrganizationApprovalStore
     Task<PendingOrganizationReview?> ReadPendingReviewAsync(Guid requestId,
         string issuer, string reviewerSubject, CancellationToken ct);
     Task<Guid> ApproveAsync(VerifiedOrganizationApproval approval, CancellationToken ct);
+    Task<Guid> RejectAsync(VerifiedOrganizationRejection rejection, CancellationToken ct);
     Task<Guid> CompleteAsync(VerifiedOrganizationEnrollment completion, CancellationToken ct);
 }
 
@@ -118,19 +126,60 @@ public sealed class OrganizationApprovalWorkflow(
     }
 
     /// <summary>
+    /// Terminal rejection after independently verifying the ORIGINAL pending scope.
+    /// Reason codes are enumerated; never accept freeform potentially sensitive text.
+    /// </summary>
+    public async Task<Guid> RejectReviewedAsync(Guid requestId,
+        string reviewSha256, string reasonCode, string approverToken, CancellationToken ct)
+    {
+        if (reasonCode is not ("UNVERIFIED_ORGANIZATION" or "UNVERIFIED_IDENTITY"
+            or "SCOPE_MISMATCH" or "POLICY_DENIED"))
+            throw new ArgumentException("Only approved rejection reason codes are accepted.",
+                nameof(reasonCode));
+        ValidateReviewHash(reviewSha256);
+        var original = await ReviewAsync(requestId, approverToken, ct);
+        RequireReviewHash(reviewSha256, original.ReviewSha256);
+
+        // Re-evaluate privileges immediately before creating a terminal SQL
+        // decision; a formerly valid reviewer role must not be silently cached.
+        var identity = await verifier.VerifyAsync(approverToken, approverAudience, ct);
+        RequireIdentity(identity, "platform_approver");
+        approverAuthentication.Require(identity);
+        await CheckLiveAsync(approverToken, approverAudience, identity, "platform_approver", ct);
+        await RequireDirectoryRoleAsync(identity, "platform_approver", ct);
+        var decision = new VerifiedOrganizationRejection(
+            requestId, original.OrganizationName, original.IdentityIssuer,
+            original.OperatorSubject, original.FirstAdminSubject,
+            identity.Subject, HashToken(approverToken), original.ReviewSha256, reasonCode);
+        var result = await store.RejectAsync(decision, ct);
+        if (result != requestId) throw new InvalidOperationException("Rejected request ID mismatch.");
+        return result;
+    }
+
+    private static void ValidateReviewHash(string reviewSha256)
+    {
+        if (reviewSha256 is null || reviewSha256.Length != 64 ||
+            reviewSha256.Any(ch => !(ch is >= '0' and <= '9' or >= 'A' and <= 'F')))
+            throw new UnauthorizedAccessException("A canonical uppercase review SHA-256 is required.");
+    }
+
+    private static void RequireReviewHash(string supplied, string original)
+    {
+        if (!CryptographicOperations.FixedTimeEquals(
+            Convert.FromHexString(supplied), Convert.FromHexString(original)))
+            throw new UnauthorizedAccessException("Reviewed scope differs from current pending request.");
+    }
+
+    /// <summary>
     /// Requires the reviewer to explicitly confirm the digest obtained from a
     /// fresh DB-backed read; this is not a reviewer-held cryptographic signature.
     /// </summary>
     public async Task<Guid> ApproveReviewedAsync(Guid requestId,
         string reviewSha256, string approverToken, CancellationToken ct)
     {
-        if (reviewSha256 is null || reviewSha256.Length != 64 ||
-            reviewSha256.Any(ch => !(ch is >= '0' and <= '9' or >= 'A' and <= 'F')))
-            throw new UnauthorizedAccessException("A canonical uppercase review SHA-256 is required.");
+        ValidateReviewHash(reviewSha256);
         var review = await ReviewAsync(requestId, approverToken, ct);
-        if (!CryptographicOperations.FixedTimeEquals(
-            Convert.FromHexString(reviewSha256), Convert.FromHexString(review.ReviewSha256)))
-            throw new UnauthorizedAccessException("Reviewed scope differs from current pending request.");
+        RequireReviewHash(reviewSha256, review.ReviewSha256);
 
         // Existing DB approval routine cross-checks issuer/name/all subjects
         // again and consumes only the original unexpired request.

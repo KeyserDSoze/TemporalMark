@@ -55,6 +55,25 @@ public sealed class PostgresOrganizationApprovalStore(NpgsqlDataSource database)
         return AssertGuid(await cmd.ExecuteScalarAsync(ct));
     }
 
+    public async Task<Guid> RejectAsync(VerifiedOrganizationRejection decision, CancellationToken ct)
+    {
+        await using var conn = await database.OpenConnectionAsync(ct);
+        await using var cmd = new NpgsqlCommand("""
+            SELECT public.reject_enrollment(@id,@name,@issuer,@operator,@admin,
+                @reviewer,@proof::char(64),@review::char(64),@reason)
+            """, conn);
+        cmd.Parameters.AddWithValue("id", decision.OrganizationId);
+        cmd.Parameters.AddWithValue("name", decision.ExpectedOrganizationName);
+        cmd.Parameters.AddWithValue("issuer", decision.IdentityIssuer);
+        cmd.Parameters.AddWithValue("operator", decision.ExpectedOperatorSubject);
+        cmd.Parameters.AddWithValue("admin", decision.ExpectedAdminSubject);
+        cmd.Parameters.AddWithValue("reviewer", decision.ReviewerSubject);
+        cmd.Parameters.AddWithValue("proof", decision.ReviewerProofHashHex);
+        cmd.Parameters.AddWithValue("review", decision.ReviewSha256);
+        cmd.Parameters.AddWithValue("reason", decision.ReasonCode);
+        return AssertGuid(await cmd.ExecuteScalarAsync(ct));
+    }
+
     public async Task<Guid> ApproveAsync(VerifiedOrganizationApproval approval, CancellationToken ct)
     {
         await using var conn = await database.OpenConnectionAsync(ct);
