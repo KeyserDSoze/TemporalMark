@@ -51,7 +51,10 @@ public sealed class PostgresReviewerRegistrationIntentStore : IReviewerRegistrat
                    pg_catalog.has_table_privilege(current_user,
                      'public.reviewer_registration_intents','SELECT,INSERT,UPDATE,DELETE'),
                    pg_catalog.has_table_privilege(current_user,
-                     'public.reviewer_registration_rp_policies','SELECT,INSERT,UPDATE,DELETE')
+                     'public.reviewer_registration_rp_policies','SELECT,INSERT,UPDATE,DELETE'),
+                   pg_catalog.pg_has_role(current_user, 'temporalmark_approver_group', 'MEMBER'),
+                   pg_catalog.pg_has_role(current_user, 'temporalmark_provisioner_group', 'MEMBER'),
+                   pg_catalog.pg_has_role(current_user, 'temporalmark_runtime_group', 'MEMBER')
             FROM pg_catalog.pg_roles AS r
             WHERE r.rolname = session_user
             """, connection))
@@ -63,7 +66,8 @@ public sealed class PostgresReviewerRegistrationIntentStore : IReviewerRegistrat
                 guardReader.GetBoolean(2) || guardReader.GetBoolean(3) ||
                 guardReader.GetBoolean(4) || !guardReader.GetBoolean(5) ||
                 guardReader.GetBoolean(6) || guardReader.GetBoolean(7) ||
-                await guardReader.ReadAsync(ct))
+                guardReader.GetBoolean(8) || guardReader.GetBoolean(9) ||
+                guardReader.GetBoolean(10) || await guardReader.ReadAsync(ct))
                 throw new UnauthorizedAccessException(
                     "Dedicated least-privilege registrar SQL login required.");
         }
