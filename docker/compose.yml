@@ -32,6 +32,7 @@ services:
       MIGRATIONS_DIR: /migrations
       DEV_RUNTIME_DB_PASSWORD: local-dev-only
       DEV_PROVISIONER_DB_PASSWORD: local-provisioner-only
+      DEV_APPROVER_DB_PASSWORD: local-approver-only
     volumes:
       - ../scripts/apply-migrations.sh:/scripts/apply-migrations.sh:ro
       - ../scripts/setup-local-db-roles.sh:/scripts/setup-local-db-roles.sh:ro
