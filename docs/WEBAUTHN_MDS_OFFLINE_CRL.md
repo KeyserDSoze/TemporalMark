@@ -27,3 +27,8 @@ Both Azure and on-prem run the same application code; neither gains a root or tr
 - [BouncyCastle 2.7.0 X509Crl](https://github.com/bcgit/bc-csharp/blob/release-2.7.0/crypto/src/x509/X509Crl.cs)
 - [FIDO MDS root rollover](https://fidoalliance.org/mds-changelog/)
 - [ADR 0030](../adr/0030-offline-direct-issuer-crl-cryptographic-preflight.md)
+
+
+## Two-hop extension — also check the intermediate (#60)
+
+The sibling [two-hop CRL runbook](WEBAUTHN_MDS_TWO_HOP_CRL.md) and [ADR 0031](../adr/0031-two-hop-offline-mds-crl-with-untrusted-root.md) add **two** independently issuer-signed DER CRLs for a disposable root → intermediate → signer chain. The existing #59 direct CRL verifier and #60 two-hop inspector share exactly the same cryptographic parser/signature/issuer/date/revocation routine. The root is still **caller selected and untrusted**, no authentic FIDO R46 chain or CRL distribution is used, and no test outcome upgrades `UNAPPROVED` or changes SQL/registrar locks. Full signed MDS JWT, issuer distribution, multi-chain/cross-sign and trusted CRL rollback remain #57/#55.
