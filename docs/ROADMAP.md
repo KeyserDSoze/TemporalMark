@@ -30,3 +30,9 @@ Progress is recorded in issues and CI, not inferred from this file. Every slice 
 - [ ] Production DR, backup restoration, privacy threat model, support SLAs, maintenance and retention review.
 
 **Definition of Done:** tests green, security review, audit evidence links, repeatable deployment and explicit compliance-state label.
+
+## Identity next increment (#40)
+
+- [x] Strict, test-first .NET 10 validation-only `ReviewerWebAuthnRelyingPartyPolicy` (explicit canonical HTTPS origin + exact RP host, no caller-selected authority) with ADR 0017, threat model and on-prem/Azure checklist. **This does not verify any WebAuthn assertion and adds no endpoint.**
+- [ ] CI four-job green for the exact final #40 head; issue #40 closes only after verification.
+- [ ] Independently approved WebAuthn key enrollment, actual signed reviewer action, secure RP/origin/UV/signCount verification, one-time atomic signed decision, revocation of legacy direct SQL grants and independent identity-governance review under #38. Parents #35/#31/#27 and qualified-evidence #17/#13 remain OPEN.
