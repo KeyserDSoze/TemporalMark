@@ -436,7 +436,8 @@ public sealed class ApprovedEnrollmentPostgresTests
         {
             read.Parameters.AddWithValue("id",id);
             read.Parameters.AddWithValue("issuer",issuer);
-            pendingExpiry=Assert.IsType<DateTimeOffset>(await read.ExecuteScalarAsync());
+            pendingExpiry=new DateTimeOffset(
+                Assert.IsType<DateTime>(await read.ExecuteScalarAsync()).ToUniversalTime());
         }
         var digest=CalculateCanonicalReviewSha256(id,name,issuer,"operator","admin",pendingExpiry);
         async Task<(Guid Id,string Nonce,DateTimeOffset Issued,DateTimeOffset Expires)> Issue(
