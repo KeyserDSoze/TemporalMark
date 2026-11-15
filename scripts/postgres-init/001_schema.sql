@@ -25,7 +25,8 @@ BEGIN
         IF TG_OP = 'DELETE' THEN
             removing_admin := true;
         ELSE
-            removing_admin := NOT NEW.is_active OR NEW.role <> 'tenant_admin';
+            removing_admin := NOT NEW.is_active OR NEW.role <> 'tenant_admin'
+                OR NEW.organization_id <> OLD.organization_id OR NEW.subject_id <> OLD.subject_id;
         END IF;
     END IF;
     IF removing_admin THEN
@@ -46,7 +47,7 @@ $$;
 
 DROP TRIGGER IF EXISTS trg_protect_last_admin ON organization_memberships;
 CREATE TRIGGER trg_protect_last_admin
-BEFORE DELETE OR UPDATE OF role, is_active ON organization_memberships
+BEFORE DELETE OR UPDATE OF organization_id, subject_id, role, is_active ON organization_memberships
 FOR EACH ROW EXECUTE FUNCTION protect_last_active_tenant_admin();
 
 CREATE TABLE IF NOT EXISTS timestamp_registry (
