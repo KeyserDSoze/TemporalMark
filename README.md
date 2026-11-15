@@ -92,3 +92,7 @@ A reviewer-only `review` CLI command now reads the original unapproved request f
 The isolated provisioning CLI now has an explicit, one-time **`reject`** action for a reviewed pending organization. Versioned PostgreSQL V010 makes rejection terminal and exclusive with approval, tracks a bounded reason and reviewer token fingerprint, and prevents proof reuse across both decisions. This is a pilot audit, **not an independently signed human approval or WORM evidence**. See [ADR 0015](adr/0015-terminal-rejection-and-token-proof-replay.md); #35 remains open.
 
 The pilot reviewer CLI supports `challenge`, which issues an **unconsumable, unsigned, server-generated decision challenge** tied to original request scope (PostgreSQL V012). It does **not** approve/reject or prove WebAuthn possession. See [ADR 0016](adr/0016-server-issued-reviewer-challenge.md) and open #38.
+
+## WebAuthn relying-party policy groundwork (#40)
+
+A new .NET 10 **validation-only** WebAuthn reviewer RP policy rejects insecure/noncanonical HTTPS origins and requires an explicitly pinned RP hostname exactly matching the trusted origin. It does **not** register credentials, validate signatures or authorize/reject enrollment. See [ADR 0017](adr/0017-pinned-webauthn-rp-origin-policy.md) and [on-prem/Azure security checklist](docs/WEBAUTHN_RP_POLICY.md). Reviewer-held cryptographic consent, verified browser assertions and legacy SQL grant cutover remain #38; no QTSP or WORM status is implied.
