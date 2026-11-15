@@ -100,3 +100,7 @@ A new .NET 10 **validation-only** WebAuthn reviewer RP policy rejects insecure/n
 ## WebAuthn assertion client-data guard (#41)
 
 The standalone .NET business layer also contains a **non-authorizing**, bounded WebAuthn Level 3 `clientDataJSON` preflight that checks exact V012 nonce/base64url, assertion type, pinned origin and top-level context; malicious duplicates, invalid UTF-8 and malformed JSON are denied. This parser is **not wired into any approval/registration endpoint** and does NOT verify an authenticator signature, reviewer-held key, user verification, decision or challenge consumption. See [ADR 0018](adr/0018-webauthn-clientdata-preflight.md) and [reviewer security guide](docs/WEBAUTHN_CLIENT_DATA.md). Production signer, SQL grants and governance remain #38; no legal qualification implied.
+
+## WebAuthn authenticatorData structural guard (#42)
+
+The .NET 10 business layer also has a validation-only `authenticatorData` basic assertion guard: exact RP ID SHA-256, UP+UV flags, BE/BS legality and **untrusted** unsigned big-endian counter extraction; extension/attestation payloads are denied by this first strict profile. It is **not a signature verifier**, never authorizes a decision and has no API or SQL route. See [ADR 0019](adr/0019-webauthn-authenticator-data-preflight.md) and [operator guidance](docs/WEBAUTHN_AUTHENTICATOR_DATA.md). Parent #38 still needs independently enrolled registered keys, signed WebAuthn verification, transactional consumption and revocation of direct reviewer SQL grants. No QTSP/WORM evidence is claimed.
