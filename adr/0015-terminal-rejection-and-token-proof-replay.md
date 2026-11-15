@@ -28,3 +28,7 @@ The previous three-person CLI supported pending request â†’ reviewed approval â†
 - PostgreSQL 17 `SECURITY DEFINER` and safe `search_path`: https://www.postgresql.org/docs/17/sql-createfunction.html
 - PostgreSQL 17 row triggers: https://www.postgresql.org/docs/17/sql-createtrigger.html
 - RFC 7662 Keycloak live access-token introspection: https://www.rfc-editor.org/rfc/rfc7662
+
+## V011 security hardening (2026-11-15)
+
+A RED owner-level PostgreSQL test showed that a nullable decision-reason or review-digest comparison inside the V010 `CHECK` can evaluate to SQL **UNKNOWN**, which is considered valid for `CHECK` constraints. The restricted SECURITY DEFINER function already validated these inputs, but a direct database-owner update could create an incomplete terminal row. The immutable corrective `V011__rejection_required_metadata.sql` adds explicit `IS NOT NULL` checks for every rejected identity/reviewer proof/scope digest/reason and tests NULL fields are refused with a check violation. No prior migration checksum is modified; this is a database consistency safeguard, **not** tamper-proof audit or legally sealed evidence.

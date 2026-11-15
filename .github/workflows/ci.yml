@@ -78,7 +78,7 @@ jobs:
         run: docker compose -f docker/compose.yml run --rm migrate
       - name: Verify versioned migration state is persistent
         run: |
-          test "$(docker compose -f docker/compose.yml exec -T postgres psql -U temporalmark -d temporalmark -tAc 'SELECT count(*) FROM schema_migrations')" = "10"
+          test "$(docker compose -f docker/compose.yml exec -T postgres psql -U temporalmark -d temporalmark -tAc 'SELECT count(*) FROM schema_migrations')" = "11"
       - name: PostgreSQL migration and tenant concurrency tests
         env:
           TEMPORALMARK_TEST_DB: "Host=127.0.0.1;Port=5432;Database=temporalmark;Username=temporalmark;Password=local-dev-only"
