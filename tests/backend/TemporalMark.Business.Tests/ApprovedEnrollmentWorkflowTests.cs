@@ -13,7 +13,7 @@ public sealed class ApprovedEnrollmentWorkflowTests
     public async Task RequestDoesNotCreateOrganizationAndApprovalIsSeparate()
     {
         var store = new PendingStore();
-        var flow = new OrganizationApprovalWorkflow(new Tokens(), new Live(), store, Policy, ApprovalAudience);
+        var flow = new OrganizationApprovalWorkflow(new Tokens(), new Live(), new Directory(), store, Policy, ApprovalAudience);
         var request = await flow.RequestAsync("Reviewed Organization", "op.jwt", "admin.jwt", default);
         Assert.NotEqual(Guid.Empty, request);
         Assert.Single(store.Requests);
@@ -44,7 +44,7 @@ public sealed class ApprovedEnrollmentWorkflowTests
     public async Task RejectsUnauthorizedApproverWithoutWriting(string reason)
     {
         var store = new PendingStore();
-        var flow = new OrganizationApprovalWorkflow(new Tokens(), new Live(reason), store, Policy, ApprovalAudience);
+        var flow = new OrganizationApprovalWorkflow(new Tokens(), new Live(reason), new Directory(), store, Policy, ApprovalAudience);
         var id = Guid.NewGuid();
         var token = reason == "missing-role" ? "unprivileged.jwt" :
             reason == "same-identity" ? "operator-approver.jwt" :
@@ -65,7 +65,7 @@ public sealed class ApprovedEnrollmentWorkflowTests
     {
         var live = new Live();
         var store = new PendingStore();
-        var flow = new OrganizationApprovalWorkflow(new Tokens(), live, store, Policy, ApprovalAudience);
+        var flow = new OrganizationApprovalWorkflow(new Tokens(), live, new Directory(), store, Policy, ApprovalAudience);
         await Assert.ThrowsAsync<ArgumentException>(() =>
             flow.ApproveAsync(Guid.NewGuid(), name, "admin-sub", "operator-sub", "approver.jwt", default));
         Assert.Empty(live.Checked);
@@ -76,7 +76,7 @@ public sealed class ApprovedEnrollmentWorkflowTests
     public async Task AnyLiveIdentityFailureOnCompletePreventsDatabaseWrite()
     {
         var store = new PendingStore();
-        var flow = new OrganizationApprovalWorkflow(new Tokens(), new Live("disabled-admin"), store, Policy, ApprovalAudience);
+        var flow = new OrganizationApprovalWorkflow(new Tokens(), new Live("disabled-admin"), new Directory(), store, Policy, ApprovalAudience);
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
             flow.CompleteAsync(Guid.NewGuid(), "Client", "op.jwt", "admin.jwt", default));
         Assert.Empty(store.Completions);
@@ -115,6 +115,15 @@ public sealed class ApprovedEnrollmentWorkflowTests
                 [isOperator ? "platform_provisioner" : isAdmin ? "tenant_admin" :
                     token == "unprivileged.jwt" ? "guest" : "platform_approver"]));
         }
+    }
+
+    private sealed class Directory : ICurrentOidcAccountDirectory
+    {
+        public Task<CurrentOidcAccount> GetAccountAsync(string issuer, string subject,
+            CancellationToken ct) =>
+            Task.FromResult(new CurrentOidcAccount(issuer, subject, true,
+                subject == "operator-sub" ? ["platform_provisioner"] :
+                subject == "admin-sub" ? ["tenant_admin"] : ["platform_approver"]));
     }
 
     private sealed class PendingStore : IOrganizationApprovalStore
