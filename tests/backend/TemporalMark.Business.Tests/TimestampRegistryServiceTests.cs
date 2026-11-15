@@ -17,6 +17,14 @@ public sealed class TimestampRegistryServiceTests
         new DateTimeOffset(2026, 12, 1, 0, 0, 0, TimeSpan.Zero));
 
     [Fact]
+    public async Task PageRejectsRepositoryCrossTenantLeak()
+    {
+        var repository = new MaliciousRegistry(MakeRecord(TenantB));
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            new TimestampRegistryService(repository).PageAsync(TenantA, Period, 0, 50, default));
+    }
+
+    [Fact]
     public async Task ExportContainsDerAndManifestForAuthorizedTenant()
     {
         var fake = new FakeRegistry(new[] { MakeRecord(TenantA), MakeRecord(TenantB) });

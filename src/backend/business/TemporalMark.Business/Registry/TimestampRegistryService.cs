@@ -21,13 +21,16 @@ public sealed class TimestampRegistryService(ITimestampRegistry registry)
         return new RegistrySummary(organizationId, count, period.FromUtc, period.ToUtcExclusive);
     }
 
-    public Task<IReadOnlyList<TimestampRecord>> PageAsync(
+    public async Task<IReadOnlyList<TimestampRecord>> PageAsync(
         Guid organizationId, UtcPeriod period, int offset, int limit, CancellationToken cancellationToken)
     {
         RequireTenant(organizationId);
         if (offset < 0 || limit < 1 || limit > 200)
             throw new ArgumentOutOfRangeException(nameof(limit), "Use 1..200 records per page and offset >= 0.");
-        return registry.PageAsync(organizationId, period, offset, limit, cancellationToken);
+        var records = await registry.PageAsync(organizationId, period, offset, limit, cancellationToken);
+        if (records.Any(record => record.OrganizationId != organizationId || !period.Contains(record.IssuedUtc)))
+            throw new InvalidOperationException("Repository returned a record outside authorized tenant/period.");
+        return records;
     }
 
     public async Task<byte[]> ExportZipAsync(
