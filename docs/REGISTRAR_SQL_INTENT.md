@@ -50,3 +50,7 @@ Business xUnit tests use controlled signed-claim/live/directory fakes to prove a
 On-prem must use independently managed TLS, vault/secret injection, offline recovery and monitor dedicated LOGIN. Azure must enforce a similarly segregated Azure Database for PostgreSQL role, Azure Key Vault-backed secret and approved private network access under CAB review. Both modes need further production hardening (#19/#18). Entra requires its own native live role/account checks (#28), not Keycloak confidential clients. WORM evidence and qualified status remain #17/#13.
 
 A passing CI test is not proof of actual Keycloak production MFA, trusted credential signing, human review, legal preservation or timestamp qualification.
+
+## Conflicting SQL role membership denial (#49)
+
+The registrar executor also explicitly rejects membership in **any** existing `temporalmark_approver_group`, `temporalmark_provisioner_group`, or `temporalmark_runtime_group`, even if it otherwise holds the narrow registrar-function EXECUTE. Live PostgreSQL tests temporarily GRANT and REVOKE each conflicting group on the disposable executor and verify issuance is denied. Do not combine registrar with platform approval, general provisioning or API credentials. Neither role isolation nor OTP status establishes signed registration consent or eliminates direct-SQL credential bypass.

@@ -20,3 +20,7 @@ V013/V014 create owner-pinned HTTPS issuer/RP/origin policies, unconsumable one-
 Commit RED business and PostgreSQL integration contracts before implementation; GREEN separate workflow, Npgsql adapter and restricted standalone CLI. Verify exact final main SHA backend/frontend/Terraform/docker-smoke success before closing #49. The underlying registrarial trust and production-role approval are not CI-certifiable.
 
 References: https://www.postgresql.org/docs/17/ddl-priv.html ; https://www.postgresql.org/docs/17/sql-createfunction.html ; https://www.rfc-editor.org/rfc/rfc7662 ; https://www.w3.org/TR/webauthn-3/
+
+## Test-driven group-separation hardening (2026-11-15)
+
+The initial store guard prohibited broad direct table privileges, but that alone did not prevent a dedicated registrar login from ALSO being a member of the legacy approver/provisioner/runtime groups. RED PostgreSQL tests (`c5e2501`) explicitly GRANT each conflicting role to the otherwise valid temporary registrar executor and require SQL issuance to fail before any additional nonce is created. GREEN `fe5e38d` adds three actual membership checks on the opened SQL connection and rejects **any** conflicting approver, provisioner or runtime group. CI revokes each simulated grant and finally drops the disposable login; migrations still seed no member or LOGIN. This is defense in depth and does not solve a stolen legitimate registrar SQL credential bypassing the OIDC gateway.
