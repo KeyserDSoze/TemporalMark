@@ -67,6 +67,7 @@ public sealed class KeycloakCurrentAccountDirectoryTests
     }
 
     [Theory]
+    [InlineData("missing-user")]
     [InlineData("wrong-user")]
     [InlineData("missing-enabled")]
     [InlineData("bad-user-json")]
@@ -95,6 +96,7 @@ public sealed class KeycloakCurrentAccountDirectoryTests
                 });
             return Task.FromResult(failure switch
             {
+                "missing-user" => Json("{}", HttpStatusCode.NotFound),
                 "wrong-user" => Json("""{"id":"00000000-0000-0000-0000-000000000001","enabled":true}"""),
                 "missing-enabled" => Json("""{"id":"12345678-1234-4234-8234-123456789012"}"""),
                 "bad-user-json" => Json("{broken"),

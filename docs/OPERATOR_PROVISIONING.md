@@ -23,6 +23,8 @@ export PROVISIONING_OIDC_ISSUER='https://identity.example.org/realm'
 export PROVISIONING_LIVE_PROVIDER='keycloak'
 export PROVISIONING_INTROSPECTION_CLIENT_ID='<approved-confidential-client>'
 export PROVISIONING_INTROSPECTION_CLIENT_SECRET='<read-from-approved-vault>'
+export PROVISIONING_DIRECTORY_CLIENT_ID='<dedicated-directory-readonly-client>'
+export PROVISIONING_DIRECTORY_CLIENT_SECRET='<read-from-approved-vault>'
 export PROVISIONING_OPERATOR_AUDIENCE='temporalmark-provisioner'
 export PROVISIONING_ADMIN_AUDIENCE='temporalmark-api'
 export PROVISIONING_APPROVER_AUDIENCE='temporalmark-approval'
@@ -61,3 +63,7 @@ A separate IdP administrator must still map the newly created `organization_id` 
 
 ## Mandatory live token-status checks (#26)
 The operator CLI checks each signed access token again through the trusted Keycloak RFC 7662 introspection endpoint **immediately before creating the organization**. The confidential client must be a permitted audience (`aud`) of both operator and first-admin tokens, especially on Keycloak 26.4.12+; do not enable compatibility relaxations. A returned `active=false`, mismatched issuer/subject/audience/role, unreachable IdP or missing credentials prevents any DB write. This is **not** an active-user directory/role lookup, human approval or an atomic cross-system revocation guarantee. See [ADR 0008](../adr/0008-live-keycloak-introspection.md) and issue #25. The local realm has a fake client secret for CI only; **never reuse the secret or the password-grant fixture in production**.
+
+## Mandatory current-account and effective-role checks (#30)
+
+The CLI additionally obtains a distinct, short-lived service-account bearer token from the **same pinned Keycloak realm** and queries the account status plus *current effective realm roles* through the Keycloak Admin REST API, separately from JWT/introspection. Every request, approval and completion performs fresh checks for the intended user(s). The dedicated confidential directory client must be granted only the required **read-only** `realm-management` permissions (`view-users`, `view-realm`, optionally `query-users` according to approved Keycloak configuration); no `realm-admin` or `manage-users`. An unavailable directory, missing role, disabled user, wrong ID/issuer, expired/invalid service credential or HTTP failure blocks all provisioning actions. Do **not** reuse the development service account, its demo secret, or the test setup script in production. The Keycloak directory check is independent of token claims but not a signed assertion; MFA, actual human signoff, policy attestation and TOCTOU reconciliation remain outstanding. See [ADR 0010](../adr/0010-keycloak-current-directory-check.md) and #27/#25.
