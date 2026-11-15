@@ -276,7 +276,7 @@ public sealed class ApprovedEnrollmentPostgresTests
         approval.Parameters.AddWithValue("kind",kind);
         approval.Parameters.AddWithValue("context", (object?)context ?? DBNull.Value);
         approval.Parameters.AddWithValue("authTime",expectedSuccess
-            ? DateTimeOffset.UtcNow.ToUnixTimeSeconds()-10 : DBNull.Value);
+            ? (object)(DateTimeOffset.UtcNow.ToUnixTimeSeconds()-10) : DBNull.Value);
         if(expectedSuccess)
             Assert.Equal(id,Assert.IsType<Guid>(await approval.ExecuteScalarAsync()));
         else
