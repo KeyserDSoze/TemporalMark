@@ -88,6 +88,23 @@ if "${cli[@]}" approve --request-id "$request_id" \
     echo "SECURITY FAILURE: mismatched organization was approved" >&2; exit 1
 fi
 
+# The disposable password-grant approver token has NO MFA. Without the
+# tightly scoped fixture exception it MUST fail even though role and JWT are valid.
+if PROVISIONING_DEVELOPMENT_PASSWORD_GRANT_NO_MFA=false "${cli[@]}" approve --request-id "$request_id" \
+    --organization-name "CI verification org" \
+    --expected-initial-admin-sub "$admin_sub" --expected-operator-sub "$operator_sub" \
+    --approver-token-file "$temp_dir/approver.jwt" > "$temp_dir/no-mfa.log" 2>&1; then
+    echo "SECURITY FAILURE: password-only approver accepted without explicit test exception" >&2
+    exit 1
+fi
+if env -u PROVISIONING_APPROVER_REQUIRED_ACR "${cli[@]}" approve --request-id "$request_id" \
+    --organization-name "CI verification org" \
+    --expected-initial-admin-sub "$admin_sub" --expected-operator-sub "$operator_sub" \
+    --approver-token-file "$temp_dir/approver.jwt" > "$temp_dir/no-policy.log" 2>&1; then
+    echo "SECURITY FAILURE: approver accepted without pinned ACR policy" >&2
+    exit 1
+fi
+
 "${cli[@]}" approve --request-id "$request_id" \
   --organization-name "CI verification org" \
   --expected-initial-admin-sub "$admin_sub" --expected-operator-sub "$operator_sub" \
