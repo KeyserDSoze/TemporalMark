@@ -27,6 +27,14 @@ try
         ?? "temporalmark-approval";
 
     using var live = new KeycloakTokenIntrospector(issuer, localHttp, clientId, clientSecret);
+    // Independent current account+effective realm-role lookup is mandatory.
+    // Missing client credentials must NEVER degrade to JWT/introspection-only.
+    var directoryClientId = Environment.GetEnvironmentVariable("PROVISIONING_DIRECTORY_CLIENT_ID")
+        ?? throw new InvalidOperationException("Directory service client ID required.");
+    var directorySecret = Environment.GetEnvironmentVariable("PROVISIONING_DIRECTORY_CLIENT_SECRET")
+        ?? throw new InvalidOperationException("Directory service client secret required.");
+    using var directory = new KeycloakCurrentAccountDirectory(
+        issuer, localHttp, directoryClientId, directorySecret);
     var verifier = new OidcAccessTokenVerifier(issuer, localHttp);
     var policy = new ProvisioningPolicy(issuer.TrimEnd('/'), operatorAudience, adminAudience);
 
@@ -39,7 +47,7 @@ try
         throw new InvalidOperationException("Dedicated action-specific DB credential required.");
     await using var db = NpgsqlDataSource.Create(connection);
     var flow = new OrganizationApprovalWorkflow(
-        verifier, live, new PostgresOrganizationApprovalStore(db), policy, approverAudience);
+        verifier, live, directory, new PostgresOrganizationApprovalStore(db), policy, approverAudience);
 
     Guid result;
     switch (mode)
