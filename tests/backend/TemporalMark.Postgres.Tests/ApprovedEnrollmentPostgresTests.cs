@@ -229,6 +229,49 @@ public sealed class ApprovedEnrollmentPostgresTests
         Assert.False(reader.GetBoolean(3));
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task DirectDatabaseWriteCannotCreatePartiallyRecordedRejection(bool missingReviewHash)
+    {
+        // A PostgreSQL CHECK with NULL expression evaluates UNKNOWN and would
+        // incorrectly allow an incomplete rejected row unless every nullable
+        // required field is checked using IS NOT NULL.
+        var id = Guid.NewGuid();
+        var tag = id.ToString("N").ToUpperInvariant();
+        await using (var op = Operator())
+        {
+            await op.OpenAsync();
+            await using var request = new NpgsqlCommand("""
+                SELECT public.request_enrollment(@id,'Strict rejection','https://idp.example.test',
+                    'operator','admin',@operatorHash::char(64),@adminHash::char(64))
+                """,op);
+            request.Parameters.AddWithValue("id",id);
+            request.Parameters.AddWithValue("operatorHash",tag+new string('A',32));
+            request.Parameters.AddWithValue("adminHash",tag+new string('B',32));
+            Assert.Equal(id,Assert.IsType<Guid>(await request.ExecuteScalarAsync()));
+        }
+        await using var owner=Owner();
+        await owner.OpenAsync();
+        await using var tamper=new NpgsqlCommand("""
+            UPDATE public.organization_enrollment_requests SET
+                rejected_utc=clock_timestamp(),rejected_by_subject='reviewer',
+                rejection_proof_sha256=@proof::char(64),
+                rejection_review_sha256=@review::char(64),
+                rejection_reason_code=@reason
+            WHERE id=@id
+            """,owner);
+        tamper.Parameters.AddWithValue("id",id);
+        tamper.Parameters.AddWithValue("proof",tag+new string('C',32));
+        tamper.Parameters.AddWithValue("review",missingReviewHash
+            ? DBNull.Value : tag+new string('D',32));
+        tamper.Parameters.AddWithValue("reason",missingReviewHash
+            ? "POLICY_DENIED" : DBNull.Value);
+        var error=await Assert.ThrowsAsync<PostgresException>(
+            async()=>await tamper.ExecuteNonQueryAsync());
+        Assert.Equal(PostgresErrorCodes.CheckViolation,error.SqlState);
+    }
+
     [Fact]
     public async Task CompetingApproveAndRejectTransactionsAllowExactlyOneTerminalDecision()
     {
