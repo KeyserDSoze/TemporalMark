@@ -59,6 +59,22 @@ public sealed class RealKeycloakRegistrarMfaEndToEndTests
             "00000000-0000-0000-0000-000000000002",
             "00000000-0000-0000-0000-000000000003");
 
+        // Before testing CURRENT-role revocation, assert that BOTH unchanged
+        // access tokens still have a valid Keycloak signature, pinned audience
+        // and a RECENT strong signed ACR. Otherwise mere expiry could cause a
+        // false-positive negative test that never exercises authorization.
+        var registrarSigned = await verifiedSource.VerifyAsync(registrar,
+            "temporalmark-credential-registrar", CancellationToken.None);
+        var reviewerSigned = await verifiedSource.VerifyAsync(reviewer,
+            "temporalmark-approval", CancellationToken.None);
+        var strong = new ApprovalAuthenticationPolicy(
+            "urn:temporalmark:loa:2", TimeSpan.FromSeconds(120),
+            allowPasswordOnlyDisposableLocalFixture: false);
+        Assert.Equal("OIDC_ACR_ASSERTED", strong.Require(registrarSigned).Kind);
+        Assert.Equal("OIDC_ACR_ASSERTED", strong.Require(reviewerSigned).Kind);
+        Assert.Equal(RegistrarSubject, registrarSigned.Subject);
+        Assert.Equal(ReviewerSubject, reviewerSigned.Subject);
+
         if (Environment.GetEnvironmentVariable("TEMPORALMARK_CI_REGISTRAR_EXPECT_DENIAL") == "true")
         {
             // Used after deleting the effective role or disabling the user
