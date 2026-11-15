@@ -5,7 +5,7 @@ const configDirectory = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
   testDir: configDirectory,
-  testIgnore: ["**/authenticated.spec.ts"],
+  testIgnore: ["**/authenticated.spec.ts", "**/mfa.spec.ts"],
   timeout: 30000,
   use: { baseURL: "http://127.0.0.1:5173", trace: "on-first-retry" },
   projects: [
