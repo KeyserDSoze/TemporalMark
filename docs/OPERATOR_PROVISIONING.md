@@ -42,16 +42,21 @@ dotnet run --project src/backend/applications/TemporalMark.Provisioner -- \
   --first-admin-token-file /restricted/initial-admin.jwt
 # Output: Approval requested: <organization/request UUID>
 
-# 2. Different, separately authorized approver MUST independently review the
-# exact organization, issuer and stable OIDC subject IDs before confirming.
+# 2. Separately authenticated reviewer reads the ORIGINAL record from SQL,
+# not a name or identity supplied by the operator.
+dotnet run --project src/backend/applications/TemporalMark.Provisioner -- \
+  review --request-id '<UUID-from-step-1>' \
+  --approver-token-file /restricted/approver.jwt
+# Check the returned organization, issuer, subjects, expiry, and Review SHA-256
+# against an independently approved real-world source.
+
+# 3. After independent scrutiny, confirm the exact review SHA-256.
 dotnet run --project src/backend/applications/TemporalMark.Provisioner -- \
   approve --request-id '<UUID-from-step-1>' \
-  --organization-name 'Approved Customer Name' \
-  --expected-initial-admin-sub '<IdP-verified-initial-admin-sub>' \
-  --expected-operator-sub '<IdP-verified-operator-sub>' \
+  --review-sha256 '<64-uppercase-hex-from-review>' \
   --approver-token-file /restricted/approver.jwt
 
-# 3. Operator presents currently valid, live tokens again and consumes approval.
+# 4. Operator presents currently valid, live tokens again and consumes approval.
 dotnet run --project src/backend/applications/TemporalMark.Provisioner -- \
   complete --request-id '<UUID-from-step-1>' \
   --organization-name 'Approved Customer Name' \
@@ -86,3 +91,7 @@ Migration V008 records the authentication **classification** (not raw JWT): `OID
 The local Compose stack now imports a **separate** `temporalmark-mfa-ci` test realm. The Playwright `mfa.config.ts` / `mfa.spec.ts` suite uses OIDC Authorization Code and PKCE S256 with a required authentication context, explicitly configured Keycloak LoA1 username/password and LoA2 **OTP**. It first enrolls an OTP credential and discards the setup login (enrollment is **not** evidence of MFA), then uses a separate browser session to show that the password alone does not issue an access token, an incorrect OTP is refused, and a correct TOTP is required. It verifies the actual Keycloak-signed LoA2 token and passes that token to the **strict .NET** signature/ACR policy check without using the password-grant exception. Keycloak's one-time OTP reuse rule remains enabled; the test waits for a fresh 30-second interval after enrollment.
 
 Run this **only** inside disposable Docker/Keycloak CI via the `docker-smoke` job. All test accounts/secrets and optional HTTP localhost are development fixtures; the token is stored briefly as a restricted 0600 temp file and removed before job exit; browser tracing/screenshots/video are disabled. The automated TOTP generator holds the enrollment secret and **does not prove independent human or separate-device control**. It is also not the reviewer-facing approval workflow; #31 stays OPEN for actual independently witnessed consent, production Keycloak MFA governance, protected signing and WORM evidence. See [ADR 0013](../adr/0013-disposable-keycloak-real-otp-pkce.md).
+
+## Approver-only original database view (V009; #36)
+
+The new `review` command shows server-fetched original scope after signed OIDC + live token + current directory-role + ACR authentication. Its digest binds UUID, name, issuer, both subjects and exact expiration. `approve` requires `--review-sha256` and no longer accepts manually copied name and subject flags. Missing, expired, consumed and altered records or wrong digest are refused before SQL approval. This is *not a human-held digital signature* or explicit binding of a real reviewer's act to a hardware authenticator; #35 remains OPEN. See [ADR 0014](../adr/0014-db-backed-approval-review.md).
