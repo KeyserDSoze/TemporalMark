@@ -34,3 +34,8 @@ This slice has **no material changes** to PostgreSQL migrations, JWT/OIDC, Keycl
 - [FIDO MDS 3.1](https://fidoalliance.org/specs/mds/fido-metadata-service-v3.1-ps-20250521.html)
 - [FIDO Metadata Statement 3.1.1](https://fidoalliance.org/specs/mds/fido-metadata-statement-v3.1.1-ps-20260105.html)
 - [Fido2 4.3.3 metadata repository source](https://github.com/passwordless-lib/fido2-net-lib/blob/4.3.3/Src/Fido2/Metadata/Fido2MetadataServiceRepository.cs)
+
+
+## Cryptographic JWS test-only extension (#58)
+
+The [signed-JWS precheck runbook](WEBAUTHN_MDS_JWS_PRECHECK.md) records a new **separate, non-authorizing** offline RS256 signature/X.509 test-path verifier, built under ADR 0029 with real Microsoft.IdentityModel JWT signature checks and ephemeral RSA test CA. It does not pass verified MDS models into this policy inspector; there is no signed/CRL-validated producer for the metadata policy. `X509RevocationMode.NoCheck` in that isolated candidate means **all results remain UNAPPROVED** and production trust is still blocked by #57/#55, including R46, revocation, immutable serial and independent attestation chain governance. V015/V016 remain unchanged.
