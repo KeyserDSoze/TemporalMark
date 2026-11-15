@@ -70,6 +70,12 @@ jobs:
       - name: OIDC admin login and disabled external TSA smoke
         working-directory: tests/frontend
         run: npx playwright test --config authenticated.config.ts
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: authenticated-browser-failure
+          path: tests/frontend/test-results/
+          retention-days: 3
       - name: Diagnostics
         if: failure()
         run: docker compose -f docker/compose.yml logs --no-color --tail=200

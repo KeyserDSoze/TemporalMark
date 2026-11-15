@@ -10,7 +10,15 @@ test("development tenant administrator authenticates and sees own registry", asy
   await page.locator("#kc-login").click();
 
   // This tests full OIDC + real database membership, not just a mocked API.
-  await expect(page.getByText("11111111-1111-1111-1111-111111111111")).toBeVisible({ timeout: 30000 });
+  try {
+    await expect(page.getByText("11111111-1111-1111-1111-111111111111")).toBeVisible({ timeout: 30000 });
+  } catch (failure) {
+    // Never log query strings (OIDC authorization codes), tokens or credentials.
+    const route = new URL(page.url());
+    console.log("Auth diagnostic path:", route.origin + route.pathname);
+    console.log("Auth diagnostic visible page:", (await page.locator("body").innerText()).slice(0, 1600));
+    throw failure;
+  }
   await expect(page.getByText("Nessuna marca registrata nel periodo selezionato.")).toBeVisible();
   await expect(page.getByText("Servizio NON qualificato")).toBeVisible();
 
