@@ -7,9 +7,20 @@
   "loginWithEmailAllowed": true,
   "roles": {
     "realm": [
-      {"name": "tenant_admin", "description": "Manages one permitted organization"},
-      {"name": "tenant_auditor"},
-      {"name": "tenant_member"}
+      {
+        "name": "tenant_admin",
+        "description": "Manages one permitted organization"
+      },
+      {
+        "name": "tenant_auditor"
+      },
+      {
+        "name": "tenant_member"
+      },
+      {
+        "name": "platform_provisioner",
+        "description": "Controls isolated org enrollment (development only)"
+      }
     ]
   },
   "clients": [
@@ -22,9 +33,19 @@
       "standardFlowEnabled": true,
       "directAccessGrantsEnabled": false,
       "implicitFlowEnabled": false,
-      "redirectUris": ["http://localhost:3000/*", "http://localhost:5173/*", "http://127.0.0.1:5173/*"],
-      "webOrigins": ["http://localhost:3000", "http://localhost:5173", "http://127.0.0.1:5173"],
-      "attributes": {"pkce.code.challenge.method": "S256"},
+      "redirectUris": [
+        "http://localhost:3000/*",
+        "http://localhost:5173/*",
+        "http://127.0.0.1:5173/*"
+      ],
+      "webOrigins": [
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "http://127.0.0.1:5173"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256"
+      },
       "protocolMappers": [
         {
           "name": "temporalmark-organization",
@@ -69,6 +90,59 @@
       "protocol": "openid-connect",
       "enabled": true,
       "bearerOnly": true
+    },
+    {
+      "clientId": "temporalmark-local-provisioning-tests",
+      "name": "CI development token issuer ONLY; never deploy to production",
+      "protocol": "openid-connect",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "implicitFlowEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": [],
+      "protocolMappers": [
+        {
+          "name": "local-test-realm-roles",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "role",
+            "multivalued": "true",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        },
+        {
+          "name": "local-test-api-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "temporalmark-api",
+            "access.token.claim": "true"
+          }
+        },
+        {
+          "name": "local-test-provisioner-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "temporalmark-provisioner",
+            "access.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "temporalmark-provisioner",
+      "name": "Provisioner privileged access token audience",
+      "protocol": "openid-connect",
+      "enabled": true,
+      "bearerOnly": true
     }
   ],
   "users": [
@@ -80,9 +154,59 @@
       "email": "demo-admin@example.invalid",
       "emailVerified": true,
       "enabled": true,
-      "attributes": {"organization_id": ["11111111-1111-1111-1111-111111111111"]},
-      "realmRoles": ["tenant_admin"],
-      "credentials": [{"type": "password", "value": "local-dev-only", "temporary": false}]
+      "attributes": {
+        "organization_id": [
+          "11111111-1111-1111-1111-111111111111"
+        ]
+      },
+      "realmRoles": [
+        "tenant_admin"
+      ],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "local-dev-only",
+          "temporary": false
+        }
+      ]
+    },
+    {
+      "id": "00000000-0000-0000-0000-000000000002",
+      "username": "demo-provisioner",
+      "firstName": "Demo",
+      "lastName": "Provisioner",
+      "email": "demo-provisioner@example.invalid",
+      "emailVerified": true,
+      "enabled": true,
+      "realmRoles": [
+        "platform_provisioner"
+      ],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "local-provisioner-only",
+          "temporary": false
+        }
+      ]
+    },
+    {
+      "id": "00000000-0000-0000-0000-000000000003",
+      "username": "demo-initial-admin",
+      "firstName": "Initial",
+      "lastName": "Administrator",
+      "email": "demo-initial-admin@example.invalid",
+      "emailVerified": true,
+      "enabled": true,
+      "realmRoles": [
+        "tenant_admin"
+      ],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "local-admin-only",
+          "temporary": false
+        }
+      ]
     }
   ]
 }
