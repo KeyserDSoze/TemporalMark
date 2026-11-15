@@ -28,6 +28,9 @@ export PROVISIONING_DIRECTORY_CLIENT_SECRET='<read-from-approved-vault>'
 export PROVISIONING_OPERATOR_AUDIENCE='temporalmark-provisioner'
 export PROVISIONING_ADMIN_AUDIENCE='temporalmark-api'
 export PROVISIONING_APPROVER_AUDIENCE='temporalmark-approval'
+# Production: pin an ACR proven to be bound to an MFA/step-up Keycloak browser flow.
+# The string itself is NOT proof of MFA.
+export PROVISIONING_APPROVER_REQUIRED_ACR='urn:temporalmark:loa:2'
 # These connection strings must be read from the approved operator secret vault.
 export TEMPORALMARK_PROVISIONING_DB='<restricted-operator-SQL-login>'
 export TEMPORALMARK_APPROVER_DB='<independent-approver-SQL-login>'
@@ -57,7 +60,7 @@ dotnet run --project src/backend/applications/TemporalMark.Provisioner -- \
 # Output: Organization created: <same UUID>
 ```
 
-The pending request expires exactly **five minutes** after it was created in the pilot. Rejected, incomplete, expired or mismatched approvals cannot produce a tenant; used approvals cannot be reused. PostgreSQL enforces different subjects and isolated SQL roles, and the completion transaction also links the pilot audit record to the approval. **The CLI does not provide an independent request-review UI, current directory role lookup, MFA step-up, legally sealed audit, or accredited approval process.** Complete operator-guided provisioning policy under issue #27 and #25.
+The pending request expires exactly **five minutes** after it was created in the pilot. Rejected, incomplete, expired or mismatched approvals cannot produce a tenant; used approvals cannot be reused. PostgreSQL enforces different subjects and isolated SQL roles, and the completion transaction also links the pilot audit record to the approval. **The CLI does not provide an independent request-review UI, demonstrated MFA step-up, legally sealed audit, or accredited approval process. Current directory role checks are provided under ADR 0010.** Complete operator-guided provisioning policy under issue #27 and #25.
 
 A separate IdP administrator must still map the newly created `organization_id` to the first admin. Check signed claims and `GET /api/v1/me`; automated invitations and multi-org selection remain #14.
 
@@ -67,3 +70,9 @@ The operator CLI checks each signed access token again through the trusted Keycl
 ## Mandatory current-account and effective-role checks (#30)
 
 The CLI additionally obtains a distinct, short-lived service-account bearer token from the **same pinned Keycloak realm** and queries the account status plus *current effective realm roles* through the Keycloak Admin REST API, separately from JWT/introspection. Every request, approval and completion performs fresh checks for the intended user(s). The dedicated confidential directory client must be granted only the required **read-only** `realm-management` permissions (`view-users`, `view-realm`, optionally `query-users` according to approved Keycloak configuration); no `realm-admin` or `manage-users`. An unavailable directory, missing role, disabled user, wrong ID/issuer, expired/invalid service credential or HTTP failure blocks all provisioning actions. Do **not** reuse the development service account, its demo secret, or the test setup script in production. The Keycloak directory check is independent of token claims but not a signed assertion; MFA, actual human signoff, policy attestation and TOCTOU reconciliation remain outstanding. See [ADR 0010](../adr/0010-keycloak-current-directory-check.md) and #27/#25.
+
+## Signed approver authentication freshness and ACR (#32)
+
+The approval executable now **requires** `PROVISIONING_APPROVER_REQUIRED_ACR`. This exact value must be validated and signed by the trusted IdP as part of a tested policy mapping to a *real* MFA/step-up authentication flow; a non-empty ACR field is insufficient evidence that MFA happened. Its `auth_time` must be numeric and no older than 120 seconds, and must agree with signed token `iat`. Missing/weak/stale claims fail closed. Keycloak's step-up configuration uses ACR→LoA mapping with a browser authentication flow that can require password plus OTP or WebAuthn; administrators must validate that configuration **before real onboarding**. See [ADR 0011](../adr/0011-signed-approval-authentication-assurance.md) and #31.
+
+**Disposable CI exception (not MFA):** `tests/integration/provisioning-smoke.sh` uses `PROVISIONING_DEVELOPMENT_PASSWORD_GRANT_NO_MFA=true`, only with the exact loopback issuer `http://localhost:8081/realms/temporalmark` and fixed test approver UUID. This retains historical approval/replay/revocation tests but does not exercise MFA. No other issuer, approver or production environment can use this exception. Never copy its configuration into an installation guide, infrastructure secrets or a production deployment. #31 remains OPEN until genuine interactive MFA and independently reviewed consent are demonstrated.
