@@ -10,9 +10,9 @@ import sys
 import urllib.parse
 import urllib.request
 
-MODES = {"prepare", "remove-registrar-role", "disable-registrar"}
+MODES = {"prepare", "remove-registrar-role", "restore-registrar-role", "disable-registrar"}
 if len(sys.argv) != 2 or sys.argv[1] not in MODES:
-    raise SystemExit("Usage: configure-keycloak-registrar-mfa-ci.py prepare|remove-registrar-role|disable-registrar")
+    raise SystemExit("Usage: configure-keycloak-registrar-mfa-ci.py prepare|remove-registrar-role|restore-registrar-role|disable-registrar")
 mode = sys.argv[1]
 
 origin = "http://127.0.0.1:8081"
@@ -103,6 +103,12 @@ elif mode == "remove-registrar-role":
     if any(x.get("name") == "platform_credential_registrar" for x in mapped):
         raise AssertionError("Current registrar role was not removed")
     print("Disposable registrar current realm role revoked; old JWT must fail.")
+
+elif mode == "restore-registrar-role":
+    role = request("GET", "/roles/platform_credential_registrar", master)
+    request("POST", "/users/" + registrar_id + "/role-mappings/realm", master, [role])
+    assert_realm_user(registrar_id, "platform_credential_registrar")
+    print("Disposable registrar role restored solely to isolate later account-disable test.")
 
 else:
     user = request("GET", "/users/" + registrar_id, master)
