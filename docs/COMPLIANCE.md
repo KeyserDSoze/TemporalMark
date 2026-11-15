@@ -29,6 +29,12 @@ The source document supplied with the project is *Diventare QTSP in Italia per u
 7. Immutability/WORM, evidence manifests, security logs, tenant separation, recovery/restore and incident exercises, vulnerability testing and independent audit of exports.
 8. ISMS/QMS, ISO and insurance obligations as confirmed under current AgID rules; verified contractual arrangements with cloud/outsourcing providers.
 
+## Italian Trusted List verification — 2026 certificate rotation
+
+AgID published new Trusted List signing certificates `IT_tsl5.cer` and `IT_tsl6.cer`, usable from 10 February 2026. Production verification must authenticate the signed Italian TSL with currently accepted keys, handle certificate rollover, preserve historical status snapshots and prove the **specific service** was qualified at issuance time. Merely fetching the current XML or accepting an issuer certificate is insufficient.
+
+Official source: https://www.agid.gov.it/it/notizie/firma-elettronica-qualificata-aggiornati-i-certificati-la-verifica-della-lista-dei ; TSL distribution: https://eidas.agid.gov.it/TL/TSL-IT.xml .
+
 ## Evidence register conventions
 For each normative control record: `controlId`, regulation/edition/clause, owner, implementation path, automated test, external report URL, auditor approval, last reviewed UTC, risk and remediation ticket. Never mark a control 'compliant' only because a file exists.
 
