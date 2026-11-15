@@ -47,6 +47,7 @@ public sealed class ReviewerWebAuthnRelyingPartyPolicyTests
     [InlineData("https://review.example.org/")]
     [InlineData("https://review.example.org.")]
     [InlineData("https://REVIEW.example.org")]
+    [InlineData("https://réview.example.org")]
     [InlineData("https://*.example.org")]
     [InlineData("https://localhost")]
     [InlineData("https://127.0.0.1")]
