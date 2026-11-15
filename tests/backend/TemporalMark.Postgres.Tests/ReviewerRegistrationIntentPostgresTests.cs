@@ -119,6 +119,34 @@ public sealed class ReviewerRegistrationIntentPostgresTests
                         async () => await command.ExecuteScalarAsync());
                     Assert.Equal(PostgresErrorCodes.InsufficientPrivilege, error.SqlState);
                 }
+                // The registrar executor must NOT acquire approver,
+                // provisioner or runtime group membership even if it still
+                // has the narrow registrar EXECUTE grant.
+                foreach (var conflicting in new[]
+                {
+                    "temporalmark_approver_group",
+                    "temporalmark_provisioner_group",
+                    "temporalmark_runtime_group"
+                })
+                {
+                    await using (var grant = new NpgsqlCommand(
+                        $"GRANT {conflicting} TO {login}", owner))
+                        await grant.ExecuteNonQueryAsync();
+                    try
+                    {
+                        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+                            store.IssueAsync(
+                                request with { ReviewerSubject = "other-" + conflicting },
+                                CancellationToken.None));
+                    }
+                    finally
+                    {
+                        await using var revoke = new NpgsqlCommand(
+                            $"REVOKE {conflicting} FROM {login}", owner);
+                        await revoke.ExecuteNonQueryAsync();
+                    }
+                }
+
                 var wrongExpectedLogin = new TemporalMark.Infrastructure.Postgres
                     .PostgresReviewerRegistrationIntentStore(database, login + "_wrong");
                 await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
