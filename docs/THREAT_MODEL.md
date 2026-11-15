@@ -57,3 +57,7 @@ V010 adds terminal approved-versus-rejected integrity constraints; a rejected re
 ## SQL CHECK three-valued logic on terminal rejects (V011, #37)
 
 An otherwise valid `rejected_utc` transition may evaluate a nullable regular-expression/allowlist predicate as UNKNOWN, and PostgreSQL `CHECK` accepts UNKNOWN. V011 adds strict `IS NOT NULL` requirements for rejected reviewer subject, token proof, reviewed scope digest and fixed reason. Owner-level direct-update regression tests prove that incomplete terminal decisions are denied even before the audit trigger. Historical migrations are not rewritten. This constraint does not make ordinary PostgreSQL audit WORM or protect against a schema owner disabling constraints. See ADR 0015 and #17.
+
+## WebAuthn challenge foundation (#39)
+
+A short-lived DB-generated, unpredictable nonce is bound to the original pending request and the current, signed/live/reviewed approver identity plus decision type, reason and expiry. The challenge itself has no power to APPROVE or REJECT; no signature is checked and it is not consumable. The old approver SQL login remains a bypass to human-signed decisions, so FIDO2 credential binding, verified RP/origin/UV/signature/signCount, transactional consumption and privilege removal remain #38. Migration owner can alter the pilot DB; it is not WORM or a QTSP certification. ADR 0016.

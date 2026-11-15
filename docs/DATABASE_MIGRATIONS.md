@@ -64,3 +64,7 @@ New immutable migration `V008__approval_assurance_provenance.sql` adds bounded a
 ## V011 — Strict nonnull rejection invariants (#37)
 
 PostgreSQL `CHECK` constraints accept a row when the expression is `UNKNOWN` (NULL), not only when it is TRUE. In V010 the optional fields are checked with regular expressions and an allowlist only *after* `rejected_utc` becomes non-null. V011 explicitly requires `rejection_proof_sha256 IS NOT NULL`, `rejection_review_sha256 IS NOT NULL`, `rejection_reason_code IS NOT NULL` and `rejected_by_subject IS NOT NULL` on every terminal rejection; a negative owner-level SQL integration test proves missing digest/reason rows are refused. V010 remains immutable and V011 is applied through the checksum-enforcing migrator. No production WORM/compliance claim follows.
+
+## V012 — one-time, unsigned reviewer challenge (#39)
+
+New `V012__bound_reviewer_decision_challenge.sql`: append-only-by-trigger owner table with a unique request ID, random 48-byte nonce, action, fixed reason, issuer/reviewer, original review SHA and bounded TTL. SECURITY DEFINER issues only for a still-pending exact original scope; PostgreSQL independently recomputes the UTF-8 length-prefixed digest and verifies expiry, using built-in SHA-256 (no pgcrypto extension). Only approver group has EXECUTE on issuing function; approver/runtime/provisioner have **no table SELECT/DML** or helper EXECUTE. **No consumer exists: a nonce cannot authorize a decision.** Migration count=12; V001–V011 immutable. ADR 0016, #38.

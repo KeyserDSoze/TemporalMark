@@ -110,3 +110,17 @@ dotnet run --project src/backend/applications/TemporalMark.Provisioner -- \
 ```
 
 Allowed reasons: `UNVERIFIED_ORGANIZATION`, `UNVERIFIED_IDENTITY`, `SCOPE_MISMATCH`, `POLICY_DENIED`. Rejection is **terminal** and cannot be approved, reviewed again or completed; the organization is not created. The database stores the reviewer subject, UTC decision timestamp, canonical review digest, SHA-256 fingerprint of the short-lived OIDC token, and reason code; a unique registry prevents use of that token for another approval OR rejection. Strong signed JWT, live account/current role and ACR checks are mandatory before the protected CLI asks PostgreSQL to reject. The local password-grant CI exception is explicitly **NON_MFA**. The digest is not a signed human decision, and the SQL approver credential remains a security-critical trust boundary. See [ADR 0015](../adr/0015-terminal-rejection-and-token-proof-replay.md); independently signed human consent remains #35.
+
+## Issue #39: server-issued reviewer challenge (unsigned prerequisite)
+
+After checking the original database review with `review`, an authenticated third-party approver can request exactly one cryptographic nonce for a pending enrollment:
+
+```sh
+dotnet run --project src/backend/applications/TemporalMark.Provisioner -- \
+  challenge --request-id '<UUID>' --review-sha256 '<64-UPPERCASE-HEX>' \
+  --decision APPROVE --reason-code NONE \
+  --approver-token-file /restricted/approver.jwt
+# For a REJECT intent, use --decision REJECT --reason-code POLICY_DENIED
+```
+
+The database checks the original legal organization, issuer, operator and first-admin subjects and **recomputes the canonical hash itself**. Its 48-byte challenge (three v4 UUIDs, ~366 random bits) expires within 60 seconds and no later than the original request, and may not be reissued. This CLI issues an **UNSIGNED CHALLENGE ONLY**. No signature is accepted, no approval/rejection is made, and the existing reviewer SQL credentials still permit the older pilot decisions. This is not a certified, human-held WebAuthn signature or legal evidence. See [ADR 0016](../adr/0016-server-issued-reviewer-challenge.md); real signature/DB privilege cutover is #38.
