@@ -75,6 +75,8 @@
     {
       "id": "00000000-0000-0000-0000-000000000001",
       "username": "demo-admin",
+      "firstName": "Demo",
+      "lastName": "Administrator",
       "email": "demo-admin@example.invalid",
       "emailVerified": true,
       "enabled": true,
