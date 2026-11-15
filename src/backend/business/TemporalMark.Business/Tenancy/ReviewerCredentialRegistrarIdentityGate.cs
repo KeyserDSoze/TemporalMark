@@ -11,11 +11,20 @@ public sealed record RegistrarIdentityGatePolicy
     public string ReviewerAudience { get; }
     public string RequiredAcr { get; }
 
+    // Never configure this as a production issuer. This is an exact, hardcoded
+    // disposable container-only exception, not a generic HTTP or localhost bypass.
+    public const string DisposableMfaCiIssuer =
+        "http://localhost:8081/realms/temporalmark-mfa-ci";
+
     public RegistrarIdentityGatePolicy(
-        string issuer, string registrarAudience, string reviewerAudience, string requiredAcr)
+        string issuer, string registrarAudience, string reviewerAudience, string requiredAcr,
+        bool allowDisposableMfaCiLoopbackHttp = false)
     {
         if (!Uri.TryCreate(issuer, UriKind.Absolute, out var uri) ||
-            uri.Scheme != Uri.UriSchemeHttps || uri.UserInfo.Length != 0 ||
+            (uri.Scheme != Uri.UriSchemeHttps &&
+             !(allowDisposableMfaCiLoopbackHttp && issuer == DisposableMfaCiIssuer &&
+               uri.Scheme == Uri.UriSchemeHttp && uri.IsLoopback)) ||
+            uri.UserInfo.Length != 0 ||
             uri.Query.Length != 0 || uri.Fragment.Length != 0 ||
             issuer != issuer.TrimEnd('/') ||
             uri.HostNameType != UriHostNameType.Dns ||
