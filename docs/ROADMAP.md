@@ -148,3 +148,12 @@ Progress is recorded in issues and CI, not inferred from this file. Every slice 
 - [x] GREEN isolated `ReviewerMdsOfflineCrlCandidateVerifier`: real BC parser/signature/serial check + explicit one-hop certificate chain. Always `UNAPPROVED`, label `CRL_SIGNATURE_CHECK_ONLY_ROOT_UNTRUSTED`, never public key, ACTIVE credential or tenant authorization. No CRL fetching, Azure dependency or SQL privilege change. [Runbook](WEBAUTHN_MDS_OFFLINE_CRL.md).
 - [ ] #59 close only after all four exact-final-main CI jobs GREEN and security review of test/implementation output.
 - [ ] #57 / #55 production work: independent FIDO R46 root (R3 cross-cert until 2029-03-18), full JWS x5c chain CRL/OCSP **every intermediate**, CRL issuer CDP/AKI/number/anti-rollback, managed signed network/offline import, outage and SSRF tests, persistent signed MDS state, model-specific attestation chain, CAB/privacy. Keep #53/#44/#50/#46/#38 OPEN, registrar CLI and V015/V016 frozen; no eIDAS/QTSP/WORM claims.
+
+
+## Two-hop independently issuer-signed CRL regression (#60; parent #57 still OPEN)
+
+- [x] ADR 0031 committed before RED tests on `main`. X.509 PKI fixture generates ephemeral three-tier root → intermediate CA → signer leaf and **two real issuer-signed DER CRLs** at test runtime.
+- [x] RED-first tests cover intermediate revocation as well as leaf revocation, swapped/missing/forged CRLs, foreign CA/root, CA `cRLSign`, expired/future CRLs, unsupported delta/indirect CRLs and path cardinality.
+- [x] GREEN pure offline .NET 10 `ReviewerMdsOfflineTwoHopCrlCandidateVerifier`: exact `CustomRootTrust` path with downloads blocked, and **both non-root certificates** checked by the *same* BouncyCastle 2.7.0 CRL signature/issuer/date/revocation helper already used by #59. No host trust, CRL URL, SQL/CLI/API integration or production root. Every observation is **`UNAPPROVED`**. [Runbook](WEBAUTHN_MDS_TWO_HOP_CRL.md).
+- [ ] Close #60 only after the exact final `main` HEAD passes four CI jobs (backend/frontend/terraform/docker-smoke).
+- [ ] Production #57/#55: independent real FIDO root R46 custody, signed MDS JWT 2026 R3/R46 cross-cert path, actual all-hop CRL/OCSP and issuer AKI/CDP, signed CRL imports including air-gap, persistent monotonic CRLNumber+signed MDS snapshot, outage/time/SSRF and CAB/DPIA. This is an **untrusted test root**, not true manufacturer revocation provenance. V015/V016 and WebAuthn/SQL enrollment remain frozen; #53/#44/#50/#46/#38 OPEN. No eIDAS/WORM claims.
