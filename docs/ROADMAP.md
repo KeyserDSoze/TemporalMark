@@ -60,7 +60,7 @@ Progress is recorded in issues and CI, not inferred from this file. Every slice 
 
 - [x] #43 **closed** after exact-head four-job green [CI 43737165746](https://github.com/KeyserDSoze/TemporalMark/actions/runs/43737165746), SHA `ee923d0` (byte-exact **untrusted** signing message, no verifier).
 - [x] #45 TDD-first registration-intent foundation on `main`: ADR 0021, V013 owner-pinned HTTPS issuer/RP policy with forward-only V014 strict DNS integrity, registrar-only NOLOGIN group with no login/members, 48-byte nonce, <=2-minute TTL, one-per-issuer/reviewer/RP append-only storage, privilege/negative/concurrency PostgreSQL tests, no trusted key or signup endpoint. **Does NOT deliver WebAuthn registration or independent registrar proof.**
-- [ ] #45 exact-head backend/frontend/terraform/docker-smoke CI success and closure after verified run; initial RED and subsequent migration runs to be linked in issue.
+- [x] #45 exact-head four-job GREEN and closed: https://github.com/KeyserDSoze/TemporalMark/actions/runs/43739456055
 - [ ] #44 **true enrollment** with independent real registrar authentication and witness, maintained FIDO2 attestation verification, credential registry+unique IDs, revocation/rotation/recovery and browser tests; NOLOGIN group must not gain a demo/automatic registrar login.
 - [ ] #38 **real verified reviewer decision** with trusted enrolled public key, signed assertion/UV, current IAM, atomic challenge consumption and removal of legacy direct SQL decision grants; #35/#31/#27 and independent WORM/QTSP #17/#13 remain OPEN.
 
@@ -68,12 +68,12 @@ Progress is recorded in issues and CI, not inferred from this file. Every slice 
 ### #45 post-RED SQL integrity follow-up
 
 - [x] V014 immutable forward-only RP-name hardening after RED tests for literal IPv4, overlong DNS labels and numeric-only TLD; never rewrite checksummed V013.
-- [ ] Verify **14** migrations and all four CI jobs for final main SHA; no WebAuthn registration API, user-controlled public-key trust or credential activation in this increment.
+- [x] 14 migrations verified with all four CI jobs for #45: https://github.com/KeyserDSoze/TemporalMark/actions/runs/43739456055
 
 ## Independent registrar identity preparation (#47; #46/#44 open)
 
 - [x] RED-first xUnit dual RS256-signed registrar/reviewer tokens with distinct OIDC audiences/roles, pinned issuer, 120-second ACR/iat/auth_time policy, fresh RFC7662 live status and independently fetched current effective realm roles for both identities. Unit negative matrix for signature, role/audience, stale/weaker MFA claims, incorrect reviewer/exclusions, revoked/disabled accounts, IdP outage and no cache. ADR 0022 and runbook. **Pure preflight, no CLI/API/SQL, no credential creation.**
-- [ ] #47 exact HEAD four-job GitHub CI success before closing child.
+- [x] #47 exact HEAD four-job CI GREEN and closed: https://github.com/KeyserDSoze/TemporalMark/actions/runs/43743827253
 - [ ] #46 still OPEN: configure and verify real Keycloak browser two-person **registrar** MFA and live current-directory authority, independently approved registrar SQL executor and one-time binding to pinned V013 intent, fail-closed Entra adapter.
 - [ ] #44 still OPEN: maintained FIDO2 `create()` attestation, active globally unique trusted credential registry, key revocation/recovery and separate-human approval. #38 still OPEN: reviewer-held signed original decision, atomic one-time challenge consumption and removal of historical direct SQL decision grants. #35/#31/#27 and WORM/QTSP #17/#13 remain OPEN.
 
@@ -83,3 +83,11 @@ Progress is recorded in issues and CI, not inferred from this file. Every slice 
 - [x] Real .NET identity gate test added with original Keycloak-signed registrar and reviewer browser MFA tokens, fresh RFC7662 and effective directory roles, followed by role-removal and disabled-account negative checks of the SAME previously valid bearer. Strict HTTPS in production, only one explicit hardcoded disposable HTTP fixture issuer for CI. No privilege/SQL/WORM change.
 - [ ] #48 exact-final-HEAD four-job GitHub CI verification and closure only after all GREEN; early RED and subsequent failing CI must be recorded in issue. This is a disposable CI proof, NOT actual WebAuthn registration.
 - [ ] #46 real approved production registrar step-up/current-role governance, secure narrowly authorized SQL executor and replay-safe V013 intent binding; #44 maintained FIDO2 `create()` registration attestation/key and revocation, #38 signed reviewer approval/SQL grant cutover. #35/#31/#27, legal #13 and WORM #17 remain OPEN.
+
+## Standalone two-person registrar intent issuance (#49; #46 still open)
+
+- [x] Test-first .NET 10 `ReviewerRegistrationIntentWorkflow` couples BOTH independently signed+strong, live and current-role OIDC registrar/reviewer principals to an immutable approved reviewer subject and server-pinned HTTPS issuer/RP/origin (ADR 0024). **Only** after both checks may an `IReviewerRegistrationIntentStore` request the V013-generated, 48-byte, unconsumable nonce. Bound metadata, short TTL and one-ever uniqueness tested. No WebAuthn attestation, accepted key, browser registration or approved organization decision.
+- [x] Npgsql registrar store uses a **dedicated, separately configured restricted SQL LOGIN**, checking actual session_user/current_user, registrar NOLOGIN-group membership, non-superuser/CREATEROLE/CREATEDB status and absence of direct SELECT/DML on intent/policy tables. Existing owner, approver, provisioner/API SQL identities denied. Disposable per-test restricted login is created/removed in CI, **never seeded in migrations**.
+- [x] Standalone isolated `registrar-intent` CLI mode requires owner-only two JWT files, real HTTPS pinned issuer, separate audiences and confident ACR, confidential Keycloak introspection/directory, reviewed RP + reviewer stable subject and dedicated SQL connection. **Not a public API/PWA endpoint**. Real production CAB/vault login/key lifecycle is NOT auto-created.
+- [ ] #49 exact-head four-job backend/frontend/terraform/docker-smoke CI green and close only with evidence. This is a bounded **non-authorizing** integration slice; a compromised SQL registrar login can call the function directly.
+- [ ] #46 independently approved actual production registrar service custody/ACL, append-only verified identity/action audit, replay-safe one-time WebAuthn ceremony consumption, secure rollover/renewal and Keycloak-to-DB TOCTOU controls. #44 maintained FIDO2 registered-credential verification/revocation and #38 signed reviewer decision + legacy SQL grant removal remain OPEN. #35/#31, WORM #17 and legal/QTSP #13 remain OPEN.
