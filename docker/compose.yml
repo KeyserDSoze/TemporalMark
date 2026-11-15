@@ -21,7 +21,8 @@ services:
     # Runs versioned migrations against both new and existing development volumes.
     image: postgres:17.6-alpine
     restart: "no"
-    entrypoint: ["/bin/sh", "/scripts/apply-migrations.sh"]
+    entrypoint: ["/bin/sh", "-c"]
+    command: "/bin/sh /scripts/apply-migrations.sh && /bin/sh /scripts/setup-local-db-roles.sh"
     environment:
       PGHOST: postgres
       PGPORT: "5432"
@@ -29,8 +30,11 @@ services:
       PGPASSWORD: local-dev-only
       PGDATABASE: temporalmark
       MIGRATIONS_DIR: /migrations
+      DEV_RUNTIME_DB_PASSWORD: local-dev-only
+      DEV_PROVISIONER_DB_PASSWORD: local-provisioner-only
     volumes:
       - ../scripts/apply-migrations.sh:/scripts/apply-migrations.sh:ro
+      - ../scripts/setup-local-db-roles.sh:/scripts/setup-local-db-roles.sh:ro
       - ../scripts/migrations:/migrations:ro
     depends_on:
       postgres:
@@ -56,7 +60,7 @@ services:
       ASPNETCORE_ENVIRONMENT: Development
       TimestampProvider__Url: "${TIMESTAMP_PROVIDER_URL:-}"
       TimestampProvider__Id: "${TIMESTAMP_PROVIDER_ID:-}"
-      ConnectionStrings__Registry: "Host=postgres;Port=5432;Database=temporalmark;Username=temporalmark;Password=local-dev-only"
+      ConnectionStrings__Registry: "Host=postgres;Port=5432;Database=temporalmark;Username=temporalmark_api;Password=local-dev-only"
     ports: ["127.0.0.1:8080:8080"]
     depends_on:
       postgres:
