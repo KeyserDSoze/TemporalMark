@@ -89,12 +89,20 @@ test("real Keycloak browser password+TOTP, Code+PKCE S256 and verified ACR (not 
     await enrollment.page.locator("#mode-manual").click();
     const seed = (await enrollment.page.locator("#kc-totp-secret-key").innerText()).trim();
     expect(seed.length).toBeGreaterThan(12);
+    const enrollmentTimeSlot = Math.floor(Date.now() / 30000);
     await enrollment.page.locator("#totp").fill(totp(seed));
     await enrollment.page.locator("#saveTOTPBtn").click();
     await expect.poll(() => callbackCodes.length, { timeout: 20000 }).toBe(1);
     // Discard the enrollment-session code entirely (no token issuance here).
     callbackCodes.length = 0;
     await enrollment.context.close();
+
+    // Keycloak's default one-time-use policy rejects a TOTP value that was
+    // already consumed by the credential-setup ceremony. Do NOT disable
+    // the replay protection; wait for the next 30-second RFC6238 counter.
+    await expect.poll(() => Math.floor(Date.now() / 30000), {
+      timeout: 35000, intervals: [300, 700, 1000]
+    }).toBeGreaterThan(enrollmentTimeSlot);
 
     // Second clean browser: password alone must lead to OTP verification.
     const second = await start();
