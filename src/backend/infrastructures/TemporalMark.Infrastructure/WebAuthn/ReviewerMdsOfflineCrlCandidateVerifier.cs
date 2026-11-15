@@ -16,17 +16,17 @@ public sealed record ReviewerMdsCrlCryptographicCandidate(
     string ReviewStatus, string PolicyStage, string CrlSha256);
 
 /// <summary>
-/// Strict, offline DER X509 v2 CRL proof for ONE directly issued certificate,
-/// not an MDS trust decision or an authorization interface. Uses the pinned
-/// maintained BouncyCastle 2.7.0 for CRL parsing/signature/revocation checks.
-/// No network, trust-store fallback, CRL URL or SQL credentials are available.
+/// Strict, offline DER X509 v2 full-CRL proof for one directly issued
+/// certificate, not an MDS trust or authorization interface. ADR 0030.
+/// The shared internal certificate+CRL check is reused by the two-hop
+/// inspection (ADR 0031) without creating a separate signature verifier.
 /// </summary>
 public static class ReviewerMdsOfflineCrlCandidateVerifier
 {
     private const int MaximumCrlBytes = 1_048_576;
     private const int MaximumRevokedEntries = 10000;
     private static readonly TimeSpan MaximumCrlPeriod = TimeSpan.FromDays(7);
-    // SHA256WITHRSA only for this intentionally restrictive test slice.
+    // SHA256WITHRSA only for this deliberately narrow test profile.
     private const string SupportedSignatureOid = "1.2.840.113549.1.1.11";
 
     public static ReviewerMdsCrlCryptographicCandidate Inspect(
@@ -35,29 +35,20 @@ public static class ReviewerMdsOfflineCrlCandidateVerifier
         byte[]? externallySuppliedDerCrl,
         DateTimeOffset nowUtc)
     {
-        if (directlyIssuedLeaf is null || untrustedDirectIssuer is null ||
-            externallySuppliedDerCrl is not { Length: >= 128 and <= MaximumCrlBytes } ||
-            nowUtc.Offset != TimeSpan.Zero)
+        if (directlyIssuedLeaf is null || untrustedDirectIssuer is null)
             throw Denied();
 
         try
         {
-            if (untrustedDirectIssuer.Version != 3 ||
-                directlyIssuedLeaf.Version != 3 ||
-                !HasConstraints(untrustedDirectIssuer, isCa: true) ||
-                !HasConstraints(directlyIssuedLeaf, isCa: false) ||
-                !HasUsage(untrustedDirectIssuer, X509KeyUsageFlags.KeyCertSign |
-                    X509KeyUsageFlags.CrlSign) ||
-                !HasUsage(directlyIssuedLeaf, X509KeyUsageFlags.DigitalSignature) ||
-                !CertificateIsCurrent(directlyIssuedLeaf, nowUtc) ||
-                !CertificateIsCurrent(untrustedDirectIssuer, nowUtc))
-                throw Denied();
+            // Complete the same signed CRL inspection shared by #60.
+            var digest = VerifySignedDirectCrl(
+                directlyIssuedLeaf, untrustedDirectIssuer,
+                externallySuppliedDerCrl, nowUtc, subjectIsCa: false);
 
-            // The leaf must actually have been signed directly by this issuer.
-            // A custom-root path *without* built-in revocation is used only to
-            // confirm this direct signature/path; the independently supplied
-            // signed CRL below is checked separately. Never treat this as
-            // comprehensive FIDO root, intermediate or OCSP validation.
+            // Check actual one-hop X509 certificate signature and byte-exact
+            // issuer. No host trust, downloads, optional revocation or
+            // fallback; NoCheck applies ONLY to path cryptography because
+            // we independently verified the exact issuer-signed CRL above.
             using var chain = new X509Chain();
             chain.ChainPolicy.TrustMode = X509ChainTrustMode.CustomRootTrust;
             chain.ChainPolicy.CustomTrustStore.Add(untrustedDirectIssuer);
@@ -73,8 +64,49 @@ public static class ReviewerMdsOfflineCrlCandidateVerifier
                     chain.ChainElements[1].Certificate.RawData, untrustedDirectIssuer.RawData))
                 throw Denied();
 
-            var issuer = DotNetUtilities.FromX509Certificate(untrustedDirectIssuer);
-            var leaf = DotNetUtilities.FromX509Certificate(directlyIssuedLeaf);
+            return new ReviewerMdsCrlCryptographicCandidate(
+                "UNAPPROVED", "CRL_SIGNATURE_CHECK_ONLY_ROOT_UNTRUSTED", digest);
+        }
+        catch (Exception error) when (error is not OutOfMemoryException)
+        {
+            throw Denied();
+        }
+    }
+
+    /// <summary>
+    /// Checks one explicit direct-issuer signed CRL without deciding whether
+    /// the issuer belongs to an approved trust chain. This is not an
+    /// authorization or an issuer-root trust result. Used ONLY after an
+    /// independent exact X509 path check in the two-hop test preflight.
+    /// </summary>
+    internal static string VerifySignedDirectCrl(
+        X509Certificate2? subject,
+        X509Certificate2? untrustedIssuer,
+        byte[]? externallySuppliedDerCrl,
+        DateTimeOffset nowUtc,
+        bool subjectIsCa)
+    {
+        if (subject is null || untrustedIssuer is null ||
+            externallySuppliedDerCrl is not { Length: >= 128 and <= MaximumCrlBytes } ||
+            nowUtc.Offset != TimeSpan.Zero)
+            throw Denied();
+
+        try
+        {
+            if (untrustedIssuer.Version != 3 || subject.Version != 3 ||
+                !HasConstraints(untrustedIssuer, isCa: true) ||
+                !HasConstraints(subject, isCa: subjectIsCa) ||
+                !HasUsage(untrustedIssuer,
+                    X509KeyUsageFlags.KeyCertSign | X509KeyUsageFlags.CrlSign) ||
+                !HasUsage(subject, subjectIsCa
+                    ? X509KeyUsageFlags.KeyCertSign | X509KeyUsageFlags.CrlSign
+                    : X509KeyUsageFlags.DigitalSignature) ||
+                !CertificateIsCurrent(subject, nowUtc) ||
+                !CertificateIsCurrent(untrustedIssuer, nowUtc))
+                throw Denied();
+
+            var issuer = DotNetUtilities.FromX509Certificate(untrustedIssuer);
+            var leaf = DotNetUtilities.FromX509Certificate(subject);
             var crl = new X509CrlParser().ReadCrl(externallySuppliedDerCrl);
             if (crl is null ||
                 crl.Version != 2 ||
@@ -87,9 +119,8 @@ public static class ReviewerMdsOfflineCrlCandidateVerifier
                 crl.GetExtension(X509Extensions.FreshestCrl) is not null)
                 throw Denied();
 
-            // Conservative profile: any critical extensions are unsupported
-            // until separately audited; this rejects indirect/delta and
-            // unknown critical certificate/CRL processing semantics.
+            // No unknown critical/delta/indirect CRL processing until a
+            // separately approved complete RFC 5280 implementation exists.
             if (crl.GetCriticalExtensionOids() is { Count: > 0 })
                 throw Denied();
 
@@ -104,9 +135,8 @@ public static class ReviewerMdsOfflineCrlCandidateVerifier
                 nextUpdate.Value - thisUpdate > MaximumCrlPeriod)
                 throw Denied();
 
-            // Verification uses the real CA public key from the *same*
-            // certificate that directly signed the leaf, not a CRL-supplied
-            // key, host CA store, URL, or an untrusted signing certificate.
+            // Verify against the public key in the SAME CA that issued the
+            // subject certificate, not an untrusted CRL-provided cert/key.
             if (!crl.IsSignatureValid(issuer.GetPublicKey()))
                 throw Denied();
 
@@ -117,9 +147,9 @@ public static class ReviewerMdsOfflineCrlCandidateVerifier
                 crl.IsRevoked(leaf))
                 throw Denied();
 
-            return new ReviewerMdsCrlCryptographicCandidate(
-                "UNAPPROVED", "CRL_SIGNATURE_CHECK_ONLY_ROOT_UNTRUSTED",
-                Convert.ToHexString(SHA256.HashData(externallySuppliedDerCrl)));
+            // A digest cannot be evidence of root trust or persistent
+            // anti-rollback; it is non-authorizing cryptographic metadata.
+            return Convert.ToHexString(SHA256.HashData(externallySuppliedDerCrl));
         }
         catch (Exception error) when (error is not OutOfMemoryException)
         {
