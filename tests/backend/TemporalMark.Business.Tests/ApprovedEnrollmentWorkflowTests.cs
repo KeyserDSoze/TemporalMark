@@ -13,7 +13,7 @@ public sealed class ApprovedEnrollmentWorkflowTests
     public async Task RequestDoesNotCreateOrganizationAndApprovalIsSeparate()
     {
         var store = new PendingStore();
-        var flow = new OrganizationApprovalWorkflow(new Tokens(), new Live(), new Directory(), store, Policy, ApprovalAudience);
+        var flow = new OrganizationApprovalWorkflow(new Tokens(), new Live(), new Directory(), store, Policy, ApprovalAudience, new ApprovalAuthenticationPolicy("urn:temporalmark:loa:2", TimeSpan.FromSeconds(120)));
         var request = await flow.RequestAsync("Reviewed Organization", "op.jwt", "admin.jwt", default);
         Assert.NotEqual(Guid.Empty, request);
         Assert.Single(store.Requests);
@@ -44,7 +44,7 @@ public sealed class ApprovedEnrollmentWorkflowTests
     public async Task RejectsUnauthorizedApproverWithoutWriting(string reason)
     {
         var store = new PendingStore();
-        var flow = new OrganizationApprovalWorkflow(new Tokens(), new Live(reason), new Directory(), store, Policy, ApprovalAudience);
+        var flow = new OrganizationApprovalWorkflow(new Tokens(), new Live(reason), new Directory(), store, Policy, ApprovalAudience, new ApprovalAuthenticationPolicy("urn:temporalmark:loa:2", TimeSpan.FromSeconds(120)));
         var id = Guid.NewGuid();
         var token = reason == "missing-role" ? "unprivileged.jwt" :
             reason == "same-identity" ? "operator-approver.jwt" :
@@ -65,7 +65,7 @@ public sealed class ApprovedEnrollmentWorkflowTests
     {
         var live = new Live();
         var store = new PendingStore();
-        var flow = new OrganizationApprovalWorkflow(new Tokens(), live, new Directory(), store, Policy, ApprovalAudience);
+        var flow = new OrganizationApprovalWorkflow(new Tokens(), live, new Directory(), store, Policy, ApprovalAudience, new ApprovalAuthenticationPolicy("urn:temporalmark:loa:2", TimeSpan.FromSeconds(120)));
         await Assert.ThrowsAsync<ArgumentException>(() =>
             flow.ApproveAsync(Guid.NewGuid(), name, "admin-sub", "operator-sub", "approver.jwt", default));
         Assert.Empty(live.Checked);
@@ -76,7 +76,7 @@ public sealed class ApprovedEnrollmentWorkflowTests
     public async Task AnyLiveIdentityFailureOnCompletePreventsDatabaseWrite()
     {
         var store = new PendingStore();
-        var flow = new OrganizationApprovalWorkflow(new Tokens(), new Live("disabled-admin"), new Directory(), store, Policy, ApprovalAudience);
+        var flow = new OrganizationApprovalWorkflow(new Tokens(), new Live("disabled-admin"), new Directory(), store, Policy, ApprovalAudience, new ApprovalAuthenticationPolicy("urn:temporalmark:loa:2", TimeSpan.FromSeconds(120)));
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
             flow.CompleteAsync(Guid.NewGuid(), "Client", "op.jwt", "admin.jwt", default));
         Assert.Empty(store.Completions);
@@ -89,7 +89,9 @@ public sealed class ApprovedEnrollmentWorkflowTests
             {
                 ("op.jwt", "provisioning-api") => Task.FromResult(new VerifiedOidcToken(Issuer, "operator-sub", ["platform_provisioner"])),
                 ("admin.jwt", "temporalmark-api") => Task.FromResult(new VerifiedOidcToken(Issuer, "admin-sub", ["tenant_admin"])),
-                ("approver.jwt", ApprovalAudience) => Task.FromResult(new VerifiedOidcToken(Issuer, "approver-sub", ["platform_approver"])),
+                ("approver.jwt", ApprovalAudience) => Task.FromResult(new VerifiedOidcToken(Issuer, "approver-sub", ["platform_approver"],
+                        "urn:temporalmark:loa:2", DateTimeOffset.UtcNow.ToUnixTimeSeconds() - 20,
+                        DateTimeOffset.UtcNow.ToUnixTimeSeconds() - 10)),
                 ("unprivileged.jwt", ApprovalAudience) => Task.FromResult(new VerifiedOidcToken(Issuer, "approver-sub", [])),
                 ("operator-approver.jwt", ApprovalAudience) => Task.FromResult(new VerifiedOidcToken(Issuer, "operator-sub", ["platform_approver"])),
                 ("alien.jwt", ApprovalAudience) => Task.FromResult(new VerifiedOidcToken("https://alien.example.test", "approver-sub", ["platform_approver"])),

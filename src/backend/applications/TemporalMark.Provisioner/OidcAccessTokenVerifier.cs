@@ -84,7 +84,8 @@ public sealed class OidcAccessTokenVerifier : IVerifiedOidcTokenSource
         var roles = new HashSet<string>(StringComparer.Ordinal);
         ReadRoles(root, "role", roles);  // Keycloak mapped realm role
         ReadRoles(root, "roles", roles); // Entra app roles
-        return new VerifiedOidcToken(issuer, sub, roles.ToArray());
+        return new VerifiedOidcToken(issuer, sub, roles.ToArray(),
+            ClaimText(root, "acr"), ClaimLong(root, "auth_time"), issuedAt);
     }
 
     private static string? ClaimText(JsonElement root, string key) =>

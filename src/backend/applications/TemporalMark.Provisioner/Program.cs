@@ -25,6 +25,16 @@ try
         ?? "temporalmark-api";
     var approverAudience = Environment.GetEnvironmentVariable("PROVISIONING_APPROVER_AUDIENCE")
         ?? "temporalmark-approval";
+    var requiredApproverAcr = Environment.GetEnvironmentVariable("PROVISIONING_APPROVER_REQUIRED_ACR")
+        ?? throw new InvalidOperationException("Pinned OIDC approval ACR configuration required.");
+    // Exception only for the exact disposable Keycloak fixture, never generic loopback
+    // or HTTPS deployments. The fixture has NO MFA and is not a release test.
+    var allowDisposableNoMfa =
+        localHttp &&
+        issuer.TrimEnd('/') == ApprovalAuthenticationPolicy.DisposableLocalIssuer &&
+        Environment.GetEnvironmentVariable("PROVISIONING_DEVELOPMENT_PASSWORD_GRANT_NO_MFA") == "true";
+    var approverAuthentication = new ApprovalAuthenticationPolicy(
+        requiredApproverAcr, TimeSpan.FromSeconds(120), allowDisposableNoMfa);
 
     using var live = new KeycloakTokenIntrospector(issuer, localHttp, clientId, clientSecret);
     // Independent current account+effective realm-role lookup is mandatory.
@@ -47,7 +57,8 @@ try
         throw new InvalidOperationException("Dedicated action-specific DB credential required.");
     await using var db = NpgsqlDataSource.Create(connection);
     var flow = new OrganizationApprovalWorkflow(
-        verifier, live, directory, new PostgresOrganizationApprovalStore(db), policy, approverAudience);
+        verifier, live, directory, new PostgresOrganizationApprovalStore(db), policy,
+        approverAudience, approverAuthentication);
 
     Guid result;
     switch (mode)

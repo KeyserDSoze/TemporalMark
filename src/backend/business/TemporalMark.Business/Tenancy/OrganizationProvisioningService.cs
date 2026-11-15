@@ -4,7 +4,11 @@ using System.Text;
 namespace TemporalMark.Business.Tenancy;
 
 /// <summary>Identity returned only after cryptographic access-token validation against a pinned IdP.</summary>
-public sealed record VerifiedOidcToken(string Issuer, string Subject, IReadOnlyCollection<string> Roles);
+public sealed record VerifiedOidcToken(
+    string Issuer, string Subject, IReadOnlyCollection<string> Roles,
+    string? AuthenticationContext = null,
+    long? AuthenticationTimeUnix = null,
+    long? IssuedAtUnix = null);
 
 public sealed record ProvisioningPolicy(string Issuer, string OperatorAudience, string AdminAudience);
 

@@ -41,6 +41,10 @@ export PROVISIONING_OIDC_ISSUER="http://localhost:8081/realms/temporalmark"
 export PROVISIONING_OPERATOR_AUDIENCE="temporalmark-provisioner"
 export PROVISIONING_ADMIN_AUDIENCE="temporalmark-api"
 export PROVISIONING_APPROVER_AUDIENCE="temporalmark-approval"
+# Disposable CI uses password grant and has NO MFA. Strict production policy
+# cannot be disabled for any other issuer/subject.
+export PROVISIONING_APPROVER_REQUIRED_ACR="urn:temporalmark:loa:2"
+export PROVISIONING_DEVELOPMENT_PASSWORD_GRANT_NO_MFA=true
 export PROVISIONING_ALLOW_HTTP_LOOPBACK=true
 # Configure dedicated read-only service-account role grants via Keycloak Admin REST.
 # This setup uses disposable CI realm admin credentials and is FORBIDDEN in production.

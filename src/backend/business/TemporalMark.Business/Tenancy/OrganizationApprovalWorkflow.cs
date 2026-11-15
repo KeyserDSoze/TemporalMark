@@ -38,7 +38,8 @@ public sealed class OrganizationApprovalWorkflow(
     ICurrentOidcAccountDirectory directory,
     IOrganizationApprovalStore store,
     ProvisioningPolicy policy,
-    string approverAudience)
+    string approverAudience,
+    IApprovalAuthenticationPolicy approverAuthentication)
 {
     public async Task<Guid> RequestAsync(
         string organizationName, string operatorToken, string adminToken, CancellationToken ct)
@@ -65,6 +66,9 @@ public sealed class OrganizationApprovalWorkflow(
 
         var identity = await verifier.VerifyAsync(approverToken, approverAudience, ct);
         RequireIdentity(identity, "platform_approver");
+        // No enrollment approval can rely on a signed role without recent
+        // authentication context. The exact ACR must map to real MFA in the IdP.
+        approverAuthentication.Require(identity);
         if (identity.Subject == expectedOperatorSubject || identity.Subject == expectedAdminSubject ||
             expectedOperatorSubject == expectedAdminSubject)
             throw new UnauthorizedAccessException("Approver, operator and admin must be distinct.");

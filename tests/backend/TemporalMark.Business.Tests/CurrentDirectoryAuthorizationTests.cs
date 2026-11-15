@@ -14,7 +14,7 @@ public sealed class CurrentDirectoryAuthorizationTests
         var directory = new Directory();
         var storage = new Storage();
         var workflow = new OrganizationApprovalWorkflow(
-            new Tokens(), new Live(), directory, storage, Policy, "temporalmark-approval");
+            new Tokens(), new Live(), directory, storage, Policy, "temporalmark-approval", new ApprovalAuthenticationPolicy("urn:temporalmark:loa:2", TimeSpan.FromSeconds(120)));
         var id = await workflow.RequestAsync("Client", "op.jwt", "admin.jwt", default);
         await workflow.ApproveAsync(id, "Client", "admin-sub", "operator-sub", "review.jwt", default);
         await workflow.CompleteAsync(id, "Client", "op.jwt", "admin.jwt", default);
@@ -35,7 +35,7 @@ public sealed class CurrentDirectoryAuthorizationTests
     {
         var storage = new Storage();
         var workflow = new OrganizationApprovalWorkflow(
-            new Tokens(), new Live(), new Directory(failure), storage, Policy, "temporalmark-approval");
+            new Tokens(), new Live(), new Directory(failure), storage, Policy, "temporalmark-approval", new ApprovalAuthenticationPolicy("urn:temporalmark:loa:2", TimeSpan.FromSeconds(120)));
         await Assert.ThrowsAnyAsync<Exception>(() =>
             workflow.RequestAsync("Client", "op.jwt", "admin.jwt", default));
         Assert.Empty(storage.Requests);
@@ -50,7 +50,7 @@ public sealed class CurrentDirectoryAuthorizationTests
     {
         var storage = new Storage();
         var workflow = new OrganizationApprovalWorkflow(
-            new Tokens(), new Live(), new Directory(failure), storage, Policy, "temporalmark-approval");
+            new Tokens(), new Live(), new Directory(failure), storage, Policy, "temporalmark-approval", new ApprovalAuthenticationPolicy("urn:temporalmark:loa:2", TimeSpan.FromSeconds(120)));
         await Assert.ThrowsAnyAsync<Exception>(() =>
             workflow.ApproveAsync(Guid.NewGuid(), "Client", "admin-sub", "operator-sub", "review.jwt", default));
         Assert.Empty(storage.Approvals);
@@ -62,7 +62,7 @@ public sealed class CurrentDirectoryAuthorizationTests
         var storage = new Storage();
         var directory = new Directory();
         var workflow = new OrganizationApprovalWorkflow(
-            new Tokens(), new Live(), directory, storage, Policy, "temporalmark-approval");
+            new Tokens(), new Live(), directory, storage, Policy, "temporalmark-approval", new ApprovalAuthenticationPolicy("urn:temporalmark:loa:2", TimeSpan.FromSeconds(120)));
         var id = await workflow.RequestAsync("Client", "op.jwt", "admin.jwt", default);
         await workflow.ApproveAsync(id, "Client", "admin-sub", "operator-sub", "review.jwt", default);
         directory.CurrentAdminRoleRevoked = true;
@@ -81,7 +81,9 @@ public sealed class CurrentDirectoryAuthorizationTests
                 ("admin.jwt", "temporalmark-api") =>
                     Task.FromResult(new VerifiedOidcToken(Issuer, "admin-sub", ["tenant_admin"])),
                 ("review.jwt", "temporalmark-approval") =>
-                    Task.FromResult(new VerifiedOidcToken(Issuer, "review-sub", ["platform_approver"])),
+                    Task.FromResult(new VerifiedOidcToken(Issuer, "review-sub", ["platform_approver"],
+                        "urn:temporalmark:loa:2", DateTimeOffset.UtcNow.ToUnixTimeSeconds() - 20,
+                        DateTimeOffset.UtcNow.ToUnixTimeSeconds() - 10)),
                 _ => throw new UnauthorizedAccessException("Bad JWT")
             };
     }
