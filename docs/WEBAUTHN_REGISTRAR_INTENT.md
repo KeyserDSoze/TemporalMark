@@ -55,3 +55,7 @@ Sources: [W3C WebAuthn Level 3](https://www.w3.org/TR/2026/REC-webauthn-3-202608
 ## V014 RP DNS integrity hardening
 
 The originally published V013 migration is immutable and must never be rewritten. Forward-only V014 adds a strict owner-pinned DNS constraint: reject IPv4 literal RP IDs, all-numeric final DNS labels and labels exceeding 63 characters, even if the earlier basic regex matched. Live PostgreSQL negative tests cover these failures. Existing bad policy rows stop the migration for change-controlled repair; do not disable the constraint. This correction **does not create or trust any WebAuthn credential**. Exact CI count: **14**.
+
+## Follow-on to V013/V014 — dual-OIDC check only (#47; ADR 0022)
+
+A separate non-authorizing business-layer identity preflight checks two signed, live, enabled and currently role-entitled Keycloak users with distinct pinned registrar/reviewer audiences and fresh IdP ACR. It is **NOT a caller of** `issue_reviewer_registration_intent`, does not provision a registrar SQL login or role membership, and cannot register a WebAuthn key. Keycloak real registrar MFA policy and a privilege-isolated, replay-resistant issuance service remain #46. Actual FIDO2 attestation, independent enrollment approval, credential revocation remain #44; signed reviewer decision and old SQL grant removal remain #38. See [ADR 0022](../adr/0022-registrar-dual-oidc-identity-preflight.md) and [identity guide](WEBAUTHN_REGISTRAR_IDENTITY.md).

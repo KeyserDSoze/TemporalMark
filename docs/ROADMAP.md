@@ -69,3 +69,10 @@ Progress is recorded in issues and CI, not inferred from this file. Every slice 
 
 - [x] V014 immutable forward-only RP-name hardening after RED tests for literal IPv4, overlong DNS labels and numeric-only TLD; never rewrite checksummed V013.
 - [ ] Verify **14** migrations and all four CI jobs for final main SHA; no WebAuthn registration API, user-controlled public-key trust or credential activation in this increment.
+
+## Independent registrar identity preparation (#47; #46/#44 open)
+
+- [x] RED-first xUnit dual RS256-signed registrar/reviewer tokens with distinct OIDC audiences/roles, pinned issuer, 120-second ACR/iat/auth_time policy, fresh RFC7662 live status and independently fetched current effective realm roles for both identities. Unit negative matrix for signature, role/audience, stale/weaker MFA claims, incorrect reviewer/exclusions, revoked/disabled accounts, IdP outage and no cache. ADR 0022 and runbook. **Pure preflight, no CLI/API/SQL, no credential creation.**
+- [ ] #47 exact HEAD four-job GitHub CI success before closing child.
+- [ ] #46 still OPEN: configure and verify real Keycloak browser two-person **registrar** MFA and live current-directory authority, independently approved registrar SQL executor and one-time binding to pinned V013 intent, fail-closed Entra adapter.
+- [ ] #44 still OPEN: maintained FIDO2 `create()` attestation, active globally unique trusted credential registry, key revocation/recovery and separate-human approval. #38 still OPEN: reviewer-held signed original decision, atomic one-time challenge consumption and removal of historical direct SQL decision grants. #35/#31/#27 and WORM/QTSP #17/#13 remain OPEN.
