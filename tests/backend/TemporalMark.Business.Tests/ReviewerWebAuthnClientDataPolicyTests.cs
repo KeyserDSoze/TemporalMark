@@ -60,6 +60,33 @@ public sealed class ReviewerWebAuthnClientDataPolicyTests
             Utf8(withoutCrossOrigin), ServerNonce, Rp));
     }
 
+    [Fact]
+    public void CanonicalBase64UrlMapsPlusAndSlashWithoutPadding()
+    {
+        var nonce = Enumerable.Repeat((byte)0xFB, 48).ToArray();
+        var base64 = Convert.ToBase64String(nonce);
+        Assert.Contains('+', base64);
+        Assert.Contains('/', base64);
+        var base64Url = base64.TrimEnd('=').Replace('+', '-').Replace('/', '_');
+
+        Assert.True(ReviewerWebAuthnClientDataPolicy.MatchesUntrustedClientData(
+            Utf8(Json(challenge: base64Url)), nonce, Rp));
+        Assert.False(ReviewerWebAuthnClientDataPolicy.MatchesUntrustedClientData(
+            Utf8(Json(challenge: base64)), nonce, Rp));
+    }
+
+    [Fact]
+    public void AcceptsUtf8BomOnlyWithoutRewritingSignedClientDataBytes()
+    {
+        var original = Utf8(Json());
+        var withBom = new byte[] { 0xEF, 0xBB, 0xBF }
+            .Concat(original).ToArray();
+
+        Assert.True(ReviewerWebAuthnClientDataPolicy.MatchesUntrustedClientData(
+            withBom, ServerNonce, Rp));
+        Assert.Equal(0xEF, withBom[0]); // Keep exact raw bytes for future hashing.
+    }
+
     [Theory]
     [InlineData("webauthn.create")]
     [InlineData("webauthn.get ")]
