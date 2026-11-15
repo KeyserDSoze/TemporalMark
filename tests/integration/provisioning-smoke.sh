@@ -130,6 +130,36 @@ for username, password, filename in [
     path.write_text(token)
     os.chmod(path, 0o600)
 
+PY
+
+"${cli[@]}" request --organization-name "Revoked first admin" \
+  --operator-token-file "$temp_dir/operator-fresh.jwt" \
+  --first-admin-token-file "$temp_dir/first-admin-fresh.jwt" > "$temp_dir/revoked-request.log"
+revoked_id="$(sed -n 's/^Approval requested: //p' "$temp_dir/revoked-request.log")"
+[[ "$revoked_id" =~ ^[0-9a-f-]{36}$ ]] || { echo "Missing second request ID" >&2; exit 1; }
+
+"${cli[@]}" approve --request-id "$revoked_id" \
+  --organization-name "Revoked first admin" \
+  --expected-initial-admin-sub "$admin_sub" --expected-operator-sub "$operator_sub" \
+  --approver-token-file "$temp_dir/approver-fresh.jwt" > "$temp_dir/revoked-approved.log"
+
+# Disable the admin only AFTER a valid, independent approval has been recorded.
+python3 - "$temp_dir" <<'PY'
+import json
+import pathlib
+import sys
+import urllib.parse
+import urllib.request
+destination = pathlib.Path(sys.argv[1])
+base = "http://127.0.0.1:8081"
+realm = base + "/realms/temporalmark"
+def form(url, body, headers=None):
+    encoded = urllib.parse.urlencode(body).encode()
+    with urllib.request.urlopen(
+        urllib.request.Request(url, data=encoded, headers=headers or {}), timeout=20
+    ) as response:
+        return json.load(response)
+
 admin_token = form(base + "/realms/master/protocol/openid-connect/token", {
     "client_id": "admin-cli", "grant_type": "password",
     "username": "local-admin", "password": "dev-only-change-me"
@@ -163,7 +193,7 @@ PY
 
 count_before="$(docker compose -f docker/compose.yml exec -T postgres \
     psql -U temporalmark -d temporalmark -tAc 'SELECT count(*) FROM organization_provisioning_events')"
-if dotnet run --project src/backend/applications/TemporalMark.Provisioner/TemporalMark.Provisioner.csproj --configuration Release -- \
+if "${cli[@]}" complete --request-id "$revoked_id" \
     --organization-name "Revoked first admin" \
     --operator-token-file "$temp_dir/operator-fresh.jwt" \
     --first-admin-token-file "$temp_dir/first-admin-fresh.jwt" > "$temp_dir/disabled.log" 2>&1; then
@@ -176,4 +206,4 @@ test "$count_before" = "$count_after" || {
     echo "SECURITY FAILURE: failed account-status check caused database side effect" >&2
     exit 1
 }
-echo "Controlled live Keycloak token checks, disabled-account denial and replay protection passed."
+echo "Keycloak approved workflow, role/approval/replay gates and disabled-account denial passed."
