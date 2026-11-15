@@ -29,6 +29,13 @@ public sealed class ApprovedEnrollmentWorkflowTests
         Assert.Equal("approver-sub", store.Approvals[0].ApproverSubject);
         Assert.Equal("admin-sub", store.Approvals[0].ExpectedAdminSubject);
         Assert.Equal("operator-sub", store.Approvals[0].ExpectedOperatorSubject);
+        // Signed authentication provenance must travel to durable approval storage.
+        Assert.Equal("OIDC_ACR_ASSERTED", store.Approvals[0].AuthenticationEvidence.Kind);
+        Assert.Equal("urn:temporalmark:loa:2", store.Approvals[0].AuthenticationEvidence.Context);
+        Assert.InRange(store.Approvals[0].AuthenticationEvidence.AuthenticationTimeUnix!.Value,
+            DateTimeOffset.UtcNow.ToUnixTimeSeconds() - 120,
+            DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+        Assert.Equal("pinned-oidc-acr-v1", store.Approvals[0].AuthenticationEvidence.PolicyId);
         Assert.Equal(request, await flow.CompleteAsync(
             request, "Reviewed Organization", "op.jwt", "admin.jwt", default));
         Assert.Single(store.Completions);

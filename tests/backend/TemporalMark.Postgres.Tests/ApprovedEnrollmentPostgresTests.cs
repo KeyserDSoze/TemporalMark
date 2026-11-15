@@ -29,6 +29,8 @@ public sealed class ApprovedEnrollmentPostgresTests
               has_function_privilege('temporalmark_approver_group',
                 'public.approve_enrollment(uuid,text,text,text,text,text,char(64))','EXECUTE'),
               has_function_privilege('temporalmark_approver_group',
+                'public.approve_enrollment(uuid,text,text,text,text,text,char(64),text,text,bigint)','EXECUTE'),
+              has_function_privilege('temporalmark_approver_group',
                 'public.complete_enrollment(uuid,text,text,text,text,char(64),char(64))','EXECUTE'),
               has_table_privilege('temporalmark_provisioner_group',
                 'public.organization_enrollment_requests','UPDATE'),
@@ -39,10 +41,11 @@ public sealed class ApprovedEnrollmentPostgresTests
         Assert.True(await r.ReadAsync());
         Assert.False(r.GetBoolean(0));
         Assert.False(r.GetBoolean(1));
-        Assert.True(r.GetBoolean(2));
-        Assert.False(r.GetBoolean(3));
+        Assert.False(r.GetBoolean(2));
+        Assert.True(r.GetBoolean(3));
         Assert.False(r.GetBoolean(4));
         Assert.False(r.GetBoolean(5));
+        Assert.False(r.GetBoolean(6));
     }
 
     [Fact]
@@ -75,7 +78,8 @@ public sealed class ApprovedEnrollmentPostgresTests
         {
             await using var cmd = new NpgsqlCommand("""
                 SELECT public.approve_enrollment(@id,@name,@issuer,@operator,@admin,
-                    @reviewer,@proof::char(64))
+                    @reviewer,@proof::char(64),'OIDC_ACR_ASSERTED',
+                    'urn:temporalmark:loa:2',@authTime)
                 """, reviewer);
             cmd.Parameters.AddWithValue("id", id);
             cmd.Parameters.AddWithValue("name", expectedName);
@@ -84,6 +88,7 @@ public sealed class ApprovedEnrollmentPostgresTests
             cmd.Parameters.AddWithValue("admin", adminSubject);
             cmd.Parameters.AddWithValue("reviewer", approvedBy);
             cmd.Parameters.AddWithValue("proof", new string('C', 64));
+            cmd.Parameters.AddWithValue("authTime", DateTimeOffset.UtcNow.ToUnixTimeSeconds() - 10);
             return Assert.IsType<Guid>(await cmd.ExecuteScalarAsync());
         }
 
@@ -117,7 +122,9 @@ public sealed class ApprovedEnrollmentPostgresTests
         await using var owner = Owner();
         await owner.OpenAsync();
         await using var q = new NpgsqlCommand("""
-            SELECT e.approval_request_id,e.approver_subject,r.consumed_utc IS NOT NULL
+            SELECT e.approval_request_id,e.approver_subject,r.consumed_utc IS NOT NULL,
+                r.approver_assurance_kind,r.approver_authentication_acr,
+                r.approver_authentication_utc IS NOT NULL,r.approval_policy_id
             FROM public.organization_provisioning_events e
             JOIN public.organization_enrollment_requests r ON r.id=e.approval_request_id
             WHERE e.organization_id=@id
@@ -128,6 +135,10 @@ public sealed class ApprovedEnrollmentPostgresTests
         Assert.Equal(id, reader.GetGuid(0));
         Assert.Equal("reviewer-sub", reader.GetString(1));
         Assert.True(reader.GetBoolean(2));
+        Assert.Equal("OIDC_ACR_ASSERTED",reader.GetString(3));
+        Assert.Equal("urn:temporalmark:loa:2",reader.GetString(4));
+        Assert.True(reader.GetBoolean(5));
+        Assert.Equal("pinned-oidc-acr-v1",reader.GetString(6));
     }
 
     [Fact]
@@ -160,11 +171,13 @@ public sealed class ApprovedEnrollmentPostgresTests
             await approver.OpenAsync();
             await using var approve = new NpgsqlCommand("""
                 SELECT public.approve_enrollment(@id,@name,'https://issuer.example.test',
-                    'op-sub','admin-sub','different-approver',@hash::char(64))
+                    'op-sub','admin-sub','different-approver',@hash::char(64),
+                    'OIDC_ACR_ASSERTED','urn:temporalmark:loa:2',@authTime)
                 """, approver);
             approve.Parameters.AddWithValue("id", id);
             approve.Parameters.AddWithValue("name", name);
             approve.Parameters.AddWithValue("hash", approvalProof);
+            approve.Parameters.AddWithValue("authTime", DateTimeOffset.UtcNow.ToUnixTimeSeconds() - 10);
             Assert.Equal(id, Assert.IsType<Guid>(await approve.ExecuteScalarAsync()));
         }
 
@@ -212,6 +225,66 @@ public sealed class ApprovedEnrollmentPostgresTests
     }
 
     [Fact]
+    public async Task LegacyApprovalFunctionCannotBeInvokedByRestrictedApproverLogin()
+    {
+        await using var reviewer = Approver();
+        await reviewer.OpenAsync();
+        await using var legacy = new NpgsqlCommand("""
+            SELECT public.approve_enrollment(@id,'Legacy','https://issuer.example.test',
+                'operator','first-admin','reviewer',@hash::char(64))
+            """,reviewer);
+        legacy.Parameters.AddWithValue("id",Guid.NewGuid());
+        legacy.Parameters.AddWithValue("hash",new string('E',64));
+        var denial=await Assert.ThrowsAsync<PostgresException>(
+            async ()=>await legacy.ExecuteScalarAsync());
+        Assert.Equal(PostgresErrorCodes.InsufficientPrivilege,denial.SqlState);
+    }
+
+    [Theory]
+    [InlineData("https://external-idp.example.test","DISPOSABLE_PASSWORD_ONLY",null,false)]
+    [InlineData("https://external-idp.example.test","OIDC_ACR_ASSERTED",null,false)]
+    [InlineData("https://external-idp.example.test","OIDC_ACR_ASSERTED","pwd",false)]
+    [InlineData("https://external-idp.example.test","OIDC_ACR_ASSERTED","urn:temporalmark:loa:2",true)]
+    public async Task ApprovalRequiresPolicyProvenanceNotArbitraryFixtureAssertion(
+        string issuer,string kind,string? context,bool expectedSuccess)
+    {
+        var id=Guid.NewGuid();
+        var unique=id.ToString("N").ToUpperInvariant();
+        await using var op=Operator();
+        await op.OpenAsync();
+        await using(var request=new NpgsqlCommand("""
+            SELECT public.request_enrollment(@id,'Provenance',@issuer,
+                 'operator','tenant-admin',@operatorProof::char(64),@adminProof::char(64))
+            """,op))
+        {
+            request.Parameters.AddWithValue("id",id);
+            request.Parameters.AddWithValue("issuer",issuer);
+            request.Parameters.AddWithValue("operatorProof",unique+new string('1',32));
+            request.Parameters.AddWithValue("adminProof",unique+new string('2',32));
+            Assert.Equal(id,Assert.IsType<Guid>(await request.ExecuteScalarAsync()));
+        }
+        await using var reviewer=Approver();
+        await reviewer.OpenAsync();
+        await using var approval=new NpgsqlCommand("""
+            SELECT public.approve_enrollment(@id,'Provenance',@issuer,
+                'operator','tenant-admin','reviewer',@hash::char(64),
+                @kind,@context,@authTime)
+            """,reviewer);
+        approval.Parameters.AddWithValue("id",id);
+        approval.Parameters.AddWithValue("issuer",issuer);
+        approval.Parameters.AddWithValue("hash",unique+new string('3',32));
+        approval.Parameters.AddWithValue("kind",kind);
+        approval.Parameters.AddWithValue("context", (object?)context ?? DBNull.Value);
+        approval.Parameters.AddWithValue("authTime",expectedSuccess
+            ? DateTimeOffset.UtcNow.ToUnixTimeSeconds()-10 : DBNull.Value);
+        if(expectedSuccess)
+            Assert.Equal(id,Assert.IsType<Guid>(await approval.ExecuteScalarAsync()));
+        else
+            await Assert.ThrowsAsync<PostgresException>(
+                async()=>await approval.ExecuteScalarAsync());
+    }
+
+    [Fact]
     public async Task ExpiredRequestCannotBeApprovedOrCompleted()
     {
         var id=Guid.NewGuid();
@@ -243,10 +316,12 @@ public sealed class ApprovedEnrollmentPostgresTests
         await approver.OpenAsync();
         await using var approval=new NpgsqlCommand("""
             SELECT public.approve_enrollment(@id,'Expired Org','https://issuer.test',
-                'operator-sub','admin-sub','reviewer-sub',@hash::char(64))
+                'operator-sub','admin-sub','reviewer-sub',@hash::char(64),
+                    'OIDC_ACR_ASSERTED','urn:temporalmark:loa:2',@authTime)
             """,approver);
         approval.Parameters.AddWithValue("id",id);
         approval.Parameters.AddWithValue("hash",new string('1',64));
+        approval.Parameters.AddWithValue("authTime",DateTimeOffset.UtcNow.ToUnixTimeSeconds() - 10);
         var error=await Assert.ThrowsAsync<PostgresException>(async()=>await approval.ExecuteScalarAsync());
         Assert.Equal(PostgresErrorCodes.CheckViolation,error.SqlState);
     }
