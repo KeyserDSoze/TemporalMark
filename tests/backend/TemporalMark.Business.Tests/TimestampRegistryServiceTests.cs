@@ -2,6 +2,7 @@ using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text.Json;
 using TemporalMark.Business.Registry;
+using TemporalMark.Domain;
 using TemporalMark.Domain.Stamping;
 using Xunit;
 

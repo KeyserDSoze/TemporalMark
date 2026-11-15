@@ -1,3 +1,5 @@
+using TemporalMark.Domain;
+
 namespace TemporalMark.Domain.Tenancy;
 
 /// <summary>Enforces the rule that an active organization always has an active admin.</summary>

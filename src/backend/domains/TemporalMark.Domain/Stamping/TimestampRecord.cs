@@ -1,3 +1,5 @@
+using TemporalMark.Domain;
+
 namespace TemporalMark.Domain.Stamping;
 
 public enum TimestampValidationState

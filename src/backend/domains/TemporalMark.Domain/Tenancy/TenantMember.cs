@@ -13,5 +13,3 @@ public sealed record TenantMember(
     TenantRole Role,
     bool IsActive
 );
-
-public sealed class DomainRuleException(string message) : Exception(message);
