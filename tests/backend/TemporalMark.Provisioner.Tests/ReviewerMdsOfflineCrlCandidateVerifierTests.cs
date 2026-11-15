@@ -164,7 +164,7 @@ public sealed class ReviewerMdsOfflineCrlCandidateVerifierTests
             if (extension == "unknown-critical")
                 gen.AddExtension(new DerObjectIdentifier("1.2.3.4.5.6.7"), true, new DerInteger(1));
             if (extension == "delta")
-                gen.AddExtension(X509Extensions.DeltaCrlIndicator, true, new CrlNumber(1));
+                gen.AddExtension(X509Extensions.DeltaCrlIndicator, true, new CrlNumber(Org.BouncyCastle.Math.BigInteger.One));
             if (extension == "indirect")
                 gen.AddExtension(X509Extensions.IssuingDistributionPoint, true,
                     new IssuingDistributionPoint(null, false, false, null, true, false));
