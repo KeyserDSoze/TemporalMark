@@ -524,6 +524,86 @@ public sealed class ApprovedEnrollmentPostgresTests
         for(var i=1;i<7;i++) Assert.False(reader.GetBoolean(i));
     }
 
+    [Fact]
+    public async Task SimultaneousChallengeIssuanceIsAtMostOnceWithoutApproval()
+    {
+        var id=Guid.NewGuid();
+        var tag=id.ToString("N").ToUpperInvariant();
+        const string issuer="https://trusted-idp.example.test/realm";
+        const string name="Concurrent pending review";
+        await using(var op=Operator())
+        {
+            await op.OpenAsync();
+            await using var request=new NpgsqlCommand("""
+                SELECT public.request_enrollment(@id,@name,@issuer,'operator','admin',
+                    @opHash::char(64),@adminHash::char(64))
+                """,op);
+            request.Parameters.AddWithValue("id",id);
+            request.Parameters.AddWithValue("name",name);
+            request.Parameters.AddWithValue("issuer",issuer);
+            request.Parameters.AddWithValue("opHash",tag+new string('B',32));
+            request.Parameters.AddWithValue("adminHash",tag+new string('C',32));
+            Assert.Equal(id,Assert.IsType<Guid>(await request.ExecuteScalarAsync()));
+        }
+        DateTimeOffset expiry;
+        await using(var viewer=Approver())
+        {
+            await viewer.OpenAsync();
+            await using var expiryQuery=new NpgsqlCommand("""
+                SELECT expires_utc FROM public.read_pending_enrollment(@id,@issuer,'reviewer')
+                """,viewer);
+            expiryQuery.Parameters.AddWithValue("id",id);
+            expiryQuery.Parameters.AddWithValue("issuer",issuer);
+            expiry=new DateTimeOffset(Assert.IsType<DateTime>(
+                await expiryQuery.ExecuteScalarAsync()).ToUniversalTime());
+        }
+        var digest=CalculateCanonicalReviewSha256(id,name,issuer,"operator","admin",expiry);
+        async Task<(bool Success,string? Error)> Issue()
+        {
+            await using var conn=Approver();
+            await conn.OpenAsync();
+            await using var cmd=new NpgsqlCommand("""
+                SELECT challenge_id FROM public.issue_reviewer_decision_challenge(
+                    @id,@name,@issuer,'operator','admin','reviewer',
+                    @digest::char(64),'APPROVE',NULL::text)
+                """,conn);
+            cmd.Parameters.AddWithValue("id",id);
+            cmd.Parameters.AddWithValue("name",name);
+            cmd.Parameters.AddWithValue("issuer",issuer);
+            cmd.Parameters.AddWithValue("digest",digest);
+            try
+            {
+                return (Assert.IsType<Guid>(await cmd.ExecuteScalarAsync())!=Guid.Empty,null);
+            }
+            catch(PostgresException error)
+            {
+                return (false,error.SqlState);
+            }
+        }
+        var outcomes=await Task.WhenAll(Issue(),Issue());
+        Assert.Single(outcomes,x=>x.Success);
+        Assert.Single(outcomes,x=>!x.Success &&
+            x.Error==PostgresErrorCodes.UniqueViolation);
+        await using var owner=Owner();
+        await owner.OpenAsync();
+        await using var count=new NpgsqlCommand("""
+            SELECT (SELECT count(*) FROM public.organization_decision_challenges
+                    WHERE request_id=@id),
+                   (SELECT count(*) FROM public.organizations WHERE id=@id),
+                   (SELECT count(*) FROM public.organization_provisioning_events
+                    WHERE organization_id=@id),
+                   (SELECT approved_utc IS NULL AND rejected_utc IS NULL
+                    FROM public.organization_enrollment_requests WHERE id=@id)
+            """,owner);
+        count.Parameters.AddWithValue("id",id);
+        await using var reader=await count.ExecuteReaderAsync();
+        Assert.True(await reader.ReadAsync());
+        Assert.Equal(1L,reader.GetInt64(0));
+        Assert.Equal(0L,reader.GetInt64(1));
+        Assert.Equal(0L,reader.GetInt64(2));
+        Assert.True(reader.GetBoolean(3));
+    }
+
     private static string CalculateCanonicalReviewSha256(Guid id,string name,string issuer,
         string operatorSub,string adminSub,DateTimeOffset expiresUtc)
     {
