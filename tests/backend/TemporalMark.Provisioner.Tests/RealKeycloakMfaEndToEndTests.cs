@@ -29,7 +29,7 @@ public sealed class RealKeycloakMfaEndToEndTests
         }
 
         const string issuer = "http://localhost:8081/realms/temporalmark-mfa-ci";
-        var verifier = new OidcAccessTokenVerifier(issuer, allowLocalHttp: true);
+        var verifier = new OidcAccessTokenVerifier(issuer, permitLocalDevelopmentHttp: true);
         var verified = await verifier.VerifyAsync(
             await File.ReadAllTextAsync(file), "temporalmark-approval", CancellationToken.None);
 
