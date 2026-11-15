@@ -23,6 +23,10 @@
       {
         "name": "platform_approver",
         "description": "Disposable MFA CI approver, not a production account"
+      },
+      {
+        "name": "platform_credential_registrar",
+        "description": "Disposable registrar MFA CI ONLY, no production authority, SQL permissions or trusted credential"
       }
     ]
   },
@@ -167,6 +171,16 @@
             "access.token.claim": "true",
             "introspection.token.claim": "true"
           }
+        },
+        {
+          "name": "mfa-ci-identity-introspection-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "temporalmark-mfa-identity-introspector",
+            "access.token.claim": "true"
+          }
         }
       ]
     },
@@ -176,6 +190,104 @@
       "protocol": "openid-connect",
       "enabled": true,
       "bearerOnly": true
+    },
+    {
+      "clientId": "temporalmark-registrar-pkce-ci",
+      "name": "Disposable registrar OTP + Authorization Code S256 PKCE, NEVER PROD",
+      "protocol": "openid-connect",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "implicitFlowEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": [
+        "http://127.0.0.1:45679/registrar-mfa-callback"
+      ],
+      "webOrigins": [],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "minimum.acr.value": "urn:temporalmark:loa:2"
+      },
+      "protocolMappers": [
+        {
+          "name": "mfa-ci-registrar-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "temporalmark-credential-registrar",
+            "access.token.claim": "true"
+          }
+        },
+        {
+          "name": "mfa-ci-realm-roles",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "role",
+            "multivalued": "true",
+            "access.token.claim": "true"
+          }
+        },
+        {
+          "name": "mfa-ci-acr-real-level",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-acr-mapper",
+          "consentRequired": false,
+          "config": {
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "introspection.token.claim": "true"
+          }
+        },
+        {
+          "name": "mfa-ci-identity-introspection-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "temporalmark-mfa-identity-introspector",
+            "access.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "temporalmark-credential-registrar",
+      "name": "Registrar access token audience only - no login",
+      "protocol": "openid-connect",
+      "enabled": true,
+      "bearerOnly": true
+    },
+    {
+      "clientId": "temporalmark-mfa-identity-introspector",
+      "name": "Disposable MFA token introspection only",
+      "protocol": "openid-connect",
+      "enabled": true,
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "local-mfa-introspect-only",
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "implicitFlowEnabled": false,
+      "serviceAccountsEnabled": false,
+      "fullScopeAllowed": false
+    },
+    {
+      "clientId": "temporalmark-mfa-directory-checker",
+      "name": "Disposable MFA current-user/realm-role directory readonly client",
+      "protocol": "openid-connect",
+      "enabled": true,
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "local-mfa-directory-only",
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "implicitFlowEnabled": false,
+      "serviceAccountsEnabled": true,
+      "fullScopeAllowed": true
     }
   ],
   "users": [
@@ -197,6 +309,28 @@
         {
           "type": "password",
           "value": "disposable-mfa-password-only",
+          "temporary": false
+        }
+      ]
+    },
+    {
+      "id": "00000000-0000-0000-0000-000000000035",
+      "username": "demo-mfa-registrar",
+      "firstName": "Disposable",
+      "lastName": "Registrar OTP",
+      "email": "registrar-otp@example.invalid",
+      "enabled": true,
+      "emailVerified": true,
+      "realmRoles": [
+        "platform_credential_registrar"
+      ],
+      "requiredActions": [
+        "CONFIGURE_TOTP"
+      ],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "disposable-registrar-otp-password",
           "temporary": false
         }
       ]
