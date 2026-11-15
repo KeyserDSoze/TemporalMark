@@ -285,6 +285,74 @@ public sealed class ApprovedEnrollmentPostgresTests
     }
 
     [Fact]
+    public async Task HistoricalUnverifiedApprovalCannotBeNewlyConsumed()
+    {
+        var id = Guid.NewGuid();
+        var unique = id.ToString("N").ToUpperInvariant();
+        await using (var op = Operator())
+        {
+            await op.OpenAsync();
+            await using var pending = new NpgsqlCommand("""
+                SELECT public.request_enrollment(@id,'Historical request',
+                    'https://issuer.example.test','historic-operator','historic-admin',
+                    @operatorHash::char(64),@adminHash::char(64))
+                """, op);
+            pending.Parameters.AddWithValue("id", id);
+            pending.Parameters.AddWithValue("operatorHash", unique + new string('7', 32));
+            pending.Parameters.AddWithValue("adminHash", unique + new string('8', 32));
+            Assert.Equal(id, Assert.IsType<Guid>(await pending.ExecuteScalarAsync()));
+        }
+
+        // Simulate the explicitly backfilled pre-V008 approval using ONLY
+        // the privileged migration-owner connection; the approver SQL role
+        // cannot create this historical classification.
+        await using (var owner = Owner())
+        {
+            await owner.OpenAsync();
+            await using var old = new NpgsqlCommand("""
+                UPDATE public.organization_enrollment_requests
+                   SET approved_by_subject='historic-reviewer',
+                       approval_proof_sha256=@hash::char(64),
+                       approved_utc=clock_timestamp(),
+                       approver_assurance_kind='LEGACY_UNVERIFIED',
+                       approval_policy_id='legacy-pre-v008'
+                 WHERE id=@id
+                """, owner);
+            old.Parameters.AddWithValue("id", id);
+            old.Parameters.AddWithValue("hash", unique + new string('9', 32));
+            Assert.Equal(1, await old.ExecuteNonQueryAsync());
+        }
+
+        await using var restricted = Operator();
+        await restricted.OpenAsync();
+        await using var complete = new NpgsqlCommand("""
+            SELECT public.complete_enrollment(@id,'Historical request',
+                'https://issuer.example.test','historic-operator','historic-admin',
+                @operatorProof::char(64),@adminProof::char(64))
+            """, restricted);
+        complete.Parameters.AddWithValue("id", id);
+        complete.Parameters.AddWithValue("operatorProof", unique + new string('A', 32));
+        complete.Parameters.AddWithValue("adminProof", unique + new string('B', 32));
+        var denial = await Assert.ThrowsAsync<PostgresException>(
+            async () => await complete.ExecuteScalarAsync());
+        Assert.Equal(PostgresErrorCodes.CheckViolation, denial.SqlState);
+        await using var ownerCheck = Owner();
+        await ownerCheck.OpenAsync();
+        await using var verify = new NpgsqlCommand("""
+            SELECT
+                (SELECT count(*) FROM public.organizations WHERE id=@id),
+                (SELECT count(*) FROM public.organization_provisioning_events WHERE organization_id=@id),
+                (SELECT consumed_utc IS NULL FROM public.organization_enrollment_requests WHERE id=@id)
+            """, ownerCheck);
+        verify.Parameters.AddWithValue("id", id);
+        await using var reader = await verify.ExecuteReaderAsync();
+        Assert.True(await reader.ReadAsync());
+        Assert.Equal(0L, reader.GetInt64(0));
+        Assert.Equal(0L, reader.GetInt64(1));
+        Assert.True(reader.GetBoolean(2));
+    }
+
+    [Fact]
     public async Task ExpiredRequestCannotBeApprovedOrCompleted()
     {
         var id=Guid.NewGuid();
