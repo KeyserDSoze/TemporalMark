@@ -8,6 +8,6 @@ ENV VITE_OIDC_AUTHORITY=$VITE_OIDC_AUTHORITY
 RUN npm run build
 
 FROM nginx:1.27-alpine
-COPY docker/nginx.conf /etc/nginx/conf.d/default.conf
+COPY docker/nginx.conf.template /etc/nginx/templates/default.conf.template
 COPY --from=build /web/dist /usr/share/nginx/html
 EXPOSE 80

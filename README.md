@@ -1,9 +1,65 @@
 # TemporalMark
 
-Piattaforma multi-tenant per la gestione delle evidenze di marcatura temporale, con obiettivo di conformità eIDAS e possibile qualificazione QTSP in Italia.
+Multi-tenant timestamp evidence platform: **ASP.NET Core 10 + DDD, PostgreSQL, React/TypeScript, PWA (Italian/English, light/dark), Keycloak local OIDC, xUnit and Playwright**.
 
-> **Stato: pre-qualificazione / sviluppo.** Nessun componente o ambiente deve essere presentato come QTSP, TSA qualificata o fonte di marche temporali qualificate finché il prestatore e il servizio non abbiano superato la valutazione CAB, il procedimento AgID e l'inserimento nella Trusted List.
+> **NOT QUALIFIED:** the project is a pre-qualification foundation. It cannot issue legal qualified timestamps, is not a qualified trust service provider, and must not be represented as such until the legal entity AND specific service are approved and listed in the Trusted List.
 
-Questo repository è sviluppato direttamente su `main`. Si privilegiano TDD, isolamento dei tenant, verificabilità e separazione tra core di dominio e adattatori infrastrutturali. Il supporto on-prem e Azure non implica che entrambi gli ambienti possiedano automaticamente requisiti o qualificazione identici.
+## Current features
+- Validated OIDC/JWT and **database-verified tenant admin** identity, no client-selected tenant.
+- Tenant-scoped registry summary and pagination in UTC; ZIP export includes `manifest.json` + original `.tsr` bytes (limit: 10,000 records per request).
+- Domain invariants for UTC periods and retaining at least one active tenant administrator; PostgreSQL trigger as defence in depth.
+- Explicit fail-closed issuance endpoint: `POST /api/v1/stamps/issue` returns HTTP 503 until a real compliant TSA integration is implemented.
+- Responsive administration UI with Italian/English translations, theme toggle and PWA service worker setup.
+- Local Compose bootstrap for PostgreSQL, Keycloak, .NET API and Nginx-hosted UI.
 
-La documentazione tecnica e le istruzioni di esecuzione sono in elaborazione. Consultare `adr/` per le decisioni di progetto e `docs/` per i controlli regolatori.
+## Run locally
+
+```bash
+docker compose -f docker/compose.yml up --build -d
+# Open http://localhost:3000
+```
+Developer-only login: `demo-admin` / `local-dev-only`. See [Docker guide](docker/README.md) for exact endpoints. **Never reuse local passwords or development identity settings in production.**
+
+## Repository layout
+
+```text
+.github/workflows/    CI and release workflows
+adr/                  architecture decisions
+docs/                 compliance and audit gap register
+docker/               reproducible local functional stack
+infra/azure/          Terraform reference
+scripts/              on-prem bootstrap and database schema
+src/backend/
+  applications/       ASP.NET Core HTTP boundary
+  business/           use cases and interfaces
+  domains/            DDD entities and invariants
+  infrastructures/    PostgreSQL / external adapters
+src/frontend/         React + TypeScript + Tailwind + shadcn/ui conventions
+tests/backend/        xUnit
+tests/frontend/       Playwright
+```
+
+## Run tests
+```bash
+dotnet test tests/backend/TemporalMark.Domain.Tests/TemporalMark.Domain.Tests.csproj
+dotnet test tests/backend/TemporalMark.Business.Tests/TemporalMark.Business.Tests.csproj
+cd src/frontend && npm install && npm run build
+cd ../../tests/frontend && npm install && npx playwright install chromium && npm test
+```
+
+## API surface (current)
+- `GET /healthz` — readiness of API process (does not assert DB or legal readiness).
+- `GET /api/v1/me` — current authorized tenant; OIDC required.
+- `GET /api/v1/stamps/summary?fromUtc=...&toUtcExclusive=...`
+- `GET /api/v1/stamps?fromUtc=...&toUtcExclusive=...&offset=0&limit=50`
+- `GET /api/v1/stamps/export?fromUtc=...&toUtcExclusive=...`
+- `POST /api/v1/stamps/issue` — **503 unavailable** until qualified issuance prerequisites exist.
+
+UTC filters are inclusive at the start, exclusive at the end. Exports are bounded to 10,000 entries and are **not yet legal/audit-ready** because the WORM manifest, complete RFC 3161 validation and trust-list evidence are unimplemented.
+
+## Architecture and compliance
+Read [Architecture decisions](adr/0001-architecture-and-deployments.md), [compliance gap register](docs/COMPLIANCE.md), [roadmap](docs/ROADMAP.md) and [threat model](docs/THREAT_MODEL.md). Relevant primary law includes eIDAS 910/2014 as amended, the timestamp-specific EU 2025/1929, and AgID/CAB procedures.
+
+**Retention:** indefinite retention is the initial business intent, not a verified GDPR retention policy or proof of immutable storage. Future work includes GDPR assessment, WORM evidence and real offline verification.
+
+**Branch convention:** changes are made directly on `main`; automated tests and reviews are strongly recommended before protected production rollout.

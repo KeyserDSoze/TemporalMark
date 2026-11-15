@@ -95,7 +95,7 @@ export default function Dashboard({ accessToken }: { accessToken: string }) {
 
   return <div className="space-y-6">
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-      <Card><CardHeader><div className="flex items-center gap-2 text-sm text-muted-foreground"><FileClock size={17} /> {t("totals")}</div></CardHeader><CardContent><div className="text-4xl font-bold tabular-nums">{busy ? "…" : (summary?.count ?? "—").toLocaleString(i18n.language)}</div></CardContent></Card>
+      <Card><CardHeader><div className="flex items-center gap-2 text-sm text-muted-foreground"><FileClock size={17} /> {t("totals")}</div></CardHeader><CardContent><div className="text-4xl font-bold tabular-nums">{busy ? "…" : (summary ? summary.count.toLocaleString(i18n.language) : "—")}</div></CardContent></Card>
       <Card><CardHeader><div className="flex items-center gap-2 text-sm text-muted-foreground"><LockKeyhole size={17} /> {t("organization")}</div></CardHeader><CardContent><div className="break-all text-sm font-semibold">{tenant?.organizationId ?? "—"}</div><p className="mt-1 text-xs text-muted-foreground">{tenant?.role ?? "—"}</p></CardContent></Card>
       <Card><CardHeader><div className="text-sm text-muted-foreground">{t("technicalStatus")}</div></CardHeader><CardContent><Badge className="text-amber-700 dark:text-amber-300">{t("servicePaused")}</Badge><p className="mt-2 text-xs text-muted-foreground">{tenant?.qualificationState ?? "NOT_QUALIFIED"}</p></CardContent></Card>
     </div>

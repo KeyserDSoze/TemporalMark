@@ -1,0 +1,27 @@
+# Dotnet
+**/bin/
+**/obj/
+**/TestResults/
+*.user
+# Frontend
+**/node_modules/
+**/dist/
+**/coverage/
+playwright-report/
+test-results/
+# Environment and credentials
+.env
+.env.*
+!.env.example
+*.tfvars
+*.tfstate
+*.tfstate.*
+.terraform/
+*.pfx
+*.p12
+*.pem
+*.key
+# Tooling
+.vscode/
+.idea/
+.DS_Store
