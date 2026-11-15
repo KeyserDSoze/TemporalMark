@@ -138,6 +138,10 @@ public sealed class CurrentDirectoryAuthorizationTests
             Approvals.Add(e);
             return Task.FromResult(e.OrganizationId);
         }
+        public Task<IssuedReviewerDecisionChallenge> IssueDecisionChallengeAsync(
+            VerifiedReviewerDecisionChallengeRequest request,CancellationToken ct) =>
+            throw new UnauthorizedAccessException("No challenge in current-directory unit test");
+
         public Task<Guid> RejectAsync(VerifiedOrganizationRejection e, CancellationToken ct) =>
             Task.FromResult(e.OrganizationId);
         public Task<Guid> CompleteAsync(VerifiedOrganizationEnrollment e, CancellationToken ct)

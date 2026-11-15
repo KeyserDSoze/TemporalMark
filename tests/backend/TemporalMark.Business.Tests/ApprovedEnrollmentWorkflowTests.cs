@@ -160,6 +160,78 @@ public sealed class ApprovedEnrollmentWorkflowTests
         Assert.Empty(store.Rejections);
     }
 
+    [Fact]
+    public async Task AuthenticatedReviewerCanIssueDecisionChallengeWithoutApproving()
+    {
+        var storage = new PendingStore();
+        var flow = new OrganizationApprovalWorkflow(new Tokens(),new Live(),new Directory(),
+            storage,Policy,ApprovalAudience,
+            new ApprovalAuthenticationPolicy("urn:temporalmark:loa:2",TimeSpan.FromSeconds(120)));
+        var id=await flow.RequestAsync("Exact Legal Name","op.jwt","admin.jwt",default);
+        var review=await flow.ReviewAsync(id,"approver.jwt",default);
+        var result=await flow.IssueDecisionChallengeAsync(id,review.ReviewSha256,
+            "APPROVE",null,"approver.jwt",default);
+        Assert.Equal(id,result.RequestId);
+        Assert.Equal(review.ReviewSha256,result.ReviewSha256);
+        Assert.Equal("APPROVE",result.Decision);
+        Assert.Null(result.ReasonCode);
+        Assert.Equal("approver-sub",result.ReviewerSubject);
+        Assert.Matches("^[0-9A-F]{96}$",result.ChallengeHex);
+        Assert.True(result.ExpiresUtc>result.IssuedUtc);
+        Assert.True(result.ExpiresUtc<=review.ExpiresUtc);
+        Assert.InRange(result.ExpiresUtc-result.IssuedUtc,
+            TimeSpan.FromSeconds(1),TimeSpan.FromSeconds(60));
+        Assert.Single(storage.Challenges);
+        Assert.Empty(storage.Approvals);
+        Assert.Empty(storage.Rejections);
+        Assert.Empty(storage.Completions);
+    }
+
+    [Theory]
+    [InlineData("APPROVE","UNVERIFIED_IDENTITY")]
+    [InlineData("REJECT",null)]
+    [InlineData("REJECT","freeform reason")]
+    [InlineData("APPROVE_ME",null)]
+    public async Task InvalidChallengeDecisionOrReasonNeverWrites(
+        string decision,string? reason)
+    {
+        var storage=new PendingStore();
+        var flow=new OrganizationApprovalWorkflow(new Tokens(),new Live(),new Directory(),
+            storage,Policy,ApprovalAudience,
+            new ApprovalAuthenticationPolicy("urn:temporalmark:loa:2",TimeSpan.FromSeconds(120)));
+        var id=await flow.RequestAsync("Organization","op.jwt","admin.jwt",default);
+        var review=await flow.ReviewAsync(id,"approver.jwt",default);
+        await Assert.ThrowsAsync<ArgumentException>(()=>
+            flow.IssueDecisionChallengeAsync(id,review.ReviewSha256,decision,reason,
+                "approver.jwt",default));
+        Assert.Empty(storage.Challenges);
+    }
+
+    [Fact]
+    public async Task ChallengeRequiresFreshDbReviewAndSignedCurrentReviewer()
+    {
+        var storage=new PendingStore();
+        var flow=new OrganizationApprovalWorkflow(new Tokens(),new Live(),new Directory(),
+            storage,Policy,ApprovalAudience,
+            new ApprovalAuthenticationPolicy("urn:temporalmark:loa:2",TimeSpan.FromSeconds(120)));
+        var id=await flow.RequestAsync("Organization","op.jwt","admin.jwt",default);
+        var review=await flow.ReviewAsync(id,"approver.jwt",default);
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(()=>
+            flow.IssueDecisionChallengeAsync(id,new string('A',64),"REJECT",
+                "UNVERIFIED_ORGANIZATION","approver.jwt",default));
+        await Assert.ThrowsAnyAsync<Exception>(()=>
+            flow.IssueDecisionChallengeAsync(id,review.ReviewSha256,"APPROVE",
+                null,"unprivileged.jwt",default));
+        await Assert.ThrowsAnyAsync<Exception>(()=>
+            flow.IssueDecisionChallengeAsync(id,review.ReviewSha256,"APPROVE",
+                null,"operator-approver.jwt",default));
+        storage.Expired=true;
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(()=>
+            flow.IssueDecisionChallengeAsync(id,review.ReviewSha256,"APPROVE",
+                null,"approver.jwt",default));
+        Assert.Empty(storage.Challenges);
+    }
+
     [Theory]
     [InlineData("missing-role")]
     [InlineData("same-identity")]
@@ -276,6 +348,8 @@ public sealed class ApprovedEnrollmentWorkflowTests
                     input.FirstAdminSubject, expiry));
         }
         public List<VerifiedOrganizationRejection> Rejections { get; } = [];
+        public List<VerifiedReviewerDecisionChallengeRequest> Challenges { get; } = [];
+
         public List<VerifiedOrganizationApproval> Approvals { get; } = [];
         public List<VerifiedOrganizationEnrollment> Completions { get; } = [];
 
@@ -289,6 +363,20 @@ public sealed class ApprovedEnrollmentWorkflowTests
             Approvals.Add(input);
             return Task.FromResult(input.OrganizationId);
         }
+        public Task<IssuedReviewerDecisionChallenge> IssueDecisionChallengeAsync(
+            VerifiedReviewerDecisionChallengeRequest request,CancellationToken ct)
+        {
+            if(Challenges.Any(x=>x.Scope.RequestId==request.Scope.RequestId))
+                throw new UnauthorizedAccessException("Already challenged");
+            Challenges.Add(request);
+            var now=DateTimeOffset.UtcNow;
+            return Task.FromResult(new IssuedReviewerDecisionChallenge(
+                Guid.NewGuid(),request.Scope.RequestId,request.Scope.ReviewSha256,
+                request.Scope.IdentityIssuer,request.ReviewerSubject,
+                request.Decision,request.ReasonCode,new string('A',96),
+                now,now.AddSeconds(45)));
+        }
+
         public Task<Guid> RejectAsync(VerifiedOrganizationRejection input, CancellationToken ct)
         {
             if (Rejections.Any(x => x.OrganizationId == input.OrganizationId))

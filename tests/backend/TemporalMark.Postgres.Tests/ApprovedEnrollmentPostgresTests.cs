@@ -407,6 +407,142 @@ public sealed class ApprovedEnrollmentPostgresTests
     }
 
     [Fact]
+    public async Task DecisionChallengeUsesServerNonceAndImmutableOriginalScope()
+    {
+        var id=Guid.NewGuid();
+        var tag=id.ToString("N").ToUpperInvariant();
+        const string name="Exact legal challenge";
+        const string issuer="https://trusted-idp.example.test/realm";
+        await using var operatorDb=Operator();
+        await operatorDb.OpenAsync();
+        await using(var request=new NpgsqlCommand("""
+            SELECT public.request_enrollment(@id,@name,@issuer,'operator','admin',
+                @op::char(64),@admin::char(64))
+            """,operatorDb))
+        {
+            request.Parameters.AddWithValue("id",id);
+            request.Parameters.AddWithValue("name",name);
+            request.Parameters.AddWithValue("issuer",issuer);
+            request.Parameters.AddWithValue("op",tag+new string('1',32));
+            request.Parameters.AddWithValue("admin",tag+new string('2',32));
+            Assert.Equal(id,Assert.IsType<Guid>(await request.ExecuteScalarAsync()));
+        }
+        await using var reviewer=Approver();
+        await reviewer.OpenAsync();
+        DateTimeOffset pendingExpiry;
+        await using(var read=new NpgsqlCommand("""
+            SELECT expires_utc FROM public.read_pending_enrollment(@id,@issuer,'reviewer')
+            """,reviewer))
+        {
+            read.Parameters.AddWithValue("id",id);
+            read.Parameters.AddWithValue("issuer",issuer);
+            pendingExpiry=Assert.IsType<DateTimeOffset>(await read.ExecuteScalarAsync());
+        }
+        var digest=CalculateCanonicalReviewSha256(id,name,issuer,"operator","admin",pendingExpiry);
+        async Task<(Guid Id,string Nonce,DateTimeOffset Issued,DateTimeOffset Expires)> Issue(
+            string suppliedDigest,string action,string? reason,string suppliedName=name)
+        {
+            await using var cmd=new NpgsqlCommand("""
+                SELECT challenge_id,challenge_hex,issued_utc,expires_utc
+                  FROM public.issue_reviewer_decision_challenge(
+                      @id,@name,@issuer,'operator','admin','reviewer',
+                      @digest::char(64),@action,@reason)
+                """,reviewer);
+            cmd.Parameters.AddWithValue("id",id);
+            cmd.Parameters.AddWithValue("name",suppliedName);
+            cmd.Parameters.AddWithValue("issuer",issuer);
+            cmd.Parameters.AddWithValue("digest",suppliedDigest);
+            cmd.Parameters.AddWithValue("action",action);
+            var p=cmd.Parameters.Add("reason",NpgsqlTypes.NpgsqlDbType.Text);
+            p.Value=(object?)reason??DBNull.Value;
+            await using var reader=await cmd.ExecuteReaderAsync();
+            Assert.True(await reader.ReadAsync());
+            return (reader.GetGuid(0),reader.GetString(1),
+                reader.GetFieldValue<DateTimeOffset>(2),
+                reader.GetFieldValue<DateTimeOffset>(3));
+        }
+        await Assert.ThrowsAsync<PostgresException>(()=>
+            Issue(new string('A',64),"APPROVE",null));
+        await Assert.ThrowsAsync<PostgresException>(()=>
+            Issue(digest,"APPROVE","UNVERIFIED_IDENTITY"));
+        await Assert.ThrowsAsync<PostgresException>(()=>
+            Issue(digest,"REJECT","freeform personal information"));
+        await Assert.ThrowsAsync<PostgresException>(()=>
+            Issue(digest,"REJECT","POLICY_DENIED","Changed name"));
+        var created=await Issue(digest,"APPROVE",null);
+        Assert.NotEqual(Guid.Empty,created.Id);
+        Assert.Matches("^[0-9A-F]{96}$",created.Nonce);
+        Assert.True(created.Expires>created.Issued);
+        Assert.InRange(created.Expires-created.Issued,TimeSpan.FromSeconds(1),TimeSpan.FromSeconds(60));
+        Assert.True(created.Expires<=pendingExpiry);
+        await Assert.ThrowsAsync<PostgresException>(()=>Issue(digest,"APPROVE",null));
+        await Assert.ThrowsAsync<PostgresException>(()=>Issue(digest,"REJECT","POLICY_DENIED"));
+
+        await using var owner=Owner();
+        await owner.OpenAsync();
+        await using var state=new NpgsqlCommand("""
+            SELECT (SELECT count(*) FROM public.organization_decision_challenges WHERE request_id=@id),
+                (SELECT count(*) FROM public.organizations WHERE id=@id),
+                (SELECT count(*) FROM public.organization_provisioning_events WHERE organization_id=@id),
+                (SELECT approved_utc IS NULL AND rejected_utc IS NULL
+                   FROM public.organization_enrollment_requests WHERE id=@id)
+            """,owner);
+        state.Parameters.AddWithValue("id",id);
+        await using var cursor=await state.ExecuteReaderAsync();
+        Assert.True(await cursor.ReadAsync());
+        Assert.Equal(1L,cursor.GetInt64(0));
+        Assert.Equal(0L,cursor.GetInt64(1));
+        Assert.Equal(0L,cursor.GetInt64(2));
+        Assert.True(cursor.GetBoolean(3));
+    }
+
+    [Fact]
+    public async Task ChallengePermissionsCannotMintThroughOperatorOrReadTable()
+    {
+        await using var owner=Owner();
+        await owner.OpenAsync();
+        await using var cmd=new NpgsqlCommand("""
+            SELECT has_function_privilege('temporalmark_approver_group',
+                    'public.issue_reviewer_decision_challenge(uuid,text,text,text,text,text,char(64),text,text)','EXECUTE'),
+                has_function_privilege('temporalmark_provisioner_group',
+                    'public.issue_reviewer_decision_challenge(uuid,text,text,text,text,text,char(64),text,text)','EXECUTE'),
+                has_function_privilege('temporalmark_runtime_group',
+                    'public.issue_reviewer_decision_challenge(uuid,text,text,text,text,text,char(64),text,text)','EXECUTE'),
+                has_table_privilege('temporalmark_approver_group',
+                    'public.organization_decision_challenges','SELECT'),
+                has_table_privilege('temporalmark_approver_group',
+                    'public.organization_decision_challenges','INSERT'),
+                has_table_privilege('temporalmark_approver_group',
+                    'public.organization_decision_challenges','UPDATE'),
+                has_table_privilege('temporalmark_approver_group',
+                    'public.organization_decision_challenges','DELETE')
+            """,owner);
+        await using var reader=await cmd.ExecuteReaderAsync();
+        Assert.True(await reader.ReadAsync());
+        Assert.True(reader.GetBoolean(0));
+        for(var i=1;i<7;i++) Assert.False(reader.GetBoolean(i));
+    }
+
+    private static string CalculateCanonicalReviewSha256(Guid id,string name,string issuer,
+        string operatorSub,string adminSub,DateTimeOffset expiresUtc)
+    {
+        using var sha=System.Security.Cryptography.IncrementalHash.CreateHash(
+            System.Security.Cryptography.HashAlgorithmName.SHA256);
+        sha.AppendData(System.Text.Encoding.ASCII.GetBytes("TemporalMark.PendingReview.v1\\0".Replace("\\0","\0")));
+        foreach(var value in new[]{
+            id.ToString("D"),name,issuer,operatorSub,adminSub,
+            expiresUtc.UtcDateTime.Ticks.ToString(System.Globalization.CultureInfo.InvariantCulture)})
+        {
+            var b=System.Text.Encoding.UTF8.GetBytes(value);
+            Span<byte> length=stackalloc byte[4];
+            System.Buffers.Binary.BinaryPrimitives.WriteInt32BigEndian(length,b.Length);
+            sha.AppendData(length);
+            sha.AppendData(b);
+        }
+        return Convert.ToHexString(sha.GetHashAndReset());
+    }
+
+    [Fact]
     public async Task CanOnlyCompleteApprovedMatchingRequestOnce()
     {
         var id = Guid.NewGuid();
