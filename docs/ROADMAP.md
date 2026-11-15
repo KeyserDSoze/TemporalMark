@@ -93,3 +93,11 @@ Progress is recorded in issues and CI, not inferred from this file. Every slice 
 - [ ] #46 independently approved actual production registrar service custody/ACL, append-only verified identity/action audit, replay-safe one-time WebAuthn ceremony consumption, secure rollover/renewal and Keycloak-to-DB TOCTOU controls. #44 maintained FIDO2 registered-credential verification/revocation and #38 signed reviewer decision + legacy SQL grant removal remain OPEN. #35/#31, WORM #17 and legal/QTSP #13 remain OPEN.
 
 - [x] #49 separate SQL-role hardening: RED tests for every conflicting approver/provisioner/runtime group membership (`c5e2501`), GREEN same-connection `pg_has_role` denial (`fe5e38d`), CI-only role grants revoked and account removed. No automatic registrar role seeded.
+
+## V015 security stop-line for registrar SQL issuance (#51)
+
+- [x] **RED before V015:** PostgreSQL tests require the NOLOGIN registrar group to have **no EXECUTE** on the original unsigned V013 nonce function; existing V014 granted it. Security decision in [ADR 0025](../adr/0025-fail-closed-registrar-sql-issuance-interlock.md) was recorded before the test.
+- [x] **GREEN:** V015 forward-only REVOKE of V013 registrar, PUBLIC and legacy SQL EXECUTE; fail-closed Npgsql adapter refuses even after accidental direct regrant. Tests adapt previous #49 positive case to negative explicit suspension, while preserving schema-owner one-ever nonce metadata diagnostics and all other role/tenant deny cases.
+- [x] CI migration-count and persistent-seed check expect **15** immutable scripts, no change to V001–V014; operator runbook and threat model updated.
+- [ ] #51 close **only after** exact-head four-job backend/frontend/terraform/docker-smoke GitHub Actions SUCCESS.
+- [ ] #50 **still OPEN**: actual independently enrolled, approved WebAuthn public key, verified signed registrar/reviewer consent bound to original RP/issuer/nonce and atomic one-time SQL release/credential activation, with audit and key revoke/recovery. #46/#44/#38 and WORM/QTSP #17/#13 remain OPEN. The #49 CLI is deliberately suspended; never regrant V013 as a shortcut.
