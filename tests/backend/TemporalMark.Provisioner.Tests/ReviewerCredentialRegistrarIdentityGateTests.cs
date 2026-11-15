@@ -71,6 +71,30 @@ public sealed class ReviewerCredentialRegistrarIdentityGateTests : IDisposable
     private static RegistrarRegistrationIdentityScope Scope() => new(ReviewerSub);
 
     [Fact]
+    public void DisposableMfaRealmHttpRequiresExplicitExactHardcodedTestOptIn()
+    {
+        const string fixtureIssuer = "http://localhost:8081/realms/temporalmark-mfa-ci";
+        Assert.Throws<ArgumentException>(() => new RegistrarIdentityGatePolicy(
+            fixtureIssuer, RegistrarAudience, ReviewerAudience, RequiredAcr));
+        var approved = new RegistrarIdentityGatePolicy(
+            fixtureIssuer, RegistrarAudience, ReviewerAudience, RequiredAcr,
+            allowDisposableMfaCiLoopbackHttp: true);
+        Assert.Equal(fixtureIssuer, approved.Issuer);
+
+        foreach (var issuer in new[]
+        {
+            "http://localhost:8081/realms/temporalmark",
+            "http://127.0.0.1:8081/realms/temporalmark-mfa-ci",
+            "http://localhost:8082/realms/temporalmark-mfa-ci",
+            "http://attacker.test/realms/temporalmark-mfa-ci",
+            "http://localhost:8081/realms/temporalmark-mfa-ci/extra"
+        })
+            Assert.Throws<ArgumentException>(() => new RegistrarIdentityGatePolicy(
+                issuer, RegistrarAudience, ReviewerAudience, RequiredAcr,
+                allowDisposableMfaCiLoopbackHttp: true));
+    }
+
+    [Fact]
     public async Task SeparateValidSignedPrincipalsRequireFreshLiveAndCurrentRealmRoles()
     {
         var proof = await Gate().CheckAsync(Registrar(), Reviewer(), Scope(), default);
