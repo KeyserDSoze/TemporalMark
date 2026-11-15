@@ -78,12 +78,12 @@ public sealed class ApprovedEnrollmentWorkflowTests
             "admin-sub", expiry);
         Assert.Equal(scope.ReviewSha256, new PendingOrganizationReview(id, "Legal Name",
             Issuer, "operator-sub", "admin-sub", expiry).ReviewSha256);
-        Assert.NotEqual(scope.ReviewSha256, scope with { OrganizationName = "Changed Legal Name" }.ReviewSha256);
-        Assert.NotEqual(scope.ReviewSha256, scope with { OperatorSubject = "another" }.ReviewSha256);
-        Assert.NotEqual(scope.ReviewSha256, scope with { FirstAdminSubject = "another" }.ReviewSha256);
-        Assert.NotEqual(scope.ReviewSha256, scope with { IdentityIssuer = "https://wrong.example" }.ReviewSha256);
-        Assert.NotEqual(scope.ReviewSha256, scope with { ExpiresUtc = expiry.AddSeconds(1) }.ReviewSha256);
-        Assert.NotEqual(scope.ReviewSha256, scope with { RequestId = Guid.NewGuid() }.ReviewSha256);
+        Assert.NotEqual(scope.ReviewSha256, (scope with { OrganizationName = "Changed Legal Name" }).ReviewSha256);
+        Assert.NotEqual(scope.ReviewSha256, (scope with { OperatorSubject = "another" }).ReviewSha256);
+        Assert.NotEqual(scope.ReviewSha256, (scope with { FirstAdminSubject = "another" }).ReviewSha256);
+        Assert.NotEqual(scope.ReviewSha256, (scope with { IdentityIssuer = "https://wrong.example" }).ReviewSha256);
+        Assert.NotEqual(scope.ReviewSha256, (scope with { ExpiresUtc = expiry.AddSeconds(1) }).ReviewSha256);
+        Assert.NotEqual(scope.ReviewSha256, (scope with { RequestId = Guid.NewGuid() }).ReviewSha256);
     }
 
     [Fact]
