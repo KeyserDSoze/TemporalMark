@@ -94,11 +94,23 @@ jobs:
         run: |
           umask 077
           trap 'rm -f "$TEMPORALMARK_CI_MFA_TOKEN_FILE" "$TEMPORALMARK_CI_REGISTRAR_TOKEN_FILE"' EXIT
+          # CI-only master realm setup grants view-users/view-realm/query-users
+          # to an MFA-realm service account; never manage-users or SQL registrar.
+          python3 tests/integration/configure-keycloak-registrar-mfa-ci.py prepare
           (cd tests/frontend && npx playwright test --config mfa.config.ts)
           (cd tests/frontend && npx playwright test --config registrar-mfa.config.ts)
-          # Unlike the disposable password-grant fixture, this second check
-          # uses a REAL Keycloak-signed MFA access token and NO test bypass.
-          dotnet test tests/backend/TemporalMark.Provisioner.Tests/TemporalMark.Provisioner.Tests.csproj --configuration Release --filter 'FullyQualifiedName~RealKeycloakMfaEndToEndTests'
+          # Both browser sessions required real password + TOTP and signed
+          # Keycloak audience-specific access tokens, not password grants.
+          # Actual production OIDC, RFC7662, and current-directory adapters.
+          dotnet test tests/backend/TemporalMark.Provisioner.Tests/TemporalMark.Provisioner.Tests.csproj --configuration Release --filter 'FullyQualifiedName~RealKeycloakMfaEndToEndTests|FullyQualifiedName~RealKeycloakRegistrarMfaEndToEndTests'
+          # The exact SAME still-signed bearer must now be denied because a
+          # current role was removed AFTER token issuance. No cached results.
+          python3 tests/integration/configure-keycloak-registrar-mfa-ci.py remove-registrar-role
+          TEMPORALMARK_CI_REGISTRAR_EXPECT_DENIAL=true dotnet test tests/backend/TemporalMark.Provisioner.Tests/TemporalMark.Provisioner.Tests.csproj --configuration Release --filter 'FullyQualifiedName~RealKeycloakRegistrarMfaEndToEndTests'
+          # Restore role solely to isolate the disabled-account test.
+          python3 tests/integration/configure-keycloak-registrar-mfa-ci.py restore-registrar-role
+          python3 tests/integration/configure-keycloak-registrar-mfa-ci.py disable-registrar
+          TEMPORALMARK_CI_REGISTRAR_EXPECT_DENIAL=true dotnet test tests/backend/TemporalMark.Provisioner.Tests/TemporalMark.Provisioner.Tests.csproj --configuration Release --filter 'FullyQualifiedName~RealKeycloakRegistrarMfaEndToEndTests'
       - name: OIDC admin login and disabled external TSA smoke
         working-directory: tests/frontend
         run: npx playwright test --config authenticated.config.ts
