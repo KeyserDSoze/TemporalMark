@@ -162,7 +162,7 @@ public sealed class ReviewerMdsOfflineCrlCandidateVerifierTests
                 gen.AddCrlEntry(DotNetUtilities.FromX509Certificate(Leaf).SerialNumber,
                     Now.AddMinutes(-1).UtcDateTime, 0);
             if (extension == "unknown-critical")
-                gen.AddExtension(new DerObjectIdentifier("1.2.3.4.5.6.7"), true, new DerInteger(1));
+                gen.AddExtension(new DerObjectIdentifier("1.2.3.4.5.6.7"), true, DerInteger.ValueOf(1));
             if (extension == "delta")
                 gen.AddExtension(X509Extensions.DeltaCrlIndicator, true, new CrlNumber(Org.BouncyCastle.Math.BigInteger.One));
             if (extension == "indirect")
