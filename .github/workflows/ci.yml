@@ -90,10 +90,12 @@ jobs:
       - name: Real browser Keycloak TOTP, PKCE and production-path .NET ACR policy smoke
         env:
           TEMPORALMARK_CI_MFA_TOKEN_FILE: ${{ runner.temp }}/temporalmark-ci-verified-mfa.jwt
+          TEMPORALMARK_CI_REGISTRAR_TOKEN_FILE: ${{ runner.temp }}/temporalmark-ci-registrar-mfa.jwt
         run: |
           umask 077
-          trap 'rm -f "$TEMPORALMARK_CI_MFA_TOKEN_FILE"' EXIT
+          trap 'rm -f "$TEMPORALMARK_CI_MFA_TOKEN_FILE" "$TEMPORALMARK_CI_REGISTRAR_TOKEN_FILE"' EXIT
           (cd tests/frontend && npx playwright test --config mfa.config.ts)
+          (cd tests/frontend && npx playwright test --config registrar-mfa.config.ts)
           # Unlike the disposable password-grant fixture, this second check
           # uses a REAL Keycloak-signed MFA access token and NO test bypass.
           dotnet test tests/backend/TemporalMark.Provisioner.Tests/TemporalMark.Provisioner.Tests.csproj --configuration Release --filter 'FullyQualifiedName~RealKeycloakMfaEndToEndTests'
