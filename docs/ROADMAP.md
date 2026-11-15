@@ -101,3 +101,10 @@ Progress is recorded in issues and CI, not inferred from this file. Every slice 
 - [x] CI migration-count and persistent-seed check expect **15** immutable scripts, no change to V001–V014; operator runbook and threat model updated.
 - [ ] #51 close **only after** exact-head four-job backend/frontend/terraform/docker-smoke GitHub Actions SUCCESS.
 - [ ] #50 **still OPEN**: actual independently enrolled, approved WebAuthn public key, verified signed registrar/reviewer consent bound to original RP/issuer/nonce and atomic one-time SQL release/credential activation, with audit and key revoke/recovery. #46/#44/#38 and WORM/QTSP #17/#13 remain OPEN. The #49 CLI is deliberately suspended; never regrant V013 as a shortcut.
+
+### V016 follows V015, preserving the fail-closed stop-line
+
+- [x] RED SQL privilege-escalation regression `3adb509`: a registrar LOGIN accidentally granted direct function EXECUTE must **still be denied at INSERT** even when the .NET store is bypassed. Earlier V015 only denied the group grant. 
+- [x] GREEN `V016__registration_intent_owner_only_insert.sql`: secure-definer trigger rejects nonowner session_user, including directly granted legacy V013 caller; owner untrusted metadata diagnostics remain intact.
+- [x] Migration and CI persistent count advanced from 15 to **16**, prior V001–V015 checksums untouched; ADR 0025 and operator runbooks updated.
+- [ ] #51 exact FINAL main-head four-job green for **V016** before closing. #50/#46/#44/#38 remain OPEN for actual trusted WebAuthn signer and atomic one-time release.

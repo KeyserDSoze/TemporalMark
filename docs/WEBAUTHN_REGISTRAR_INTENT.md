@@ -63,3 +63,7 @@ A separate non-authorizing business-layer identity preflight checks two signed, 
 ## V015 supersedes registrar ability to issue the V013 nonce
 
 The former NOLOGIN group EXECUTE on V013 was REVOKED by forward-only **V015** because a legitimate but stolen registrar SQL LOGIN could otherwise bypass the dual OIDC CLI checks. There is no production registrar issuance while #50/#44 remain incomplete. Migration/script count is now **15**, not the historical 13/14 cited earlier in this runbook; previous counts refer to earlier development snapshots. The schema/migration owner can still execute untrusted diagnostics, NOT signed authorized registration. Never regrant the V013 function as a workaround. See [ADR 0025](../adr/0025-fail-closed-registrar-sql-issuance-interlock.md) and [security stop-line](REGISTRAR_SQL_INTENT.md).
+
+## V016 SQL-owner-only legacy insert interlock
+
+An additional forward-only migration V016 blocks every nonowner SQL session from inserting legacy V013 registration intents through an owner-owned SECURITY DEFINER trigger, even if the LOGIN was accidentally granted function EXECUTE directly. V015 remains unmodified; the CLI is suspended. Only a privileged owner may run untrusted legacy diagnostics, never a trusted WebAuthn enrollment. Current CI expects **16** immutable migrations; earlier 13/14/15 counts are historical. See [ADR 0025](../adr/0025-fail-closed-registrar-sql-issuance-interlock.md).
