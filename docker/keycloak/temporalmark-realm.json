@@ -188,6 +188,20 @@
       "protocol": "openid-connect",
       "enabled": true,
       "bearerOnly": true
+    },
+    {
+      "clientId": "temporalmark-directory-checker",
+      "name": "DEVELOPMENT ONLY service-account current role and user.enabled lookup",
+      "protocol": "openid-connect",
+      "enabled": true,
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "local-directory-only",
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "implicitFlowEnabled": false,
+      "serviceAccountsEnabled": true,
+      "fullScopeAllowed": false
     }
   ],
   "users": [

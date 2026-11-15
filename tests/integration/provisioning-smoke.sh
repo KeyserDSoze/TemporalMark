@@ -42,10 +42,15 @@ export PROVISIONING_OPERATOR_AUDIENCE="temporalmark-provisioner"
 export PROVISIONING_ADMIN_AUDIENCE="temporalmark-api"
 export PROVISIONING_APPROVER_AUDIENCE="temporalmark-approval"
 export PROVISIONING_ALLOW_HTTP_LOOPBACK=true
+# Configure dedicated read-only service-account role grants via Keycloak Admin REST.
+# This setup uses disposable CI realm admin credentials and is FORBIDDEN in production.
+python3 tests/integration/configure-keycloak-directory-fixture.py
 # Confidential Keycloak client is for this disposable CI realm ONLY.
 export PROVISIONING_LIVE_PROVIDER=keycloak
 export PROVISIONING_INTROSPECTION_CLIENT_ID="temporalmark-live-introspector"
 export PROVISIONING_INTROSPECTION_CLIENT_SECRET="local-introspect-only"
+export PROVISIONING_DIRECTORY_CLIENT_ID="temporalmark-directory-checker"
+export PROVISIONING_DIRECTORY_CLIENT_SECRET="local-directory-only"
 export TEMPORALMARK_PROVISIONING_DB="Host=127.0.0.1;Port=5432;Database=temporalmark;Username=temporalmark_provisioner;Password=local-provisioner-only"
 export TEMPORALMARK_APPROVER_DB="Host=127.0.0.1;Port=5432;Database=temporalmark;Username=temporalmark_approver;Password=local-approver-only"
 
