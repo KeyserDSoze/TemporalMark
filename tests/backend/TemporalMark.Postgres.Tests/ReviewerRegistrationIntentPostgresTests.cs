@@ -149,6 +149,16 @@ public sealed class ReviewerRegistrationIntentPostgresTests
                     await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
                         store.IssueAsync(request with { ReviewerSubject = "overgranted-reviewer" },
                             CancellationToken.None));
+
+                    // RED on V015: a stolen SQL LOGIN plus an accidentally
+                    // direct-granted EXECUTE can STILL bypass .NET and mint
+                    // the nonce. V016 must also deny inside the database.
+                    await using var overgranted = new NpgsqlConnection(connection);
+                    await overgranted.OpenAsync();
+                    var sqlError = await Assert.ThrowsAsync<PostgresException>(() =>
+                        Issue(overgranted, rp.Issuer, rp.Rp, rp.Origin,
+                            reviewer:"overgranted-reviewer"));
+                    Assert.Equal(PostgresErrorCodes.InsufficientPrivilege, sqlError.SqlState);
                 }
                 finally
                 {
