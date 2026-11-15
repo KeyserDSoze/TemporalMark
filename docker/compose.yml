@@ -35,6 +35,8 @@ services:
     restart: unless-stopped
     environment:
       ASPNETCORE_ENVIRONMENT: Development
+      TimestampProvider__Url: "${TIMESTAMP_PROVIDER_URL:-}"
+      TimestampProvider__Id: "${TIMESTAMP_PROVIDER_ID:-}"
       ConnectionStrings__Registry: "Host=postgres;Port=5432;Database=temporalmark;Username=temporalmark;Password=local-dev-only"
     ports: ["127.0.0.1:8080:8080"]
     depends_on:

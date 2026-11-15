@@ -4,8 +4,10 @@ using Microsoft.IdentityModel.Tokens;
 using Npgsql;
 using TemporalMark.Business.Registry;
 using TemporalMark.Business.Tenancy;
+using TemporalMark.Business.Stamping;
 using TemporalMark.Domain.Stamping;
 using TemporalMark.Infrastructure.Postgres;
+using TemporalMark.Infrastructure.Timestamping;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -20,6 +22,27 @@ builder.Services.AddSingleton(_ =>
 builder.Services.AddScoped<ITimestampRegistry, PostgresTimestampRegistry>();
 builder.Services.AddScoped<ITenantAuthorization, PostgresTenantAuthorization>();
 builder.Services.AddScoped<TimestampRegistryService>();
+builder.Services.AddScoped<ITimestampWriter, PostgresTimestampWriter>();
+builder.Services.AddScoped<TimestampIssueService>();
+builder.Services.AddHttpClient("external-tsa", http =>
+{
+    http.Timeout = TimeSpan.FromSeconds(20);
+});
+builder.Services.AddScoped<ITimestampProvider>(sp =>
+{
+    var url = builder.Configuration["TimestampProvider:Url"];
+    var providerId = builder.Configuration["TimestampProvider:Id"] ?? "unknown";
+    if (!string.IsNullOrWhiteSpace(url) && !Uri.TryCreate(url, UriKind.Absolute, out _))
+        throw new InvalidOperationException("TimestampProvider:Url must be a valid absolute URL.");
+    var uri = string.IsNullOrWhiteSpace(url) ? null : new Uri(url);
+    // An arbitrary tenant cannot select the URL. Fixed administrator-owned deployment configuration only.
+    if (uri is not null && uri.Scheme != Uri.UriSchemeHttps &&
+        !(builder.Environment.IsDevelopment() && uri.IsLoopback && uri.Scheme == Uri.UriSchemeHttp))
+        throw new InvalidOperationException("External TSA URL must use HTTPS in deployed environments.");
+    return new ExternalRfc3161TimestampProvider(
+        sp.GetRequiredService<IHttpClientFactory>().CreateClient("external-tsa"),
+        uri, providerId);
+});
 
 var origins = builder.Configuration.GetSection("Cors:Origins").Get<string[]>() ?? [];
 builder.Services.AddCors(options => options.AddPolicy("web", policy =>
@@ -133,11 +156,42 @@ api.MapGet("/stamps/export", async Task<IResult> (
     }
 });
 
-// MUST NOT return fictional qualified tokens: production issuance remains gated until controls exist.
-api.MapPost("/stamps/issue", () => Results.Problem(
-    title: "Timestamp issuance is not configured",
-    detail: "RFC 3161, HSM/time-health and qualified status checks must be implemented and audited first.",
-    statusCode: StatusCodes.Status503ServiceUnavailable));
+// The external TSA path is *not* own QTSP issuance. Every result stays UNVERIFIED
+// until full historic Trusted List, revocation, provenance and evidence checks are added.
+api.MapPost("/stamps/issue", async Task<IResult> (
+    StampIssueRequest input, ClaimsPrincipal user, ITenantAuthorization access,
+    TimestampIssueService issue, ILogger<Program> log, CancellationToken ct) =>
+{
+    var tenant = await TenantAdminAsync(user, access, ct);
+    if (!tenant.HasValue) return Results.Forbid();
+    try
+    {
+        var record = await issue.IssueAsync(tenant.Value, input.DigestBase64, ct);
+        log.LogInformation("External timestamp stored as UNVERIFIED for organization {OrganizationId}, record {RecordId}",
+            tenant.Value, record.Id);
+        return Results.Created($"/api/v1/stamps/{record.Id:N}", new
+        {
+            record.Id,
+            record.IssuedUtc,
+            record.ProviderId,
+            validationState = record.ValidationState.ToString(),
+            qualified = false
+        });
+    }
+    catch (ArgumentException error)
+    {
+        return Results.BadRequest(new { error = error.Message });
+    }
+    catch (TimestampProviderUnavailableException error)
+    {
+        return Results.Problem(title: error.Message, statusCode: StatusCodes.Status503ServiceUnavailable);
+    }
+    catch (TimestampProviderResponseException error)
+    {
+        log.LogWarning("External TSA rejected: {Reason}", error.Message);
+        return Results.Problem(title: error.Message, statusCode: StatusCodes.Status502BadGateway);
+    }
+});
 
 app.Run();
 
