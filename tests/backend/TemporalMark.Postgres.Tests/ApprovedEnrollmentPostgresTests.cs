@@ -191,8 +191,8 @@ public sealed class ApprovedEnrollmentPostgresTests
         }
 
         var results = await Task.WhenAll(CompeteAsync(), CompeteAsync());
-        Assert.Single(results.Where(x => x.Success));
-        Assert.Single(results.Where(x => !x.Success && x.Failure == PostgresErrorCodes.CheckViolation));
+        Assert.Single(results, x => x.Success);
+        Assert.Single(results, x => !x.Success && x.Failure == PostgresErrorCodes.CheckViolation);
 
         await using var owner = Owner();
         await owner.OpenAsync();
