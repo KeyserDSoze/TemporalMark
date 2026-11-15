@@ -49,6 +49,72 @@ public sealed class ApprovedEnrollmentPostgresTests
     }
 
     [Fact]
+    public async Task ReviewReadsOnlyOriginalPendingUnexpiredScopeWithApproverRole()
+    {
+        var id = Guid.NewGuid();
+        var tag = id.ToString("N").ToUpperInvariant();
+        const string issuer = "https://issuer.example.test";
+        await using var op = Operator();
+        await op.OpenAsync();
+        await using (var request = new NpgsqlCommand("""
+            SELECT public.request_enrollment(@id,'Original Legal Name',@issuer,
+                'operator-sub','first-admin-sub',@operatorProof::char(64),@adminProof::char(64))
+            """, op))
+        {
+            request.Parameters.AddWithValue("id", id);
+            request.Parameters.AddWithValue("issuer", issuer);
+            request.Parameters.AddWithValue("operatorProof", tag + new string('A', 32));
+            request.Parameters.AddWithValue("adminProof", tag + new string('B', 32));
+            Assert.Equal(id, Assert.IsType<Guid>(await request.ExecuteScalarAsync()));
+        }
+
+        await using var approver = Approver();
+        await approver.OpenAsync();
+        async Task<(string Name, string Issuer, string Operator, string Admin)> Review(
+            string actualIssuer, string subject)
+        {
+            await using var cmd = new NpgsqlCommand("""
+                SELECT request_id,organization_name,identity_issuer,
+                       operator_subject,first_admin_subject,expires_utc
+                FROM public.read_pending_enrollment(@id,@issuer,@reviewer)
+                """, approver);
+            cmd.Parameters.AddWithValue("id", id);
+            cmd.Parameters.AddWithValue("issuer", actualIssuer);
+            cmd.Parameters.AddWithValue("reviewer", subject);
+            await using var reader = await cmd.ExecuteReaderAsync();
+            if (!await reader.ReadAsync()) throw new UnauthorizedAccessException();
+            Assert.Equal(id, reader.GetGuid(0));
+            Assert.True(reader.GetFieldValue<DateTimeOffset>(5) > DateTimeOffset.UtcNow);
+            return (reader.GetString(1),reader.GetString(2),
+                    reader.GetString(3),reader.GetString(4));
+        }
+
+        var scope = await Review(issuer, "third-reviewer");
+        Assert.Equal("Original Legal Name", scope.Name);
+        Assert.Equal(issuer, scope.Issuer);
+        Assert.Equal("operator-sub", scope.Operator);
+        Assert.Equal("first-admin-sub", scope.Admin);
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => Review(issuer, "operator-sub"));
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => Review(issuer, "first-admin-sub"));
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => Review("https://wrong.example", "third-reviewer"));
+        await using var restricted = new NpgsqlCommand("""
+            SELECT public.read_pending_enrollment(@id,@issuer,'third-reviewer')
+            """, op);
+        restricted.Parameters.AddWithValue("id", id);
+        restricted.Parameters.AddWithValue("issuer", issuer);
+        var denial = await Assert.ThrowsAsync<PostgresException>(
+            async () => await restricted.ExecuteScalarAsync());
+        Assert.Equal(PostgresErrorCodes.InsufficientPrivilege, denial.SqlState);
+        await using var direct = new NpgsqlCommand("""
+            SELECT organization_name FROM public.organization_enrollment_requests WHERE id=@id
+            """, approver);
+        direct.Parameters.AddWithValue("id", id);
+        var directDenial = await Assert.ThrowsAsync<PostgresException>(
+            async () => await direct.ExecuteScalarAsync());
+        Assert.Equal(PostgresErrorCodes.InsufficientPrivilege, directDenial.SqlState);
+    }
+
+    [Fact]
     public async Task CanOnlyCompleteApprovedMatchingRequestOnce()
     {
         var id = Guid.NewGuid();

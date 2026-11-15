@@ -41,6 +41,71 @@ public sealed class ApprovedEnrollmentWorkflowTests
         Assert.Single(store.Completions);
     }
 
+    [Fact]
+    public async Task ReviewerGetsOriginalDatabaseScopeAndApproveRequiresExactReviewDigest()
+    {
+        var store = new PendingStore();
+        var flow = new OrganizationApprovalWorkflow(new Tokens(), new Live(), new Directory(),
+            store, Policy, ApprovalAudience,
+            new ApprovalAuthenticationPolicy("urn:temporalmark:loa:2", TimeSpan.FromSeconds(120)));
+        var id = await flow.RequestAsync("Original Legal Entity", "op.jwt", "admin.jwt", default);
+        var review = await flow.ReviewAsync(id, "approver.jwt", default);
+        Assert.Equal(id, review.RequestId);
+        Assert.Equal("Original Legal Entity", review.OrganizationName);
+        Assert.Equal(Issuer, review.IdentityIssuer);
+        Assert.Equal("operator-sub", review.OperatorSubject);
+        Assert.Equal("admin-sub", review.FirstAdminSubject);
+        Assert.Matches("^[0-9A-F]{64}$", review.ReviewSha256);
+        Assert.Empty(store.Approvals);
+        Assert.Empty(store.Completions);
+
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            flow.ApproveReviewedAsync(id, new string('0', 64), "approver.jwt", default));
+        Assert.Empty(store.Approvals);
+        Assert.Equal(id, await flow.ApproveReviewedAsync(id, review.ReviewSha256, "approver.jwt", default));
+        Assert.Single(store.Approvals);
+        Assert.Equal("Original Legal Entity", store.Approvals[0].ExpectedOrganizationName);
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            flow.ReviewAsync(id, "approver.jwt", default));
+    }
+
+    [Fact]
+    public async Task CanonicalDigestIsBoundToEveryOriginalFieldAndExpiry()
+    {
+        var id = Guid.NewGuid();
+        var expiry = DateTimeOffset.UtcNow.AddMinutes(3);
+        var scope = new PendingOrganizationReview(id, "Legal Name", Issuer, "operator-sub",
+            "admin-sub", expiry);
+        Assert.Equal(scope.ReviewSha256, new PendingOrganizationReview(id, "Legal Name",
+            Issuer, "operator-sub", "admin-sub", expiry).ReviewSha256);
+        Assert.NotEqual(scope.ReviewSha256, scope with { OrganizationName = "Changed Legal Name" }.ReviewSha256);
+        Assert.NotEqual(scope.ReviewSha256, scope with { OperatorSubject = "another" }.ReviewSha256);
+        Assert.NotEqual(scope.ReviewSha256, scope with { FirstAdminSubject = "another" }.ReviewSha256);
+        Assert.NotEqual(scope.ReviewSha256, scope with { IdentityIssuer = "https://wrong.example" }.ReviewSha256);
+        Assert.NotEqual(scope.ReviewSha256, scope with { ExpiresUtc = expiry.AddSeconds(1) }.ReviewSha256);
+        Assert.NotEqual(scope.ReviewSha256, scope with { RequestId = Guid.NewGuid() }.ReviewSha256);
+    }
+
+    [Fact]
+    public async Task NoReviewerCanReadAnUnauthorizedExpiredOrChangedScope()
+    {
+        var store = new PendingStore();
+        var flow = new OrganizationApprovalWorkflow(new Tokens(), new Live(), new Directory(),
+            store, Policy, ApprovalAudience,
+            new ApprovalAuthenticationPolicy("urn:temporalmark:loa:2", TimeSpan.FromSeconds(120)));
+        var id = await flow.RequestAsync("Original", "op.jwt", "admin.jwt", default);
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            flow.ReviewAsync(id, "operator-approver.jwt", default));
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            flow.ReviewAsync(id, "unsigned.jwt", default));
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            flow.ReviewAsync(Guid.NewGuid(), "approver.jwt", default));
+        store.Expired = true;
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            flow.ReviewAsync(id, "approver.jwt", default));
+        Assert.Empty(store.Approvals);
+    }
+
     [Theory]
     [InlineData("missing-role")]
     [InlineData("same-identity")]
