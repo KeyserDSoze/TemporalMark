@@ -76,3 +76,10 @@ Progress is recorded in issues and CI, not inferred from this file. Every slice 
 - [ ] #47 exact HEAD four-job GitHub CI success before closing child.
 - [ ] #46 still OPEN: configure and verify real Keycloak browser two-person **registrar** MFA and live current-directory authority, independently approved registrar SQL executor and one-time binding to pinned V013 intent, fail-closed Entra adapter.
 - [ ] #44 still OPEN: maintained FIDO2 `create()` attestation, active globally unique trusted credential registry, key revocation/recovery and separate-human approval. #38 still OPEN: reviewer-held signed original decision, atomic one-time challenge consumption and removal of historical direct SQL decision grants. #35/#31/#27 and WORM/QTSP #17/#13 remain OPEN.
+
+## Disposable real registrar Keycloak browser MFA proof (#48)
+
+- [x] RED-first isolated Playwright registrar OTP/PKCE test, distinct test identity/audience, wrong-OTP denial, new-browser strong ACR; explicit actual RS256/JWKS verification, state+S256-PKCE check and 0600 token cleanup. CI-only Keycloak realm gained a separate registrar role and read-only current-directory/introspection clients.
+- [x] Real .NET identity gate test added with original Keycloak-signed registrar and reviewer browser MFA tokens, fresh RFC7662 and effective directory roles, followed by role-removal and disabled-account negative checks of the SAME previously valid bearer. Strict HTTPS in production, only one explicit hardcoded disposable HTTP fixture issuer for CI. No privilege/SQL/WORM change.
+- [ ] #48 exact-final-HEAD four-job GitHub CI verification and closure only after all GREEN; early RED and subsequent failing CI must be recorded in issue. This is a disposable CI proof, NOT actual WebAuthn registration.
+- [ ] #46 real approved production registrar step-up/current-role governance, secure narrowly authorized SQL executor and replay-safe V013 intent binding; #44 maintained FIDO2 `create()` registration attestation/key and revocation, #38 signed reviewer approval/SQL grant cutover. #35/#31/#27, legal #13 and WORM #17 remain OPEN.

@@ -87,7 +87,7 @@ jobs:
         run: dotnet test tests/backend/TemporalMark.Postgres.Tests/TemporalMark.Postgres.Tests.csproj --configuration Release
       - name: OIDC-signed operator enrollment and database replay smoke
         run: bash tests/integration/provisioning-smoke.sh
-      - name: Real browser Keycloak TOTP, PKCE and production-path .NET ACR policy smoke
+      - name: Real browser Keycloak registrar + reviewer TOTP/PKCE, live current-role .NET smoke
         env:
           TEMPORALMARK_CI_MFA_TOKEN_FILE: ${{ runner.temp }}/temporalmark-ci-verified-mfa.jwt
           TEMPORALMARK_CI_REGISTRAR_TOKEN_FILE: ${{ runner.temp }}/temporalmark-ci-registrar-mfa.jwt

@@ -27,3 +27,7 @@ Future work must obtain current-role evidence *again* at the privileged boundary
 There is **NO WebAuthn registered key or signature validation**, NO new public endpoint, NO SQL action, NO decision approval, NO legally sealed WORM evidence, and no assertion of qualified QTSP status. V013/V014, ADR 0021, and the on-prem/Azure [registrar intent runbook](WEBAUTHN_REGISTRAR_INTENT.md) remain applicable. #44/#46/#38 remain open.
 
 Sources: [RFC 7662](https://www.rfc-editor.org/rfc/rfc7662), [OIDC Core](https://openid.net/specs/openid-connect-core-1_0.html), [Keycloak realm authorization](https://www.keycloak.org/docs/latest/server_admin/), and [ADR 0022](../adr/0022-registrar-dual-oidc-identity-preflight.md).
+
+## Real disposable Keycloak MFA integration test (#48, ADR 0023)
+
+The isolated dual-principal OIDC gate is now also exercised in Docker CI against two separate real Keycloak browser password+OTP (Code+PKCE) sessions with distinct registrar/reviewer subjects and audiences. The production `.NET` JWT verifier, live RFC7662 and current-role/enablement adapters run on the real Keycloak responses, and the previously valid registrar JWT must fail after a current role removal or account disablement. This is **development CI only**, not a production independently approved registrar service or credential enrollment. See [runbook](KEYCLOAK_REGISTRAR_MFA_CI.md). No V013 SQL role membership was created, no WebAuthn key or approved decision is issued; #46/#44/#38 remain OPEN.
