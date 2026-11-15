@@ -5,6 +5,7 @@
 import { test, expect } from "@playwright/test";
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import { createServer, type Server } from "node:http";
+import { writeFileSync } from "node:fs";
 import { jwtVerify, createRemoteJWKSet } from "jose";
 
 const issuer = "http://localhost:8081/realms/temporalmark-mfa-ci";
@@ -151,6 +152,12 @@ test("real Keycloak browser password+TOTP, Code+PKCE S256 and verified ACR (not 
     const now = Math.floor(Date.now() / 1000);
     expect(payload.auth_time as number).toBeGreaterThanOrEqual(now - 120);
     expect(payload.auth_time as number).toBeLessThanOrEqual((payload.iat as number) + 30);
+    expect(payload.role).toContain("platform_approver");
+
+    // CI-only short-lived ephemeral file for the *actual .NET* JWT verifier
+    // and signed-ACR policy. Keep owner-readable 0600; the job trap removes it.
+    const file = process.env.TEMPORALMARK_CI_MFA_TOKEN_FILE;
+    if (file) writeFileSync(file, json.access_token, { mode: 0o600, flag: "wx" });
     await second.context.close();
   } finally {
     await new Promise<void>(resolve => callbackServer?.close(() => resolve()) ?? resolve());
