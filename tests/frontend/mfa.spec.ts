@@ -72,7 +72,10 @@ test("real Keycloak browser password+TOTP, Code+PKCE S256 and verified ACR (not 
         client_id: clientId, response_type: "code", scope: "openid",
         redirect_uri: redirect, code_challenge: codeChallenge(verifier),
         code_challenge_method: "S256", state, nonce,
-        acr_values: expectedAcr, prompt: "login", max_age: "0"
+        acr_values: expectedAcr, prompt: "login", max_age: "0",
+        claims: JSON.stringify({
+          id_token: { acr: { essential: true, values: [expectedAcr] } }
+        })
       })) url.searchParams.set(key, value);
       await page.goto(url.toString());
       await expect(page.locator("#username")).toBeVisible();

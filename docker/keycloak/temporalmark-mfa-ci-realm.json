@@ -29,17 +29,81 @@
   "authenticationFlows": [
     {
       "alias": "temporalmark-ci-password-otp",
-      "description": "Disposable CI: both password and actual OTP REQUIRED, no SSO cookie alternative",
+      "description": "Disposable CI step-up: no cookie shortcut, require conditional LoA 1 and 2",
       "providerId": "basic-flow",
       "topLevel": true,
       "builtIn": false,
       "authenticationExecutions": [
         {
-          "authenticator": "auth-username-password-form",
+          "flowAlias": "temporalmark-ci-forms",
+          "authenticatorFlow": true,
+          "requirement": "ALTERNATIVE",
+          "priority": 10,
+          "userSetupAllowed": false
+        }
+      ]
+    },
+    {
+      "alias": "temporalmark-ci-forms",
+      "description": "Ordered conditional LoA requirements: password then OTP",
+      "providerId": "basic-flow",
+      "topLevel": false,
+      "builtIn": false,
+      "authenticationExecutions": [
+        {
+          "flowAlias": "temporalmark-ci-level-1",
+          "authenticatorFlow": true,
+          "requirement": "CONDITIONAL",
+          "priority": 10,
+          "userSetupAllowed": false
+        },
+        {
+          "flowAlias": "temporalmark-ci-level-2",
+          "authenticatorFlow": true,
+          "requirement": "CONDITIONAL",
+          "priority": 20,
+          "userSetupAllowed": false
+        }
+      ]
+    },
+    {
+      "alias": "temporalmark-ci-level-1",
+      "description": "Password authentication counts as LoA 1",
+      "providerId": "basic-flow",
+      "topLevel": false,
+      "builtIn": false,
+      "authenticationExecutions": [
+        {
+          "authenticator": "conditional-level-of-authentication",
           "authenticatorFlow": false,
           "requirement": "REQUIRED",
           "priority": 10,
+          "userSetupAllowed": false,
+          "authenticatorConfig": "temporalmark-ci-loa1-config"
+        },
+        {
+          "authenticator": "auth-username-password-form",
+          "authenticatorFlow": false,
+          "requirement": "REQUIRED",
+          "priority": 20,
           "userSetupAllowed": false
+        }
+      ]
+    },
+    {
+      "alias": "temporalmark-ci-level-2",
+      "description": "Real OTP verification counts as LoA 2 only on this request",
+      "providerId": "basic-flow",
+      "topLevel": false,
+      "builtIn": false,
+      "authenticationExecutions": [
+        {
+          "authenticator": "conditional-level-of-authentication",
+          "authenticatorFlow": false,
+          "requirement": "REQUIRED",
+          "priority": 10,
+          "userSetupAllowed": false,
+          "authenticatorConfig": "temporalmark-ci-loa2-config"
         },
         {
           "authenticator": "auth-otp-form",
@@ -68,7 +132,8 @@
       ],
       "webOrigins": [],
       "attributes": {
-        "pkce.code.challenge.method": "S256"
+        "pkce.code.challenge.method": "S256",
+        "minimum.acr.value": "urn:temporalmark:loa:2"
       },
       "protocolMappers": [
         {
@@ -135,6 +200,22 @@
           "temporary": false
         }
       ]
+    }
+  ],
+  "authenticatorConfig": [
+    {
+      "alias": "temporalmark-ci-loa1-config",
+      "config": {
+        "loa-condition-level": "1",
+        "loa-max-age": "36000"
+      }
+    },
+    {
+      "alias": "temporalmark-ci-loa2-config",
+      "config": {
+        "loa-condition-level": "2",
+        "loa-max-age": "0"
+      }
     }
   ]
 }
