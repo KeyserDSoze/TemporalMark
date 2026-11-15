@@ -8,9 +8,9 @@ Progress is recorded in issues and CI, not inferred from this file. Every slice 
 - [ ] Local docker compose up: PostgreSQL, OIDC IdP, API, frontend, object store and observability.
 
 ## 1. Multi-tenant core
-- [ ] Organizations, memberships, invite/accept, last-active-admin invariant, per-tenant roles. PostgreSQL atomic bootstrap/commit-time invariant and concurrency integration tests delivered in #22; identity-verified operator enrollment, member management, invitation and RLS still open.
+- [ ] Organizations, memberships, invite/accept, last-active-admin invariant, per-tenant roles. PostgreSQL atomic bootstrap/commit-time invariant and concurrency integration tests delivered in #22; signed-token OIDC operator CLI and DB role separation are pilot-complete (#24); active account/revocation proof, invite/claim sync, management and RLS remain open (#23/#14).
 - [ ] Server-side isolation, fail-closed authentication, **legally sealed** audit logs, tenant-specific dashboards and complete period exports. Pilot tenant access audit (#21) covers prepared ZIP/TSR downloads only; independent WORM sealing, issuance audit and RLS remain.
-- [ ] Versioned PostgreSQL migrations (V001–V003 implemented), **RLS and cross-tenant** integration tests. A separate production migration owner, secured job and operator identity verification remain required.
+- [ ] Versioned PostgreSQL migrations (V001–V003 implemented), **RLS and cross-tenant** integration tests. Dedicated development DB roles and signed-token checks delivered in #24; production secret injection, migration job and real-time IdP account/revocation verification remain required.
 
 ## 2. Timestamp MVP
 - [ ] RFC 3161 request and response, DER parsing, CMS signature and messageImprint/nonce checks, negative test corpus.

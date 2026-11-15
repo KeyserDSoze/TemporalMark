@@ -39,3 +39,6 @@ The function has `REVOKE ALL ... FROM PUBLIC`, but its database *owner* can alwa
 
 ## Verification
 CI runs `tests/backend/TemporalMark.Postgres.Tests` against a live PostgreSQL 17 Docker container: initial seed preserved, migrations present, no-admin creation/activation forbidden, bad subject inputs rejected, last admin deletion/reassignment forbidden, concurrent admin demotion/deletion serialized. The desktop/mobile and authenticated OIDC UI tests continue to run. Triggers and tests **do not** replace PostgreSQL RLS, cryptographic IdP proof, legally sealed audit or full organization management.
+
+## Signed IdP operator provisioning (#24)
+The authenticated operator flow is now handled by a **separate, non-HTTP** .NET CLI, not by manually typing an arbitrary initial-admin subject into PostgreSQL. Consult [operator provisioning](OPERATOR_PROVISIONING.md) and [ADR 0007](../adr/0007-oidc-operator-provisioning.md). The legacy bootstrap function remains for migration-owner only. `V004` defines restricted database grant groups; local Compose creates login credentials only for development. Production must configure its own least-privilege logins through an approved secret management process, not reuse the demo users. IDP claim mapping, real-time revocation and audit sealing are still pending.
