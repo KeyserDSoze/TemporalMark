@@ -529,12 +529,12 @@ public sealed class ApprovedEnrollmentPostgresTests
         using var sha=System.Security.Cryptography.IncrementalHash.CreateHash(
             System.Security.Cryptography.HashAlgorithmName.SHA256);
         sha.AppendData(System.Text.Encoding.ASCII.GetBytes("TemporalMark.PendingReview.v1\\0".Replace("\\0","\0")));
+        Span<byte> length=stackalloc byte[4];
         foreach(var value in new[]{
             id.ToString("D"),name,issuer,operatorSub,adminSub,
             expiresUtc.UtcDateTime.Ticks.ToString(System.Globalization.CultureInfo.InvariantCulture)})
         {
             var b=System.Text.Encoding.UTF8.GetBytes(value);
-            Span<byte> length=stackalloc byte[4];
             System.Buffers.Binary.BinaryPrimitives.WriteInt32BigEndian(length,b.Length);
             sha.AppendData(length);
             sha.AppendData(b);

@@ -8,7 +8,7 @@ using TemporalMark.Provisioner;
 // Identity proofs must be protected owner-only files, never command arguments.
 try
 {
-    if (args.Length == 0) throw new ArgumentException("Request, review, approve, reject or complete mode required.");
+    if (args.Length == 0) throw new ArgumentException("Request, review, challenge, approve, reject or complete mode required.");
     var mode = args[0];
     var issuer = Environment.GetEnvironmentVariable("PROVISIONING_OIDC_ISSUER")
         ?? throw new InvalidOperationException("PROVISIONING_OIDC_ISSUER required.");
@@ -50,7 +50,7 @@ try
 
     // Approvers MUST NOT use the provisioning SQL login; the database itself
     // enforces approve-only versus request/complete-only EXECUTE permissions.
-    var connection = mode is "approve" or "review" or "reject"
+    var connection = mode is "approve" or "review" or "reject" or "challenge"
         ? Environment.GetEnvironmentVariable("TEMPORALMARK_APPROVER_DB")
         : Environment.GetEnvironmentVariable("TEMPORALMARK_PROVISIONING_DB");
     if (string.IsNullOrWhiteSpace(connection))
@@ -74,6 +74,29 @@ try
         Console.WriteLine($"Expires UTC: {snapshot.ExpiresUtc.UtcDateTime:O}");
         Console.WriteLine($"Review SHA-256: {snapshot.ReviewSha256}");
         Console.WriteLine("This digest is NOT a signed or independently witnessed human decision.");
+        return 0;
+    }
+
+    // Issuing a challenge is NOT approval or rejection. No browser WebAuthn
+    // assertion is accepted until an independently audited verifier exists.
+    if (mode == "challenge" && args.Length == 11 &&
+        args[1] == "--request-id" && args[3] == "--review-sha256" &&
+        args[5] == "--decision" && args[7] == "--reason-code" &&
+        args[9] == "--approver-token-file")
+    {
+        var reason = args[8] == "NONE" ? null : args[8];
+        var challenge = await flow.IssueDecisionChallengeAsync(
+            ParseId(args[2]), args[4], args[6], reason,
+            await ReadProtectedTokenFile(args[10]), default);
+        Console.WriteLine($"Decision challenge issued: {challenge.ChallengeId:D}");
+        Console.WriteLine($"Request: {challenge.RequestId:D}");
+        Console.WriteLine($"Review SHA-256: {challenge.ReviewSha256}");
+        Console.WriteLine($"Reviewer: {challenge.ReviewerSubject}");
+        Console.WriteLine($"Decision intent: {challenge.Decision}");
+        Console.WriteLine($"Reason code: {challenge.ReasonCode ?? "NONE"}");
+        Console.WriteLine($"Challenge hex: {challenge.ChallengeHex}");
+        Console.WriteLine($"Challenge expires UTC: {challenge.ExpiresUtc.UtcDateTime:O}");
+        Console.WriteLine("UNSIGNED CHALLENGE ONLY — no organization was approved or rejected.");
         return 0;
     }
 
@@ -116,6 +139,8 @@ try
             throw new ArgumentException(
                 "Usage: request --organization-name NAME --operator-token-file PATH --first-admin-token-file PATH | " +
                 "review --request-id UUID --approver-token-file PATH | " +
+                "challenge --request-id UUID --review-sha256 HEX --decision APPROVE|REJECT " +
+                "--reason-code CODE|NONE --approver-token-file PATH | " +
                 "approve --request-id UUID --review-sha256 HEX --approver-token-file PATH | " +
                 "reject --request-id UUID --review-sha256 HEX --reason-code CODE " +
                 "--approver-token-file PATH | " +

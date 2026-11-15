@@ -55,6 +55,39 @@ public sealed class PostgresOrganizationApprovalStore(NpgsqlDataSource database)
         return AssertGuid(await cmd.ExecuteScalarAsync(ct));
     }
 
+    public async Task<IssuedReviewerDecisionChallenge> IssueDecisionChallengeAsync(
+        VerifiedReviewerDecisionChallengeRequest request, CancellationToken ct)
+    {
+        await using var conn = await database.OpenConnectionAsync(ct);
+        await using var cmd = new NpgsqlCommand("""
+            SELECT challenge_id, challenge_hex, issued_utc, expires_utc
+              FROM public.issue_reviewer_decision_challenge(@id,@name,@issuer,
+                @operator,@admin,@reviewer,@review::char(64),@decision,@reason)
+            """, conn);
+        cmd.Parameters.AddWithValue("id", request.Scope.RequestId);
+        cmd.Parameters.AddWithValue("name", request.Scope.OrganizationName);
+        cmd.Parameters.AddWithValue("issuer", request.Scope.IdentityIssuer);
+        cmd.Parameters.AddWithValue("operator", request.Scope.OperatorSubject);
+        cmd.Parameters.AddWithValue("admin", request.Scope.FirstAdminSubject);
+        cmd.Parameters.AddWithValue("reviewer", request.ReviewerSubject);
+        cmd.Parameters.AddWithValue("review", request.Scope.ReviewSha256);
+        cmd.Parameters.AddWithValue("decision", request.Decision);
+        var reason = cmd.Parameters.Add("reason", NpgsqlTypes.NpgsqlDbType.Text);
+        reason.Value = (object?)request.ReasonCode ?? DBNull.Value;
+        await using var result = await cmd.ExecuteReaderAsync(ct);
+        if (!await result.ReadAsync(ct))
+            throw new InvalidOperationException("No pending decision challenge issued.");
+        var challenge = new IssuedReviewerDecisionChallenge(
+            result.GetGuid(0), request.Scope.RequestId, request.Scope.ReviewSha256,
+            request.Scope.IdentityIssuer, request.ReviewerSubject, request.Decision,
+            request.ReasonCode, result.GetString(1),
+            result.GetFieldValue<DateTimeOffset>(2),
+            result.GetFieldValue<DateTimeOffset>(3));
+        if (await result.ReadAsync(ct))
+            throw new InvalidOperationException("Ambiguous decision challenge.");
+        return challenge;
+    }
+
     public async Task<Guid> RejectAsync(VerifiedOrganizationRejection decision, CancellationToken ct)
     {
         await using var conn = await database.OpenConnectionAsync(ct);

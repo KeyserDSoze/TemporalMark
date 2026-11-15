@@ -20,6 +20,23 @@ public sealed record VerifiedOrganizationRejection(
     string ReviewerSubject, string ReviewerProofHashHex,
     string ReviewSha256, string ReasonCode);
 
+/// <summary>
+/// A pending WebAuthn challenge request. This is NOT an authorization/decision.
+/// Future verifier must bind an independently enrolled reviewer-held credential.
+/// </summary>
+public sealed record VerifiedReviewerDecisionChallengeRequest(
+    PendingOrganizationReview Scope, string ReviewerSubject,
+    string Decision, string? ReasonCode);
+
+/// <summary>
+/// Database-issued random challenge, with no signature or effect on the
+/// enrollment. A successful issue MUST NOT imply APPROVED or REJECTED.
+/// </summary>
+public sealed record IssuedReviewerDecisionChallenge(
+    Guid ChallengeId, Guid RequestId, string ReviewSha256, string IdentityIssuer,
+    string ReviewerSubject, string Decision, string? ReasonCode,
+    string ChallengeHex, DateTimeOffset IssuedUtc, DateTimeOffset ExpiresUtc);
+
 /// <summary>Current directory state, not claims snapshotted in the JWT.</summary>
 public sealed record CurrentOidcAccount(string Issuer, string Subject, bool Enabled,
     IReadOnlyCollection<string> EffectiveRealmRoles);
@@ -67,6 +84,8 @@ public interface IOrganizationApprovalStore
         string issuer, string reviewerSubject, CancellationToken ct);
     Task<Guid> ApproveAsync(VerifiedOrganizationApproval approval, CancellationToken ct);
     Task<Guid> RejectAsync(VerifiedOrganizationRejection rejection, CancellationToken ct);
+    Task<IssuedReviewerDecisionChallenge> IssueDecisionChallengeAsync(
+        VerifiedReviewerDecisionChallengeRequest request, CancellationToken ct);
     Task<Guid> CompleteAsync(VerifiedOrganizationEnrollment completion, CancellationToken ct);
 }
 
@@ -123,6 +142,53 @@ public sealed class OrganizationApprovalWorkflow(
         ValidateSubject(review.OperatorSubject);
         ValidateSubject(review.FirstAdminSubject);
         return review;
+    }
+
+    /// <summary>
+    /// Obtains a one-time, server-generated challenge bound to the original
+    /// pending record. There is intentionally NO way to consume this challenge
+    /// or to issue an approval using it without future signed WebAuthn proof.
+    /// </summary>
+    public async Task<IssuedReviewerDecisionChallenge> IssueDecisionChallengeAsync(
+        Guid requestId, string reviewSha256, string decision, string? reasonCode,
+        string approverToken, CancellationToken ct)
+    {
+        if (decision is not ("APPROVE" or "REJECT"))
+            throw new ArgumentException("An exact APPROVE or REJECT action is required.", nameof(decision));
+        if (decision == "APPROVE" && reasonCode is not null ||
+            decision == "REJECT" && reasonCode is not
+                ("UNVERIFIED_ORGANIZATION" or "UNVERIFIED_IDENTITY" or
+                 "SCOPE_MISMATCH" or "POLICY_DENIED"))
+            throw new ArgumentException("Only a bound, allowed reason can accompany rejection.",
+                nameof(reasonCode));
+
+        ValidateReviewHash(reviewSha256);
+        var original = await ReviewAsync(requestId, approverToken, ct);
+        RequireReviewHash(reviewSha256, original.ReviewSha256);
+
+        // Do not use the identity from a caller-provided string. Revalidate
+        // current signer claim, introspection and directory before issuance.
+        var identity = await verifier.VerifyAsync(approverToken, approverAudience, ct);
+        RequireIdentity(identity, "platform_approver");
+        approverAuthentication.Require(identity);
+        await CheckLiveAsync(approverToken, approverAudience, identity, "platform_approver", ct);
+        await RequireDirectoryRoleAsync(identity, "platform_approver", ct);
+        var issued = await store.IssueDecisionChallengeAsync(
+            new VerifiedReviewerDecisionChallengeRequest(original, identity.Subject,
+                decision, reasonCode), ct);
+        if (issued.ChallengeId == Guid.Empty || issued.RequestId != requestId ||
+            issued.ReviewSha256 != original.ReviewSha256 ||
+            issued.IdentityIssuer != policy.Issuer ||
+            issued.ReviewerSubject != identity.Subject ||
+            issued.Decision != decision || issued.ReasonCode != reasonCode ||
+            issued.ChallengeHex is null || issued.ChallengeHex.Length != 96 ||
+            issued.ChallengeHex.Any(ch => !(ch is >= '0' and <= '9' or >= 'A' and <= 'F')) ||
+            issued.ExpiresUtc <= issued.IssuedUtc ||
+            issued.ExpiresUtc > issued.IssuedUtc.AddSeconds(60) ||
+            issued.ExpiresUtc > original.ExpiresUtc ||
+            issued.ExpiresUtc <= DateTimeOffset.UtcNow)
+            throw new UnauthorizedAccessException("Decision challenge metadata is invalid.");
+        return issued;
     }
 
     /// <summary>
