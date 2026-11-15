@@ -45,7 +45,7 @@ jobs:
         run: npm test
 
   docker-smoke:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: [backend, frontend]
     steps:
       - uses: actions/checkout@v4
@@ -59,6 +59,17 @@ jobs:
           curl -fsS --retry 40 --retry-delay 3 --retry-all-errors --retry-connrefused http://127.0.0.1:8080/healthz
           curl -fsS --retry 40 --retry-delay 3 --retry-all-errors --retry-connrefused http://127.0.0.1:3000/
           curl -fsS --retry 40 --retry-delay 3 --retry-all-errors --retry-connrefused http://127.0.0.1:8081/realms/temporalmark/.well-known/openid-configuration
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install browser integration test runner
+        working-directory: tests/frontend
+        run: |
+          npm install --no-audit --no-fund
+          npx playwright install --with-deps chromium
+      - name: OIDC admin login and disabled external TSA smoke
+        working-directory: tests/frontend
+        run: npx playwright test --config authenticated.config.ts
       - name: Diagnostics
         if: failure()
         run: docker compose -f docker/compose.yml logs --no-color --tail=200
