@@ -15,7 +15,7 @@ terraform apply
 ```
 
 **Important pilot limitations / blockers:**
-- The API depends on SQL schema in `scripts/postgres-init/001_schema.sql`; private DB migrations must be executed from within the VNet after provisioning. No migration job is wired yet.
+- The API requires **versioned SQL migrations** in `scripts/migrations` (see `docs/DATABASE_MIGRATIONS.md`); the separate `scripts/apply-migrations.sh` runner must be run from within the VNet after provisioning. A production Azure migration job is **not** wired yet; `scripts/postgres-init/` is a development fixture, not an Azure upgrade mechanism.
 - A preconfigured OIDC authority and registered web/API clients are required. Tenant admin identities and memberships are not automatically enrolled on Azure.
 - Database bootstrap credentials and a connection string currently enter Terraform state; a production implementation must use Key Vault/Managed Identity or an approved secrets flow with audited access and encrypted remote state.
 - No HSM/TSU signer, trusted UTC(k) implementation, RFC 3161 issuing API, historical Trusted List verifier, signed manifest, independent immutable evidence writer, WAF, SIEM correlation or DR drill is provided yet.

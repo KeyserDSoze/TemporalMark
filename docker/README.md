@@ -24,3 +24,7 @@ docker compose -f docker/compose.yml down -v
 The Compose stack is for functional testing of **this baseline**, not legal WORM storage, qualified clock synchronization, HSMs, TLS security or AgID/CAB approval. The registry currently stores DER bytes in PostgreSQL. An independent immutability adapter, signed manifests, legal validation and audit/event hardening are mandatory before production.
 
 The PWA is served via HTTP on localhost (secure context exception); deploy with HTTPS/TLS and locked-down IdP in production.
+
+## Existing databases and organization bootstrap (#22)
+
+The stack now runs `migrate` before starting the API, tracking versioned SQL migrations with SHA-256 checksums. For existing volumes, run `docker compose -f docker/compose.yml run --rm migrate`; **do not use `down -v` to perform an upgrade**, because it destroys persisted data. Details, restrictions, and operator-only enrollment: [database migrations](../docs/DATABASE_MIGRATIONS.md) and [ADR 0006](../adr/0006-tenant-bootstrap-and-admin-integrity.md). Operator identity verification is still manual and not sufficient for a production tenant onboarding flow.

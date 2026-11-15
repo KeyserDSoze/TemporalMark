@@ -70,6 +70,8 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.x
+      - name: Reapply migrations to prove checksum-safe idempotency
+        run: docker compose -f docker/compose.yml run --rm migrate
       - name: PostgreSQL migration and tenant concurrency tests
         env:
           TEMPORALMARK_TEST_DB: "Host=127.0.0.1;Port=5432;Database=temporalmark;Username=temporalmark;Password=local-dev-only"
