@@ -19,7 +19,8 @@ destination = pathlib.Path(sys.argv[1])
 endpoint = "http://127.0.0.1:8081/realms/temporalmark/protocol/openid-connect/token"
 accounts = [
     ("demo-provisioner", "local-provisioner-only", "operator.jwt"),
-    ("demo-initial-admin", "local-admin-only", "first-admin.jwt")
+    ("demo-initial-admin", "local-admin-only", "first-admin.jwt"),
+    ("demo-approver", "local-approver-only", "approver.jwt")
 ]
 for username, password, filename in accounts:
     data = urllib.parse.urlencode({
@@ -39,35 +40,63 @@ PY
 export PROVISIONING_OIDC_ISSUER="http://localhost:8081/realms/temporalmark"
 export PROVISIONING_OPERATOR_AUDIENCE="temporalmark-provisioner"
 export PROVISIONING_ADMIN_AUDIENCE="temporalmark-api"
+export PROVISIONING_APPROVER_AUDIENCE="temporalmark-approval"
 export PROVISIONING_ALLOW_HTTP_LOOPBACK=true
 # Confidential Keycloak client is for this disposable CI realm ONLY.
 export PROVISIONING_LIVE_PROVIDER=keycloak
 export PROVISIONING_INTROSPECTION_CLIENT_ID="temporalmark-live-introspector"
 export PROVISIONING_INTROSPECTION_CLIENT_SECRET="local-introspect-only"
 export TEMPORALMARK_PROVISIONING_DB="Host=127.0.0.1;Port=5432;Database=temporalmark;Username=temporalmark_provisioner;Password=local-provisioner-only"
+export TEMPORALMARK_APPROVER_DB="Host=127.0.0.1;Port=5432;Database=temporalmark;Username=temporalmark_approver;Password=local-approver-only"
 
-cmd=(dotnet run --project src/backend/applications/TemporalMark.Provisioner/TemporalMark.Provisioner.csproj --configuration Release --
-    --organization-name "CI verification org"
-    --operator-token-file "$temp_dir/operator.jwt"
-    --first-admin-token-file "$temp_dir/first-admin.jwt")
+cli=(dotnet run --project src/backend/applications/TemporalMark.Provisioner/TemporalMark.Provisioner.csproj --configuration Release --)
+operator_sub="00000000-0000-0000-0000-000000000002"
+admin_sub="00000000-0000-0000-0000-000000000003"
 
-"${cmd[@]}" > "$temp_dir/success.log"
-grep -Eq '^Organization created: [0-9a-f-]{36}$' "$temp_dir/success.log"
+"${cli[@]}" request --organization-name "CI verification org" \
+  --operator-token-file "$temp_dir/operator.jwt" \
+  --first-admin-token-file "$temp_dir/first-admin.jwt" > "$temp_dir/requested.log"
+request_id="$(sed -n 's/^Approval requested: //p' "$temp_dir/requested.log")"
+[[ "$request_id" =~ ^[0-9a-f-]{36}$ ]] || { echo "Missing approval request ID" >&2; exit 1; }
 
-# Same OIDC proofs cannot be used for a second organization (SQL unique token hashes).
-if "${cmd[@]}" > "$temp_dir/replay.log" 2>&1; then
-    echo "SECURITY FAILURE: replayed enrollment was accepted" >&2
-    exit 1
+# No enrollment before the independent reviewer's signoff.
+if "${cli[@]}" complete --request-id "$request_id" \
+    --organization-name "CI verification org" \
+    --operator-token-file "$temp_dir/operator.jwt" \
+    --first-admin-token-file "$temp_dir/first-admin.jwt" > "$temp_dir/no-approval.log" 2>&1; then
+    echo "SECURITY FAILURE: unapproved organization was created" >&2; exit 1
+fi
+if "${cli[@]}" approve --request-id "$request_id" \
+    --organization-name "Wrong organization" \
+    --expected-initial-admin-sub "$admin_sub" --expected-operator-sub "$operator_sub" \
+    --approver-token-file "$temp_dir/approver.jwt" > "$temp_dir/changed-scope.log" 2>&1; then
+    echo "SECURITY FAILURE: mismatched organization was approved" >&2; exit 1
 fi
 
-# Identity for first administrator cannot authenticate as a platform provisioner.
-if dotnet run --project src/backend/applications/TemporalMark.Provisioner/TemporalMark.Provisioner.csproj --configuration Release -- \
-    --organization-name "Incorrect role" \
+"${cli[@]}" approve --request-id "$request_id" \
+  --organization-name "CI verification org" \
+  --expected-initial-admin-sub "$admin_sub" --expected-operator-sub "$operator_sub" \
+  --approver-token-file "$temp_dir/approver.jwt" > "$temp_dir/approved.log"
+grep -Fq "Approval recorded: $request_id" "$temp_dir/approved.log"
+
+"${cli[@]}" complete --request-id "$request_id" \
+  --organization-name "CI verification org" \
+  --operator-token-file "$temp_dir/operator.jwt" \
+  --first-admin-token-file "$temp_dir/first-admin.jwt" > "$temp_dir/success.log"
+grep -Fq "Organization created: $request_id" "$temp_dir/success.log"
+
+if "${cli[@]}" complete --request-id "$request_id" \
+    --organization-name "CI verification org" \
+    --operator-token-file "$temp_dir/operator.jwt" \
+    --first-admin-token-file "$temp_dir/first-admin.jwt" > "$temp_dir/replay.log" 2>&1; then
+    echo "SECURITY FAILURE: replayed approval" >&2; exit 1
+fi
+if "${cli[@]}" request --organization-name "Incorrect role" \
     --operator-token-file "$temp_dir/first-admin.jwt" \
     --first-admin-token-file "$temp_dir/operator.jwt" > "$temp_dir/invalid.log" 2>&1; then
-    echo "SECURITY FAILURE: operator/admin role swap was accepted" >&2
-    exit 1
+    echo "SECURITY FAILURE: operator/admin role swap accepted" >&2; exit 1
 fi
+
 # A fresh, signed admin JWT that was valid at issuance MUST be denied if
 # the Keycloak account is disabled AFTER its token was issued.
 python3 - "$temp_dir" <<'PY'
@@ -90,7 +119,8 @@ def form(url, body, headers=None):
 
 for username, password, filename in [
     ("demo-provisioner", "local-provisioner-only", "operator-fresh.jwt"),
-    ("demo-initial-admin", "local-admin-only", "first-admin-fresh.jwt")
+    ("demo-initial-admin", "local-admin-only", "first-admin-fresh.jwt"),
+    ("demo-approver", "local-approver-only", "approver-fresh.jwt")
 ]:
     token = form(realm + "/protocol/openid-connect/token", {
         "client_id": "temporalmark-local-provisioning-tests",
