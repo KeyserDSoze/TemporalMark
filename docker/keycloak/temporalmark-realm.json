@@ -134,6 +134,16 @@
             "included.client.audience": "temporalmark-provisioner",
             "access.token.claim": "true"
           }
+        },
+        {
+          "name": "local-introspection-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "temporalmark-live-introspector",
+            "access.token.claim": "true"
+          }
         }
       ]
     },
@@ -143,6 +153,20 @@
       "protocol": "openid-connect",
       "enabled": true,
       "bearerOnly": true
+    },
+    {
+      "clientId": "temporalmark-live-introspector",
+      "name": "DEVELOPMENT ONLY confidential token introspection - never use secret in production",
+      "protocol": "openid-connect",
+      "enabled": true,
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "local-introspect-only",
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "implicitFlowEnabled": false,
+      "serviceAccountsEnabled": false,
+      "fullScopeAllowed": false
     }
   ],
   "users": [
