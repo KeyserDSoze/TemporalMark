@@ -8,7 +8,7 @@ using TemporalMark.Provisioner;
 // Identity proofs must be protected owner-only files, never command arguments.
 try
 {
-    if (args.Length == 0) throw new ArgumentException("Request, approve or complete mode required.");
+    if (args.Length == 0) throw new ArgumentException("Request, review, approve or complete mode required.");
     var mode = args[0];
     var issuer = Environment.GetEnvironmentVariable("PROVISIONING_OIDC_ISSUER")
         ?? throw new InvalidOperationException("PROVISIONING_OIDC_ISSUER required.");
@@ -50,7 +50,7 @@ try
 
     // Approvers MUST NOT use the provisioning SQL login; the database itself
     // enforces approve-only versus request/complete-only EXECUTE permissions.
-    var connection = mode == "approve"
+    var connection = mode is "approve" or "review"
         ? Environment.GetEnvironmentVariable("TEMPORALMARK_APPROVER_DB")
         : Environment.GetEnvironmentVariable("TEMPORALMARK_PROVISIONING_DB");
     if (string.IsNullOrWhiteSpace(connection))
@@ -59,6 +59,23 @@ try
     var flow = new OrganizationApprovalWorkflow(
         verifier, live, directory, new PostgresOrganizationApprovalStore(db), policy,
         approverAudience, approverAuthentication);
+
+    // Reviewed data comes from the restricted SQL function, never user argv.
+    if (mode == "review" && args.Length == 5 &&
+        args[1] == "--request-id" && args[3] == "--approver-token-file")
+    {
+        var snapshot = await flow.ReviewAsync(ParseId(args[2]),
+            await ReadProtectedTokenFile(args[4]), default);
+        Console.WriteLine($"Review request: {snapshot.RequestId:D}");
+        Console.WriteLine($"Organization: {snapshot.OrganizationName}");
+        Console.WriteLine($"Issuer: {snapshot.IdentityIssuer}");
+        Console.WriteLine($"Operator subject: {snapshot.OperatorSubject}");
+        Console.WriteLine($"Initial admin subject: {snapshot.FirstAdminSubject}");
+        Console.WriteLine($"Expires UTC: {snapshot.ExpiresUtc.UtcDateTime:O}");
+        Console.WriteLine($"Review SHA-256: {snapshot.ReviewSha256}");
+        Console.WriteLine("This digest is NOT a signed or independently witnessed human decision.");
+        return 0;
+    }
 
     Guid result;
     switch (mode)
@@ -72,12 +89,11 @@ try
             Console.WriteLine($"Approval requested: {result:D}");
             Console.WriteLine("Use a separately authenticated platform approver to review exact name, issuer and subjects.");
             break;
-        case "approve" when args.Length == 11 &&
-            args[1] == "--request-id" && args[3] == "--organization-name" &&
-            args[5] == "--expected-initial-admin-sub" && args[7] == "--expected-operator-sub" &&
-            args[9] == "--approver-token-file":
-            result = await flow.ApproveAsync(ParseId(args[2]), args[4], args[6], args[8],
-                await ReadProtectedTokenFile(args[10]), default);
+        case "approve" when args.Length == 7 &&
+            args[1] == "--request-id" && args[3] == "--review-sha256" &&
+            args[5] == "--approver-token-file":
+            result = await flow.ApproveReviewedAsync(ParseId(args[2]), args[4],
+                await ReadProtectedTokenFile(args[6]), default);
             Console.WriteLine($"Approval recorded: {result:D}");
             break;
         case "complete" when args.Length == 9 &&
@@ -92,8 +108,8 @@ try
         default:
             throw new ArgumentException(
                 "Usage: request --organization-name NAME --operator-token-file PATH --first-admin-token-file PATH | " +
-                "approve --request-id UUID --organization-name NAME --expected-initial-admin-sub SUB " +
-                "--expected-operator-sub SUB --approver-token-file PATH | " +
+                "review --request-id UUID --approver-token-file PATH | " +
+                "approve --request-id UUID --review-sha256 HEX --approver-token-file PATH | " +
                 "complete --request-id UUID --organization-name NAME --operator-token-file PATH " +
                 "--first-admin-token-file PATH");
     }
