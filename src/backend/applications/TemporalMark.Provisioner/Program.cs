@@ -8,7 +8,12 @@ using TemporalMark.Provisioner;
 // Identity proofs must be protected owner-only files, never command arguments.
 try
 {
-    if (args.Length == 0) throw new ArgumentException("Request, review, challenge, approve, reject or complete mode required.");
+    if (args.Length == 0) throw new ArgumentException("Registrar-intent, request, review, challenge, approve, reject or complete mode required.");
+    // Separate hardened registrar operation. It NEVER shares provisioning or
+    // approver SQL logins, password-only fixture exceptions, or arbitrary RP
+    // ID/issuer/subject values from command-line arguments.
+    if (args[0] == "registrar-intent")
+        return await IssueUnconsumableRegistrarIntentAsync(args);
     var mode = args[0];
     var issuer = Environment.GetEnvironmentVariable("PROVISIONING_OIDC_ISSUER")
         ?? throw new InvalidOperationException("PROVISIONING_OIDC_ISSUER required.");
@@ -176,4 +181,71 @@ static async Task<string> ReadProtectedTokenFile(string path)
     if (new FileInfo(path).Length > 16384)
         throw new UnauthorizedAccessException("Token file is too large.");
     return (await File.ReadAllTextAsync(path)).TrimEnd('\r', '\n');
+}
+
+
+static async Task<int> IssueUnconsumableRegistrarIntentAsync(string[] argv)
+{
+    if (argv.Length != 5 ||
+        argv[1] != "--registrar-token-file" ||
+        argv[3] != "--reviewer-token-file")
+        throw new ArgumentException(
+            "Usage: registrar-intent --registrar-token-file PATH --reviewer-token-file PATH. " +
+            "RP, issuer and expected reviewer are pinned configuration, not arguments.");
+
+    // This command is standalone operator-only and deliberately never runs
+    // against the Docker HTTP MFA realm or password-only development issuer.
+    // No Keycloak/SQL role, registrar login, owner policy, or credential key
+    // is installed automatically by merely invoking it.
+    static string Require(string key) =>
+        Environment.GetEnvironmentVariable(key) is { Length: > 0 } value
+            ? value : throw new InvalidOperationException(
+                "Required explicitly approved registrar configuration missing: " + key);
+
+    if (Require("REGISTRAR_LIVE_PROVIDER") != "keycloak")
+        throw new InvalidOperationException("Only the reviewed Keycloak registrar provider is supported.");
+    var issuer = Require("REGISTRAR_OIDC_ISSUER");
+    var registrarAudience = Require("REGISTRAR_AUDIENCE");
+    var reviewerAudience = Require("REGISTRAR_REVIEWER_AUDIENCE");
+    var requiredAcr = Require("REGISTRAR_REQUIRED_ACR");
+    var policy = new RegistrarIdentityGatePolicy(
+        issuer, registrarAudience, reviewerAudience, requiredAcr);
+    var rp = new RegistrarIntentDeploymentPolicy(
+        issuer, Require("REGISTRAR_RP_ID"),
+        Require("REGISTRAR_ORIGIN"),
+        Require("REGISTRAR_APPROVED_REVIEWER_SUBJECT"));
+
+    // Production-only HTTPS: no local development bypass is passed to any
+    // token, live-introspection, directory or pinned deployment policy.
+    var verifier = new OidcAccessTokenVerifier(issuer, permitLocalDevelopmentHttp: false);
+    using var live = new KeycloakTokenIntrospector(
+        issuer, allowLocalHttp: false,
+        Require("REGISTRAR_INTROSPECTION_CLIENT_ID"),
+        Require("REGISTRAR_INTROSPECTION_CLIENT_SECRET"));
+    using var directory = new KeycloakCurrentAccountDirectory(
+        issuer, allowLocalHttp: false,
+        Require("REGISTRAR_DIRECTORY_CLIENT_ID"),
+        Require("REGISTRAR_DIRECTORY_CLIENT_SECRET"));
+    var gate = new ReviewerCredentialRegistrarIdentityGate(
+        verifier, live, directory, policy);
+
+    await using var dedicatedDb = NpgsqlDataSource.Create(Require("TEMPORALMARK_REGISTRAR_DB"));
+    var store = new PostgresReviewerRegistrationIntentStore(
+        dedicatedDb, Require("REGISTRAR_EXPECTED_SQL_LOGIN"));
+    var flow = new ReviewerRegistrationIntentWorkflow(gate, store, rp);
+    var issued = await flow.IssueAsync(
+        await ReadProtectedTokenFile(argv[2]),
+        await ReadProtectedTokenFile(argv[4]), CancellationToken.None);
+
+    Console.WriteLine($"Registration intent ID: {issued.IntentId:D}");
+    Console.WriteLine($"Pinned issuer: {issued.IdentityIssuer}");
+    Console.WriteLine($"RP ID: {issued.RelyingPartyId}");
+    Console.WriteLine($"Origin: {issued.TrustedOrigin}");
+    Console.WriteLine($"Reviewer subject: {issued.ReviewerSubject}");
+    Console.WriteLine($"Registrar subject: {issued.RegistrarSubject}");
+    Console.WriteLine($"Challenge hex: {issued.ChallengeHex}");
+    Console.WriteLine($"Intent expires UTC: {issued.ExpiresUtc.UtcDateTime:O}");
+    Console.WriteLine("UNCONSUMABLE REGISTRATION INTENT ONLY — no key, WebAuthn attestation, " +
+        "tenant approval, or qualified legal evidence.");
+    return 0;
 }
