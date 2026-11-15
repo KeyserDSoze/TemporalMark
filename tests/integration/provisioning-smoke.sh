@@ -125,7 +125,10 @@ def form(url, body, headers=None):
 for username, password, filename in [
     ("demo-provisioner", "local-provisioner-only", "operator-fresh.jwt"),
     ("demo-initial-admin", "local-admin-only", "first-admin-fresh.jwt"),
-    ("demo-approver", "local-approver-only", "approver-fresh.jwt")
+    ("demo-approver", "local-approver-only", "approver-fresh.jwt"),
+    ("demo-provisioner", "local-provisioner-only", "operator-role.jwt"),
+    ("demo-initial-admin", "local-admin-only", "admin-role.jwt"),
+    ("demo-approver", "local-approver-only", "approver-role.jwt")
 ]:
     token = form(realm + "/protocol/openid-connect/token", {
         "client_id": "temporalmark-local-provisioning-tests",
@@ -147,6 +150,14 @@ revoked_id="$(sed -n 's/^Approval requested: //p' "$temp_dir/revoked-request.log
   --organization-name "Revoked first admin" \
   --expected-initial-admin-sub "$admin_sub" --expected-operator-sub "$operator_sub" \
   --approver-token-file "$temp_dir/approver-fresh.jwt" > "$temp_dir/revoked-approved.log"
+
+# Separate pending request to prove that removing an approver's CURRENT directory
+# role denies approval, even with an independently signed, still-unexpired JWT.
+"${cli[@]}" request --organization-name "Removed approver current role" \
+  --operator-token-file "$temp_dir/operator-role.jwt" \
+  --first-admin-token-file "$temp_dir/admin-role.jwt" > "$temp_dir/role-request.log"
+role_request_id="$(sed -n 's/^Approval requested: //p' "$temp_dir/role-request.log")"
+[[ "$role_request_id" =~ ^[0-9a-f-]{36}$ ]] || { echo "Missing role-test request ID" >&2; exit 1; }
 
 # Disable the admin only AFTER a valid, independent approval has been recorded.
 python3 - "$temp_dir" <<'PY'
@@ -211,4 +222,58 @@ test "$count_before" = "$count_after" || {
     echo "SECURITY FAILURE: failed account-status check caused database side effect" >&2
     exit 1
 }
-echo "Keycloak approved workflow, role/approval/replay gates and disabled-account denial passed."
+# Verify removal of an effective CURRENT realm role after token issuance.
+# The service-account directory read is independent of JWT/introspection snapshots.
+python3 - "$temp_dir" <<'PY'
+import json, pathlib, sys, urllib.parse, urllib.request
+base = "http://127.0.0.1:8081"
+endpoint = base + "/realms/temporalmark/protocol/openid-connect/token/introspect"
+target = (pathlib.Path(sys.argv[1]) / "approver-role.jwt").read_text()
+def form(url, body):
+    data = urllib.parse.urlencode(body).encode()
+    with urllib.request.urlopen(urllib.request.Request(url, data=data), timeout=20) as res:
+        return json.load(res)
+master = form(base + "/realms/master/protocol/openid-connect/token", {
+    "client_id": "admin-cli", "grant_type": "password",
+    "username": "local-admin", "password": "dev-only-change-me"
+})["access_token"]
+def request(method, url, data=None):
+    headers = {"Authorization": "Bearer " + master, "Accept": "application/json"}
+    if data is not None:
+        data = json.dumps(data).encode()
+        headers["Content-Type"] = "application/json"
+    with urllib.request.urlopen(
+        urllib.request.Request(url, data=data, headers=headers, method=method), timeout=20
+    ) as response:
+        content = response.read()
+        return json.loads(content) if content else None
+realm = base + "/admin/realms/temporalmark"
+approver_id = "00000000-0000-0000-0000-000000000004"
+role = request("GET", realm + "/roles/platform_approver")
+request("DELETE", realm + "/users/" + approver_id + "/role-mappings/realm", [role])
+mapping = request("GET", realm + "/users/" + approver_id + "/role-mappings/realm/composite")
+if any(x.get("name") == "platform_approver" for x in mapping):
+    raise AssertionError("Keycloak current role mapping should no longer authorize approver")
+# This token may still be active and carry the old role because JWTs are
+# issuance-time snapshots. The CLI MUST consult the directory independently.
+status = form(endpoint, {
+    "token": target, "token_type_hint": "access_token",
+    "client_id": "temporalmark-live-introspector",
+    "client_secret": "local-introspect-only"
+})
+if status.get("active") is not True:
+    raise AssertionError("Role-removal regression requires an otherwise active access token")
+PY
+count_before_role="$(count_events)"
+if "${cli[@]}" approve --request-id "$role_request_id" \
+   --organization-name "Removed approver current role" \
+   --expected-initial-admin-sub "$admin_sub" --expected-operator-sub "$operator_sub" \
+   --approver-token-file "$temp_dir/approver-role.jwt" > "$temp_dir/role-removed.log" 2>&1; then
+    echo "SECURITY FAILURE: revoked directory role was ignored" >&2
+    exit 1
+fi
+count_after_role="$(count_events)"
+test "$count_before_role" = "$count_after_role" || {
+    echo "SECURITY FAILURE: removed directory role caused DB side effects" >&2; exit 1
+}
+echo "Independent current-role Keycloak checks, live account denial and approval gates passed."
