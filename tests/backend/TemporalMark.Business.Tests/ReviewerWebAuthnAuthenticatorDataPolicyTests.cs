@@ -62,6 +62,29 @@ public sealed class ReviewerWebAuthnAuthenticatorDataPolicyTests
     }
 
     [Fact]
+    public void All256FlagCombinationsDenyExceptRequiredUpUvAndValidBackupStates()
+    {
+        for (var flags = 0; flags <= byte.MaxValue; flags++)
+        {
+            var expected = flags is 0x05 or 0x0D or 0x1D;
+            var accepted = ReviewerWebAuthnAuthenticatorDataPolicy
+                .TryReadUntrustedAssertionData(SyntheticData((byte)flags), Rp, out _);
+            Assert.Equal(expected, accepted);
+        }
+    }
+
+    [Fact]
+    public void RpIdHashUsesKnownSha256VectorNotAnOriginOrArbitraryString()
+    {
+        const string knownRpHash =
+            "D4DD91016ABB2E47EBC359806AB5081FC410724A84F2D2D96D858FF55D35503A";
+        var bytes = SyntheticData();
+        Assert.Equal(knownRpHash, Convert.ToHexString(bytes.AsSpan(0, 32)));
+        Assert.True(ReviewerWebAuthnAuthenticatorDataPolicy
+            .TryReadUntrustedAssertionData(bytes, Rp, out _));
+    }
+
+    [Fact]
     public void DoesNotTrustCallerSelectedRpIdOrChangedHash()
     {
         var genuineShape = SyntheticData();
