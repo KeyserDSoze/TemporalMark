@@ -11,6 +11,12 @@ interface RegistryItem {
   id: string; issuedUtc: string; digestBase64: string; providerId: string;
   validationState: string;
 }
+interface AuditItem {
+  id: string; organizationId: string; actorSubjectId: string;
+  action: "PeriodExportPrepared" | "ReceiptDownloadPrepared";
+  occurredUtc: string; receiptId: string | null;
+  periodFromUtc: string | null; periodToUtcExclusive: string | null;
+}
 function utcDateDaysAgo(days: number) {
   const value = new Date();
   value.setUTCDate(value.getUTCDate() - days);
@@ -32,6 +38,8 @@ export default function Dashboard({ accessToken }: { accessToken: string }) {
   const [tenant, setTenant] = useState<TenantInfo | null>(null);
   const [summary, setSummary] = useState<Summary | null>(null);
   const [records, setRecords] = useState<RegistryItem[]>([]);
+  const [auditEvents, setAuditEvents] = useState<AuditItem[]>([]);
+  const [auditHasMore, setAuditHasMore] = useState(false);
   const [busy, setBusy] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [issuing, setIssuing] = useState(false);
@@ -53,12 +61,16 @@ export default function Dashboard({ accessToken }: { accessToken: string }) {
     setError("");
     try {
       const period = bounds(from, to);
-      const [me, count, list] = await Promise.all([
-        get("me"), get("stamps/summary?" + period), get("stamps?" + period + "&limit=50")
+      const [me, count, list, audit] = await Promise.all([
+        get("me"), get("stamps/summary?" + period), get("stamps?" + period + "&limit=50"),
+        get("audit?" + period + "&limit=20")
       ]);
       setTenant(await me.json() as TenantInfo);
       setSummary(await count.json() as Summary);
       setRecords(await list.json() as RegistryItem[]);
+      const auditPage = await audit.json() as AuditItem[];
+      setAuditEvents(auditPage);
+      setAuditHasMore(auditPage.length === 20);
     } catch (exception) {
       setError(exception instanceof Error && exception.message === "date" ? t("dateError") :
         exception instanceof Error ? exception.message : t("error"));
@@ -80,7 +92,8 @@ export default function Dashboard({ accessToken }: { accessToken: string }) {
       anchor.href = objectUrl;
       anchor.download = `temporalmark-${from}-${to}.zip`;
       anchor.click();
-      URL.revokeObjectURL(objectUrl);
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+      await load();
     } catch (exception) {
       setError(exception instanceof Error ? exception.message : t("error"));
     } finally {
@@ -99,6 +112,7 @@ export default function Dashboard({ accessToken }: { accessToken: string }) {
       link.download = `timestamp-${id}.tsr`;
       link.click();
       window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      await load();
     } catch (exception) {
       setError(exception instanceof Error ? exception.message : t("error"));
     }
@@ -135,6 +149,24 @@ export default function Dashboard({ accessToken }: { accessToken: string }) {
       setIssuing(false);
     }
   };
+
+  const loadMoreAudit = async () => {
+    setBusy(true);
+    setError("");
+    try {
+      const response = await get("audit?" + bounds(from, to) + "&offset=" + auditEvents.length + "&limit=20");
+      const page = await response.json() as AuditItem[];
+      setAuditEvents(previous => [...previous, ...page]);
+      setAuditHasMore(page.length === 20);
+    } catch (exception) {
+      setError(exception instanceof Error ? exception.message : t("error"));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const auditActionLabel = (action: AuditItem["action"]) =>
+    action === "PeriodExportPrepared" ? t("auditExportPrepared") : t("auditReceiptPrepared");
 
   const labelFor = (state: string) => ({
     Unverified: t("unverified"),
@@ -195,6 +227,37 @@ export default function Dashboard({ accessToken }: { accessToken: string }) {
             </table>
           </div>}
         {summary && summary.count > 50 && <p className="mt-4 text-xs text-muted-foreground">50 / {summary.count}</p>}
+      </CardContent>
+    </Card>
+    <Card>
+      <CardHeader>
+        <h2 className="text-lg font-semibold">{t("auditHistory")}</h2>
+        <p className="text-xs text-muted-foreground">{t("auditDisclaimer")}</p>
+      </CardHeader>
+      <CardContent>
+        {auditEvents.length === 0 ?
+          <p className="py-6 text-center text-sm text-muted-foreground">{busy ? t("loading") : t("auditEmpty")}</p> :
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[620px] text-left text-sm" aria-label={t("auditHistory")}>
+              <thead><tr className="border-b border-border text-muted-foreground">
+                <th className="pb-3 font-medium">{t("auditWhen")}</th>
+                <th className="pb-3 font-medium">{t("auditAction")}</th>
+                <th className="pb-3 font-medium">{t("auditActor")}</th>
+                <th className="pb-3 font-medium">{t("auditTarget")}</th>
+              </tr></thead>
+              <tbody>{auditEvents.map(entry =>
+                <tr key={entry.id} className="border-b border-border/50">
+                  <td className="whitespace-nowrap py-3 pr-4">{new Date(entry.occurredUtc).toLocaleString(i18n.language, { timeZone: "UTC" })}</td>
+                  <td className="py-3 pr-4">{auditActionLabel(entry.action)}</td>
+                  <td className="break-all py-3 pr-4 font-mono text-xs">{entry.actorSubjectId}</td>
+                  <td className="break-all py-3 font-mono text-xs">
+                    {entry.receiptId ?? (entry.periodFromUtc && entry.periodToUtcExclusive ?
+                      entry.periodFromUtc.slice(0, 10) + " – " + entry.periodToUtcExclusive.slice(0, 10) : "—")}
+                  </td>
+                </tr>)}</tbody>
+            </table>
+          </div>}
+        {auditHasMore && <Button className="mt-4" disabled={busy} variant="outline" onClick={() => void loadMoreAudit()}>{t("auditMore")}</Button>}
       </CardContent>
     </Card>
   </div>;

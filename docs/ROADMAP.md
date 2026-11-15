@@ -9,7 +9,7 @@ Progress is recorded in issues and CI, not inferred from this file. Every slice 
 
 ## 1. Multi-tenant core
 - [ ] Organizations, memberships, invite/accept, last-active-admin invariant, per-tenant roles.
-- [ ] Server-side isolation, fail-closed authentication, audit logs, tenant-specific dashboards and period exports.
+- [ ] Server-side isolation, fail-closed authentication, **legally sealed** audit logs, tenant-specific dashboards and complete period exports. Pilot tenant access audit (#21) covers prepared ZIP/TSR downloads only; independent WORM sealing, issuance audit and RLS remain.
 - [ ] Database migrations + PostgreSQL RLS and cross-tenant integration tests.
 
 ## 2. Timestamp MVP

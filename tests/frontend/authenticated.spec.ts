@@ -21,6 +21,13 @@ test("development tenant administrator authenticates and sees own registry", asy
   }
   await expect(page.getByText("Nessuna marca registrata nel periodo selezionato.")).toBeVisible();
   await expect(page.getByText("Servizio NON qualificato")).toBeVisible();
+  await expect(page.getByText("Cronologia accessi alle evidenze")).toBeVisible();
+  // Exporting an empty registry is still a tenant-sensitive operation.
+  const download = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Esporta ZIP del periodo" }).click();
+  const receipt = await download;
+  expect(receipt.suggestedFilename()).toMatch(/^temporalmark-.*\.zip$/);
+  await expect(page.getByText("Esportazione predisposta")).toBeVisible({ timeout: 15000 });
 
   await page.locator('input[type="file"]').setInputFiles({
     name: "example.txt",
