@@ -95,3 +95,18 @@ Run this **only** inside disposable Docker/Keycloak CI via the `docker-smoke` jo
 ## Approver-only original database view (V009; #36)
 
 The new `review` command shows server-fetched original scope after signed OIDC + live token + current directory-role + ACR authentication. Its digest binds UUID, name, issuer, both subjects and exact expiration. `approve` requires `--review-sha256` and no longer accepts manually copied name and subject flags. Missing, expired, consumed and altered records or wrong digest are refused before SQL approval. This is *not a human-held digital signature* or explicit binding of a real reviewer's act to a hardware authenticator; #35 remains OPEN. See [ADR 0014](../adr/0014-db-backed-approval-review.md).
+
+## Explicit reviewer rejection (V010, #37)
+
+After independently retrieving the original scope with the approved `review` command, the **same separately authenticated reviewer** can choose to deny the request. Use only an allowlisted reason code; never place secret or freeform personal data in a command argument:
+
+```sh
+dotnet run --project src/backend/applications/TemporalMark.Provisioner -- \
+  reject --request-id '<UUID-from-review>' \
+  --review-sha256 '<uppercase-64-character-digest-shown-by-review>' \
+  --reason-code UNVERIFIED_IDENTITY \
+  --approver-token-file /restricted/approver.jwt
+# Output: Enrollment rejected: <same UUID>
+```
+
+Allowed reasons: `UNVERIFIED_ORGANIZATION`, `UNVERIFIED_IDENTITY`, `SCOPE_MISMATCH`, `POLICY_DENIED`. Rejection is **terminal** and cannot be approved, reviewed again or completed; the organization is not created. The database stores the reviewer subject, UTC decision timestamp, canonical review digest, SHA-256 fingerprint of the short-lived OIDC token, and reason code; a unique registry prevents use of that token for another approval OR rejection. Strong signed JWT, live account/current role and ACR checks are mandatory before the protected CLI asks PostgreSQL to reject. The local password-grant CI exception is explicitly **NON_MFA**. The digest is not a signed human decision, and the SQL approver credential remains a security-critical trust boundary. See [ADR 0015](../adr/0015-terminal-rejection-and-token-proof-replay.md); independently signed human consent remains #35.
