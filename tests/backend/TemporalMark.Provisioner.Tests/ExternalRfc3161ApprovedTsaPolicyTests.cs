@@ -108,7 +108,8 @@ public sealed class ExternalRfc3161ApprovedTsaPolicyTests
         var provider = new ExternalRfc3161TimestampProvider(
             http, TsaUri, "reviewed-operator-tsa",
             approvedSignerCertificateSha256: DummySignerSha256,
-            approvedPolicyOid: invalid);
+            approvedPolicyOid: invalid,
+            approvedTrustAnchorCertificateBase64Der: ExternalRfc3161TrustRootTestFixture.Base64Der);
 
         await Assert.ThrowsAsync<TimestampProviderUnavailableException>(() =>
             provider.RequestAsync(new byte[32], CancellationToken.None));
@@ -124,7 +125,8 @@ public sealed class ExternalRfc3161ApprovedTsaPolicyTests
         var provider = new ExternalRfc3161TimestampProvider(
             http, TsaUri, "reviewed-operator-tsa",
             approvedSignerCertificateSha256: DummySignerSha256,
-            approvedPolicyOid: ReviewedPolicyOid);
+            approvedPolicyOid: ReviewedPolicyOid,
+            approvedTrustAnchorCertificateBase64Der: ExternalRfc3161TrustRootTestFixture.Base64Der);
 
         await Assert.ThrowsAsync<TimestampProviderResponseException>(() =>
             provider.RequestAsync(imprint, CancellationToken.None));
