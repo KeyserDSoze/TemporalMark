@@ -49,11 +49,13 @@ public static class ReviewerMdsOfflineFileHighWaterJournal
 
         try
         {
+            RejectFilesystemRedirection(journalPath, allowMissingLeaf: true);
             var header = Encoding.ASCII.GetBytes(
                 HeaderDomain + "\n" + sourcePolicySha256 + "\n" +
                 testAuthoritySpkiSha256 + "\n");
             using var file = new FileStream(journalPath, FileMode.CreateNew,
                 FileAccess.Write, FileShare.None);
+            RejectFilesystemRedirection(journalPath, allowMissingLeaf: false);
             file.Write(header);
             file.Flush(flushToDisk: true);
         }
@@ -85,8 +87,10 @@ public static class ReviewerMdsOfflineFileHighWaterJournal
 
         try
         {
+            RejectFilesystemRedirection(journalPath!, allowMissingLeaf: false);
             using var file = new FileStream(journalPath!, FileMode.Open,
                 FileAccess.ReadWrite, FileShare.None);
+            RejectFilesystemRedirection(journalPath!, allowMissingLeaf: false);
             var existing = InspectFile(file, sourcePolicySha256!,
                 expectedTestAuthoritySpkiSha256!, testAuthorityPublicKey!, nowUtc,
                 allowEmpty: true);
@@ -133,13 +137,61 @@ public static class ReviewerMdsOfflineFileHighWaterJournal
             expectedTestAuthoritySpkiSha256, testAuthorityPublicKey, nowUtc);
         try
         {
+            RejectFilesystemRedirection(journalPath!, allowMissingLeaf: false);
             using var file = new FileStream(journalPath!, FileMode.Open,
                 FileAccess.Read, FileShare.None);
+            RejectFilesystemRedirection(journalPath!, allowMissingLeaf: false);
             return InspectFile(file, sourcePolicySha256!,
                 expectedTestAuthoritySpkiSha256!, testAuthorityPublicKey!, nowUtc,
                 allowEmpty: false).Last?.Observation ?? throw Denied();
         }
         catch (Exception error) when (error is not OutOfMemoryException)
+        {
+            throw Denied();
+        }
+    }
+
+    /// <summary>
+    /// Best-effort rejection of OBSERVABLE symbolic links, junctions and
+    /// reparse points in the final path and each directory ancestor.
+    /// This is not O_NOFOLLOW/openat2 or atomic protection against a hostile
+    /// administrator replacing the path between checks, hard links, bind
+    /// mounts, a backed-up journal, or independently pinned signer custody.
+    /// </summary>
+    private static void RejectFilesystemRedirection(
+        string path, bool allowMissingLeaf)
+    {
+        if (!Path.IsPathFullyQualified(path) ||
+            !string.Equals(Path.GetFullPath(path), path, StringComparison.Ordinal))
+            throw Denied();
+
+        var directoryPath = Path.GetDirectoryName(path);
+        if (string.IsNullOrEmpty(directoryPath))
+            throw Denied();
+
+        for (var parentPath = directoryPath; parentPath is not null;
+             parentPath = Path.GetDirectoryName(parentPath))
+        {
+            var parent = new DirectoryInfo(parentPath);
+            parent.Refresh();
+            if (!parent.Exists ||
+                parent.LinkTarget is not null ||
+                (parent.Attributes & FileAttributes.ReparsePoint) != 0 ||
+                (parent.Attributes & FileAttributes.Directory) == 0)
+                throw Denied();
+        }
+
+        var leaf = new FileInfo(path);
+        leaf.Refresh();
+        if (leaf.LinkTarget is not null)
+            throw Denied();
+        if (leaf.Exists)
+        {
+            if ((leaf.Attributes & (FileAttributes.ReparsePoint |
+                                     FileAttributes.Directory)) != 0)
+                throw Denied();
+        }
+        else if (!allowMissingLeaf || Directory.Exists(path))
         {
             throw Denied();
         }
