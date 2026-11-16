@@ -145,6 +145,7 @@ TEMPORALMARK_RESTORE_OLD_EVIDENCE_SHA256="$old_digest" \
 TEMPORALMARK_RESTORE_NEW_EVIDENCE_SHA256="$new_digest" \
 TEMPORALMARK_RUN_ISOLATED_WITNESS_TEST=1 \
 TEMPORALMARK_WITNESS_OWNER_TEST_DB="Host=127.0.0.1;Port=5433;Database=temporalmark_witness;Username=temporalmark_witness_owner;Password=local-witness-owner-only" \
+TEMPORALMARK_WITNESS_WRITER_TEST_DB="Host=127.0.0.1;Port=5433;Database=temporalmark_witness;Username=temporalmark_witness_writer;Password=local-witness-writer-only" \
 TEMPORALMARK_WITNESS_TEST_DB="Host=127.0.0.1;Port=5433;Database=temporalmark_witness;Username=temporalmark_witness_reader;Password=local-witness-reader-only" \
 dotnet test tests/backend/TemporalMark.Postgres.Tests/TemporalMark.Postgres.Tests.csproj \
   --configuration Release \
