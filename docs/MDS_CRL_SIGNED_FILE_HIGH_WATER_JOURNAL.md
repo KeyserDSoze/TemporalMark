@@ -44,3 +44,9 @@ The mandatory [full logical PostgreSQL `pg_dump/pg_restore` fixture](MDS_CRL_FUL
 - [.NET 10 FileStream](https://learn.microsoft.com/en-us/dotnet/api/system.io.filestream?view=net-10.0)
 - [Full logical restore runbook](MDS_CRL_FULL_PGDUMP_RESTORE_TEST.md)
 - [FIDO MDS root rollover changelog](https://fidoalliance.org/mds-changelog/)
+
+## Best-effort rejection of already-present filesystem links (#68)
+
+[ADR 0037](../adr/0037-best-effort-symlink-reparse-test-journal-path-denial.md) adds a strictly **non-authorizing**, test-only link-redirection guard. Before and immediately after opening the existing journal for inspection/append, and before and after explicit CreateNew bootstrap, the .NET journal checks a fully qualified canonical path, its directory ancestors, and the leaf. Direct symbolic links, directory symbolic links/junctions and observable `FileAttributes.ReparsePoint` entries are rejected, including dangling links and paths through a linked parent. Ordinary signed journal paths continue to work; tests use real Linux symbolic links and verify refusing access did not alter the genuine target's bytes.
+
+**This is NOT race-free secure file opening.** `FileSystemInfo.LinkTarget` and `FileAttributes.ReparsePoint` are observed **before/after** opening, not enforced atomically by an OS `O_NOFOLLOW/openat2` handle. A privileged attacker can switch symlinks or directory identities between checks, create hard links, bind mounts, or restore an old valid signed journal with an old DB backup; `FileShare.None` and `Flush(true)` do not prevent those attacks. Real external immutable monotonic witness, separately governed public-key pin, parent-directory custody, safe operational recovery and on-prem/Azure security parity remain **#64 OPEN**. Every inspection is still `UNAPPROVED`, no production trust or V015/V016 activation.
