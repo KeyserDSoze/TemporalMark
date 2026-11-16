@@ -28,3 +28,7 @@ The xUnit test requires positive `UNAPPROVED` for the current serial 4 + signed 
 - [PostgreSQL 17 pg_dump](https://www.postgresql.org/docs/17/app-pgdump.html)
 - [PostgreSQL 17 pg_restore](https://www.postgresql.org/docs/17/app-pgrestore.html)
 - [#66 TDD issue and CI evidence](https://github.com/KeyserDSoze/TemporalMark/issues/66)
+
+## Independently persisted *test file* latest-seal journal (#67)
+
+The same mandatory full logical PostgreSQL `pg_dump/pg_restore` xUnit fixture now additionally creates a **normal test file outside BOTH PostgreSQL databases**, appends cryptographically signed hash-linked monotonic serial 3→4 records, re-opens that file after the database was restored to serial 3 and uses the *file-derived* latest seal SHA256 to reject the previously valid older signed witness. See [ADR 0036](../adr/0036-fail-closed-test-signed-file-high-water-journal.md) and [test journal runbook](MDS_CRL_SIGNED_FILE_HIGH_WATER_JOURNAL.md). It deliberately demonstrates that restoring an older whole file reverts the journal too: no independent immutable key custody, OS-admin control separation, WORM storage, physically separated cluster, PITR or FIDO MDS trust is implemented. #64/#61/#57/#55 remain OPEN, V015/V016 registrar SQL remains frozen and every result stays `UNAPPROVED`.
