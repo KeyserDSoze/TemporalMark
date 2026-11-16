@@ -1,3 +1,4 @@
+using System.Net;
 using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Security.Cryptography.Pkcs;
@@ -41,8 +42,15 @@ public sealed class ExternalRfc3161TimestampProvider(
         try
         {
             using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-            if (!response.IsSuccessStatusCode)
-                throw new TimestampProviderResponseException("TSA returned an unsuccessful HTTP status.");
+            // Strict local RFC 3161 HTTP profile: no polling, partial responses or
+            // non-200 success. Reject mismatched MIME *before reading any body*.
+            // RFC 3161 §3.4's verified erratum 1879 confirms timestamp-reply,
+            // not the mistyped timestamp-response alternative.
+            if (response.StatusCode != HttpStatusCode.OK)
+                throw new TimestampProviderResponseException("TSA returned an unexpected HTTP status.");
+            if (!string.Equals(response.Content.Headers.ContentType?.MediaType,
+                    "application/timestamp-reply", StringComparison.OrdinalIgnoreCase))
+                throw new TimestampProviderResponseException("TSA response Content-Type is invalid.");
             if (response.Content.Headers.ContentLength is > MaxResponseBytes)
                 throw new TimestampProviderResponseException("TSA response exceeds 1 MiB.");
             await using var input = await response.Content.ReadAsStreamAsync(cancellationToken);
