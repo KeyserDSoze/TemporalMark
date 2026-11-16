@@ -340,3 +340,10 @@ The previous [#69](https://github.com/KeyserDSoze/TemporalMark/issues/69) four-j
 - [x] RED-first [CI 43904739193](https://github.com/KeyserDSoze/TemporalMark/actions/runs/43904739193), SHA `9150a18a`, backend compiler CS1739 for missing dedicated `allowDevelopmentLoopback` on real-provider tests. Existing 9 domain + 219 business passed; Terraform green.
 - [x] Central `ExternalRfc3161EndpointPolicy` and provider default reject untrusted URI scheme/userinfo/fragment, HTTPS loopback and literal IP without an explicit flag; API injects that flag only from `IHostEnvironment.IsDevelopment`. [Runbook](TSA_HTTP_TRANSPORT.md). This is **not** DNS-binding, network egress or QTSP trust validation.
 - [ ] Close only #85 after four jobs GREEN on final exact `main` SHA and record RED/GREEN evidence. #15/#17/#13 remain OPEN.
+
+## RFC 3161 TSA client ambient forward-proxy bypass (#86; child #15, ADR 0055)
+
+- [x] Reviewed ADR 0002/0052/0053/0054, threat model, operator runbook, dedicated `external-tsa` named HTTP handler and Microsoft .NET 10 default proxy behavior; record [ADR 0055](../adr/0055-rfc3161-no-ambient-forward-proxy.md) before code.
+- [x] **TDD RED** [CI 43907504241](https://github.com/KeyserDSoze/TemporalMark/actions/runs/43907504241), test-only SHA `47f0d5c`: two new proxy-negation tests FAIL on actual handler `UseProxy=true`; third new handler test and all prior suites pass (183 provisioner, 219 business, 9 domain).
+- [x] GREEN candidate: set `UseProxy=false` only in the named outbound TSA handler. Continue no redirect/cookies, 20-second timeout, strict 200/MIME, endpoint preflight, bounded DER verification and `Unverified` state. Document direct egress/firewall requirement and no implicit `HTTPS_PROXY` support in [TSA_HTTP_TRANSPORT.md](TSA_HTTP_TRANSPORT.md).
+- [ ] Verify final exact `main` SHA backend/frontend/docker-smoke/terraform 4/4 GREEN and close #86 only then. Parent #15, WORM #17, legal #13, and comprehensive egress/DNS controls remain OPEN.
