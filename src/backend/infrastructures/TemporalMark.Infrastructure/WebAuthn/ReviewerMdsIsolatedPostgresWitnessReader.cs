@@ -96,7 +96,7 @@ public static class ReviewerMdsIsolatedPostgresWitnessReader
                     id.GetString(0) != "temporalmark_witness_reader" ||
                     id.GetString(1) != "temporalmark_witness_reader" ||
                     id.GetString(2) != "temporalmark_witness" ||
-                    id.GetString(3) != "temporalmark_witness_owner" ||
+                    id.GetString(3) != "temporalmark_witness_data_owner" ||
                     !id.GetBoolean(4))
                     throw Denied();
                 for (var i = 5; i <= 9; i++)
