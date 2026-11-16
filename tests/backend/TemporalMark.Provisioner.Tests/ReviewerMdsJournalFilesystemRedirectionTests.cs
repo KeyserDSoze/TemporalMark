@@ -159,7 +159,8 @@ public sealed class ReviewerMdsJournalFilesystemRedirectionTests
                 ReviewerMdsOfflineFileHighWaterJournal.InspectLatest(
                     alias, policy, pin, key, DateTimeOffset.UtcNow));
             Assert.False(File.Exists(target));
-            Assert.False(File.Exists(alias));
+            // File.Exists on a dangling link can be platform-dependent.
+            // The link itself still exists and must not become the journal.
             Assert.NotNull(new FileInfo(alias).LinkTarget);
         }
         finally
