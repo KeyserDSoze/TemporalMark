@@ -34,6 +34,57 @@ public sealed class ExternalRfc3161CertificateChainPolicyTests
     private static readonly Uri TsaUri = new("https://tsa.example.invalid/issue");
 
     [Fact]
+    public void OfflineChainUsesExplicitSignedIssuanceInstantRatherThanClockNow()
+    {
+        using var root = CreateRoot();
+        using var approved = ParseRoot(root);
+        var signedIssuance = DateTimeOffset.UtcNow.AddDays(-5);
+
+        using var chain = ExternalRfc3161CertificateChainPolicy.CreateOfflineChain(
+            approved, new X509Certificate2Collection(), signedIssuance);
+
+        Assert.Equal(signedIssuance.UtcDateTime, chain.ChainPolicy.VerificationTime.ToUniversalTime());
+        Assert.False(chain.ChainPolicy.VerificationTimeIgnored);
+        Assert.Equal(X509ChainTrustMode.CustomRootTrust, chain.ChainPolicy.TrustMode);
+        Assert.True(chain.ChainPolicy.DisableCertificateDownloads);
+        Assert.Equal(X509RevocationMode.NoCheck, chain.ChainPolicy.RevocationMode);
+    }
+
+    [Fact]
+    public void SignerExpiredNowButValidAtSignedIssuancePassesThatSpecificPathTime()
+    {
+        var now = DateTimeOffset.UtcNow;
+        using var root = CreateRoot();
+        using var signer = CreateSigner(root,
+            now.AddDays(-10), now.AddDays(-3));
+        using var approved = ParseRoot(root);
+
+        ExternalRfc3161CertificateChainPolicy.ValidateSignerChain(
+            signer, approved, new X509Certificate2Collection(), now.AddDays(-5));
+
+        Assert.Throws<TimestampProviderResponseException>(() =>
+            ExternalRfc3161CertificateChainPolicy.ValidateSignerChain(
+                signer, approved, new X509Certificate2Collection(), now));
+    }
+
+    [Fact]
+    public void SignerNotYetValidAtSignedIssuanceFailsEvenIfValidAtLaterTime()
+    {
+        var now = DateTimeOffset.UtcNow;
+        using var root = CreateRoot();
+        using var signer = CreateSigner(root,
+            now.AddDays(1), now.AddDays(5));
+        using var approved = ParseRoot(root);
+
+        Assert.Throws<TimestampProviderResponseException>(() =>
+            ExternalRfc3161CertificateChainPolicy.ValidateSignerChain(
+                signer, approved, new X509Certificate2Collection(), now));
+
+        ExternalRfc3161CertificateChainPolicy.ValidateSignerChain(
+            signer, approved, new X509Certificate2Collection(), now.AddDays(3));
+    }
+
+    [Fact]
     public void CanonicalDerRootCAIsImportedAndApproved()
     {
         using var root = CreateRoot();
