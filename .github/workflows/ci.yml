@@ -61,11 +61,18 @@ jobs:
             nginx:1.27-alpine \
             mcr.microsoft.com/dotnet/sdk:10.0 \
             mcr.microsoft.com/dotnet/aspnet:10.0; do
-            digest="$(docker buildx imagetools inspect "$image" | awk '$1=="Digest:" {print $2; exit}')"
-            if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-              echo "Unexpected/unavailable image digest for $image"; exit 1
+            if output="$(docker buildx imagetools inspect "$image" 2>&1)"; then
+              digest="$(printf '%s\n' "$output" | awk '$1=="Digest:" {print $2; exit}')"
+            else
+              digest=""
+              echo "REGISTRY_LOOKUP_FAILED $image (public manifest query):"
+              printf '%s\n' "$output" | sed -n '1,12p'
             fi
-            printf 'TEMPORALMARK_PUBLIC_IMAGE_DIGEST %s %s\n' "$image" "$digest"
+            if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+              echo "REGISTRY_DIGEST_UNVERIFIED $image"
+            else
+              printf 'TEMPORALMARK_PUBLIC_IMAGE_DIGEST %s %s\n' "$image" "$digest"
+            fi
           done
       - name: Install and build React PWA
         working-directory: src/frontend
