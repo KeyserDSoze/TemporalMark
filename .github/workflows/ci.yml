@@ -80,6 +80,9 @@ jobs:
         run: |
           npm install --no-audit --no-fund
           npx playwright install --with-deps chromium
+      - name: Production PWA service-worker API navigation safety (RED/GREEN #71)
+        working-directory: tests/frontend
+        run: npx playwright test --config pwa-security.config.ts
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.x
@@ -124,9 +127,6 @@ jobs:
           python3 tests/integration/configure-keycloak-registrar-mfa-ci.py restore-registrar-role
           python3 tests/integration/configure-keycloak-registrar-mfa-ci.py disable-registrar
           TEMPORALMARK_CI_REGISTRAR_EXPECT_DENIAL=true dotnet test tests/backend/TemporalMark.Provisioner.Tests/TemporalMark.Provisioner.Tests.csproj --configuration Release --filter 'FullyQualifiedName~RealKeycloakRegistrarMfaEndToEndTests'
-      - name: Production PWA service-worker API navigation safety (RED/GREEN #71)
-        working-directory: tests/frontend
-        run: npx playwright test --config pwa-security.config.ts
       - name: OIDC admin login and disabled external TSA smoke
         working-directory: tests/frontend
         run: npx playwright test --config authenticated.config.ts

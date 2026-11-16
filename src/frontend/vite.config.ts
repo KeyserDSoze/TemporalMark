@@ -23,6 +23,13 @@ export default defineConfig({
       },
       workbox: {
         navigateFallback: "/index.html",
+        // API/IdP/health navigations must use the network, NEVER SPA fallback.
+        // No protected API response is runtime cached (see ADR 0040 / #71).
+        navigateFallbackDenylist: [
+          /^\/api(?:\/|$)/,
+          /^\/healthz(?:\/|$)/,
+          /^\/realms(?:\/|$)/
+        ],
         globPatterns: ["**/*.{html,js,css,svg,ico,png}"],
         runtimeCaching: []
       }
