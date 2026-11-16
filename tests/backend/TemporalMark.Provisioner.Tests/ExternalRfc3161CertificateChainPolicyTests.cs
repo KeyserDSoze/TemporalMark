@@ -13,13 +13,18 @@ namespace TemporalMark.Provisioner.Tests;
 /// </summary>
 internal static class ExternalRfc3161TrustRootTestFixture
 {
-    private static readonly Lazy<string> LazyBase64 = new(() =>
+    private static readonly Lazy<(string Root, string Crl)> LazyValues = new(() =>
     {
+        // Both artifacts refer to the SAME disposable CA signing key.
+        // They are syntactically real fixtures, never QTSP trust roots.
         using var root = ExternalRfc3161CertificateChainPolicyTests.CreateRoot();
-        return Convert.ToBase64String(root.RawData);
+        var crl = ExternalRfc3161IssuerCrlPolicyTests.BuildCrl(
+            root, DateTimeOffset.UtcNow);
+        return (Convert.ToBase64String(root.RawData), Convert.ToBase64String(crl));
     });
 
-    internal static string Base64Der => LazyBase64.Value;
+    internal static string Base64Der => LazyValues.Value.Root;
+    internal static string CrlBase64Der => LazyValues.Value.Crl;
 }
 
 /// <summary>
