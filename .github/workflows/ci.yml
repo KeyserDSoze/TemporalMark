@@ -23,6 +23,8 @@ jobs:
           python3 -m unittest discover -s tests/integration -p 'test_check_sbom_workflow.py' -v
           python3 tests/integration/check_sbom_workflow.py
           python3 -m unittest discover -s tests/integration -p 'test_generate_npm_sbom.py' -v
+          python3 -m unittest discover -s tests/integration -p 'test_check_nuget_sbom_workflow.py' -v
+          python3 tests/integration/check_nuget_sbom_workflow.py
       - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
           dotnet-version: 10.0.x
