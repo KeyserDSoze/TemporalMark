@@ -303,3 +303,10 @@ The previous [#69](https://github.com/KeyserDSoze/TemporalMark/issues/69) four-j
 
 - [x] [CI 43888139709](https://github.com/KeyserDSoze/TemporalMark/actions/runs/43888139709) exposed a separate old Node20 SHA literal in the npm SBOM source allowlist; similarly identified NuGet's old literal. New native Node24 action guard was already passing, but first GREEN candidate backend failed at the inherited npm policy.
 - [x] Preserve both SBOM source gates, link their allowed upload SHA to the exact upstream-reviewed Node24 allowlist with negative regressions for old Node20 and unknown SHAs. Full exact-head CI verification remains mandatory before closing #81.
+
+## Live two-tenant API HTTP isolation regressions (#82; child #20/#14, ADR 0051)
+
+- [x] Review tenant/auth/DB/PWA ADRs, schema and real CI. Test-first [CI 43892292576](https://github.com/KeyserDSoze/TemporalMark/actions/runs/43892292576): existing backend/frontend/terraform, PostgreSQL witness and Keycloak MFA PASS, new mandatory API harness **RED** precisely at absent real signed Keycloak B principal.
+- [x] Add development-only Keycloak principal and access-token org claim fixtures, independent wrong-audience and short-lived signed JWT clients. First fixture [CI 43893706831](https://github.com/KeyserDSoze/TemporalMark/actions/runs/43893706831) reveals account `resolve_required_actions` in Keycloak; complete required demo profile fields.
+- [x] Test strict JWT issuer/audience/lifetime distinction (API `ClockSkew=0`), actual PostgreSQL B membership/identity, positive/negative A/B own/cross-tenant list, summary, TSR, ZIP, audit, spoofed selectors, disabled TSA, all no-store and prepared-audit semantics. See [runbook](CI_API_TENANT_HTTP_ISOLATION.md).
+- [ ] Verify exact-final-main four-job CI GREEN including the entire new genuine HTTP matrix; only then close #82. Production RLS, independently trusted identity, WORM/QTSP and signed reviewer/registrar authorization remain open under parents #20/#14 and #64/#61/#57/#50/#44/#38/#17/#13.

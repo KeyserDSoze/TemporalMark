@@ -65,6 +65,12 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
         {
             ValidateIssuer = true,
             ValidateAudience = true,
+            ValidateLifetime = true,
+            RequireExpirationTime = true,
+            // High-assurance API: do not accept an expired bearer for the default
+            // 300-second IdentityModel clock-skew grace period. Host clocks must
+            // be synchronized; fail closed when they are not.
+            ClockSkew = TimeSpan.Zero,
             ValidAudience = validAudience,
             NameClaimType = "preferred_username",
             RoleClaimType = "role"

@@ -222,7 +222,7 @@ def check_authorized(token, own_org, own_id, other_id, own_audit, own_der, other
                 api(f"/stamps/{other_id}/receipt", token=token), 404)
 
     manifest, blobs = export(token)
-    names = {entry["id"] for entry in manifest["entries"]}
+    names = {entry["Id"] for entry in manifest["entries"]}
     if (manifest["organizationId"] != own_org or manifest["count"] != 1 or
             names != expected_ids or
             blobs != {f"tokens/{own_id.replace('-', '')}.tsr": own_der}):
@@ -243,7 +243,7 @@ def check_authorized(token, own_org, own_id, other_id, own_audit, own_der, other
     if any(row["organizationId"] != own_org for row in audit(token, override, evil_headers)):
         raise AssertionError(f"{role}: spoofed audit changed scope")
     spoofed_zip, blobs = export(token, override, evil_headers)
-    if spoofed_zip["organizationId"] != own_org or {r["id"] for r in spoofed_zip["entries"]} != expected_ids:
+    if spoofed_zip["organizationId"] != own_org or {r["Id"] for r in spoofed_zip["entries"]} != expected_ids:
         raise AssertionError(f"{role}: spoofed ZIP leaked cross-tenant data")
 
 
