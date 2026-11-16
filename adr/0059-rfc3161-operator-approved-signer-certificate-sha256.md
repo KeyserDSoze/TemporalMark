@@ -1,0 +1,28 @@
+# ADR 0059 — Bind signed RFC 3161 TSA responses to a mandatory operator-approved SHA-256 certificate fingerprint
+
+Status: Accepted for limited delegated-pilot signer identity hardening (2026-11-16), child [#90](https://github.com/KeyserDSoze/TemporalMark/issues/90) of open [#15](https://github.com/KeyserDSoze/TemporalMark/issues/15). **A certificate pin alone is NOT independent PKIX trust, revocation evidence or qualified QTSP status.**
+
+## Reviewed decisions and gap
+
+Reviewed [ADR 0002](0002-qualified-vs-delegated-timestamping.md) and [ADRs 0052–0058](0058-rfc3161-critical-exclusive-timestamp-signer-eku.md), [TSA operator guide](../docs/TSA_HTTP_TRANSPORT.md), [threat model](../docs/THREAT_MODEL.md), real `ExternalRfc3161TimestampProvider` and `ExternalRfc3161SignerCertificatePolicy`, API named-client DI configuration, and existing HTTP envelope/endpoint/redirect test fixtures.
+
+Existing RFC3161 `VerifySignatureForHash` validates cryptographic signature, nonce/imprint, ESS certificate identifier and signer time validity; #89 checks the actual verified signer has the RFC3161 sole critical timeStamping EKU. However, no deployment-reviewed signer identity is bound to the token: an attacker with a new self-signed TSA key could return a correctly signed token with valid EKU, which the unqualified pilot might preserve as `Unverified` evidence. An externally reviewed leaf signer certificate fingerprint is a *defense-in-depth identity allowlist*, not a trust anchor or legal qualified status.
+
+## Decision
+
+1. Introduce `TimestampProvider:SignerCertificateSha256` as a **mandatory server-owned string whenever `TimestampProvider:Url` is configured**, read by API DI and passed directly into `ExternalRfc3161TimestampProvider` as optional named `approvedSignerCertificateSha256`. Never read tenant/header/query/body input. Disabled TSA (no URL) continues to work without a pin. Before constructing a POST or generating an imprint-bearing RFC3161 query, `ExternalRfc3161SignerPinPolicy.ParseRequiredSha256` refuses absent/blank/malformed config with the existing generic `TimestampProviderUnavailableException`. Missing pin must not trigger a connection. No silent fallback to automatic trust-on-first-use or empty allowlist.
+2. Accept **exactly 64 ASCII hexadecimal digits** representing the 32-byte **SHA-256 of the entire DER X.509 signer certificate** (not its public key, SHA-1 `Thumbprint`, issuer, serial, TLS server certificate or subject CN). Upper/lower-case hex allowed; reject embedded whitespace, colons, `0x` prefixes, multiple comma-separated pins, malformed Unicode, short or long values. The fingerprint is an *operator-approved fixed value* for the configured TSA. Certificate reissue/key rollover requires reviewed update/redeploy; a single pinned leaf deliberately sacrifices zero-downtime automatic rollover. Another ADR may introduce independently approved multi-leaf overlap.
+3. After existing ASN.1 DER/nonce/imprint/CMS signature verification and #89 strict sole critical EKU validation, capture the **verified signer certificate**, compute `X509Certificate2.GetCertHash(HashAlgorithmName.SHA256)`, and compare its 32 bytes to the configured pin using `CryptographicOperations.FixedTimeEquals`. Refuse null/wrong signer, no new success path, generic response exception without leaking certificates/pins. Keep `Unverified` pilot evidence status. Neither Azure nor on-prem functionality diverges; both need trusted operator-managed configuration.
+4. TDD: ADR first, then tests first on `main` with RED GitHub CI (pure certificate identity and actual provider network-preflight tests), then implementation/wiring and legacy HTTP test fixture pins, docs/threat/roadmap and 4/4 jobs GREEN on **exact final `main` SHA** before closing #90. Parent #15/#17/#13 remain open.
+
+## Non-goals, residual risk and deployment
+
+- This check prevents *unreviewed new signer leafs* from being accepted, even if cryptographically self-consistent and EKU-correct; a compromised **pinned** key or malicious *operator-supplied* pin still passes. Does **not** verify certificate chain, path trust to a CAB-approved root, issuer revocation at issuance time, historical qualified EU Trusted Lists, TSU/UTC, WORM custody or timestamp policy. Network TLS/SNI and DNS/IP protection are separate. No status is promoted beyond `Unverified`.
+- Operators MUST independently obtain and authenticate the *RFC3161 token signer certificate* (not TSA HTTPS transport cert) via out-of-band QTSP documentation and secure review; calculate SHA-256 over its full DER certificate (e.g. `openssl x509 -in signer.pem -outform DER | openssl dgst -sha256`) and configure `TimestampProvider__SignerCertificateSha256` as an environment variable, managed deployment setting or audited secret/config; rotate only after reviewing new signer certificate and validating system change records. Avoid including signer certificates/keys or full imprints in ordinary logs.
+- Do not change PostgreSQL status, API error contracts, default no-TSA startup, Keycloak or other `HttpClient` instances. No qualified service declaration is permitted without full #15 path/revocation/TL validation, #17 custody and #13 legal gates.
+
+## Authoritative references
+
+- [Microsoft .NET 10 X509Certificate.GetCertHash(HashAlgorithmName)](https://learn.microsoft.com/en-us/dotnet/api/system.security.cryptography.x509certificates.x509certificate.getcerthash?view=net-10.0)
+- [Microsoft .NET 10 CryptographicOperations.FixedTimeEquals](https://learn.microsoft.com/en-us/dotnet/api/system.security.cryptography.cryptographicoperations.fixedtimeequals?view=net-10.0)
+- [RFC 3161](https://www.rfc-editor.org/rfc/rfc3161)
