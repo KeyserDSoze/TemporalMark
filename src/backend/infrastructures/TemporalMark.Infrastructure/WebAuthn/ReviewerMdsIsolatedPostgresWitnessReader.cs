@@ -86,7 +86,26 @@ public static class ReviewerMdsIsolatedPostgresWitnessReader
                            'public.unapproved_witness_checkpoints','TRUNCATE'),
                        has_function_privilege(current_user,
                            'public.record_unapproved_highwater_witness(text,bigint,text)',
-                           'EXECUTE')
+                           'EXECUTE'),
+                       (SELECT pg_catalog.pg_get_userbyid(p.proowner)
+                        FROM pg_catalog.pg_proc p
+                        WHERE p.oid = 'public.check_unapproved_witness_history(text,bigint,text)'::pg_catalog.regprocedure),
+                       (SELECT p.prosecdef FROM pg_catalog.pg_proc p
+                        WHERE p.oid = 'public.check_unapproved_witness_history(text,bigint,text)'::pg_catalog.regprocedure),
+                       (SELECT p.provolatile='s' FROM pg_catalog.pg_proc p
+                        WHERE p.oid = 'public.check_unapproved_witness_history(text,bigint,text)'::pg_catalog.regprocedure),
+                       has_function_privilege(current_user,
+                           'public.check_unapproved_witness_history(text,bigint,text)', 'EXECUTE'),
+                       has_function_privilege('temporalmark_witness_writer',
+                           'public.check_unapproved_witness_history(text,bigint,text)', 'EXECUTE'),
+                       (SELECT p.proacl IS NOT NULL AND NOT EXISTS (
+                           SELECT 1 FROM pg_catalog.aclexplode(p.proacl) AS acl
+                           WHERE acl.grantee=0 AND acl.privilege_type='EXECUTE'
+                        ) FROM pg_catalog.pg_proc p
+                        WHERE p.oid = 'public.check_unapproved_witness_history(text,bigint,text)'::pg_catalog.regprocedure),
+                       (SELECT p.proconfig = ARRAY['search_path=pg_catalog, pg_temp']::text[]
+                        FROM pg_catalog.pg_proc p
+                        WHERE p.oid = 'public.check_unapproved_witness_history(text,bigint,text)'::pg_catalog.regprocedure)
                 FROM pg_catalog.pg_class AS c
                 WHERE c.oid='public.unapproved_witness_checkpoints'::pg_catalog.regclass
                 """, separateWitnessReader, tx))
@@ -97,7 +116,11 @@ public static class ReviewerMdsIsolatedPostgresWitnessReader
                     id.GetString(1) != "temporalmark_witness_reader" ||
                     id.GetString(2) != "temporalmark_witness" ||
                     id.GetString(3) != "temporalmark_witness_data_owner" ||
-                    !id.GetBoolean(4))
+                    !id.GetBoolean(4) ||
+                    id.GetString(10) != "temporalmark_witness_data_owner" ||
+                    !id.GetBoolean(11) || !id.GetBoolean(12) ||
+                    !id.GetBoolean(13) || id.GetBoolean(14) ||
+                    !id.GetBoolean(15) || !id.GetBoolean(16))
                     throw Denied();
                 for (var i = 5; i <= 9; i++)
                     if (id.GetBoolean(i))
@@ -134,6 +157,21 @@ public static class ReviewerMdsIsolatedPostgresWitnessReader
                     SHA256.HashData(originalSeal),
                     Convert.FromHexString(latestSha)))
                 throw Denied();
+
+            // ADR 0042: restricted audit history consistency is verified in
+            // the SAME witness READ ONLY REPEATABLE READ transaction. The
+            // reader never has direct SELECT on the append-event table.
+            await using (var history = new NpgsqlCommand("""
+                SELECT public.check_unapproved_witness_history(
+                    @policy,@serial,@seal)
+                """, separateWitnessReader, tx))
+            {
+                history.Parameters.AddWithValue("policy", policy);
+                history.Parameters.AddWithValue("serial", latestSerial);
+                history.Parameters.AddWithValue("seal", latestSha);
+                if (await history.ExecuteScalarAsync(cancellationToken) is not true)
+                    throw Denied();
+            }
             await tx.CommitAsync(cancellationToken);
 
             // Read-only snapshots across TWO databases are NOT a global
