@@ -1,0 +1,36 @@
+# CI-only separate PostgreSQL 17 high-water witness across main database restore (#69)
+
+**NON-AUTHORIZING / UNAPPROVED / NOT IMMUTABLE, NOT PRODUCTION.** This integration regression provides a second, **physically distinct PostgreSQL server/volume and reader role** to retain synthetic signed-seal evidence across a **full logical restore of the main TemporalMark database**. It is not an externally approved monotonic witness, HSM-backed signer, separately owned administrative security boundary, certified/WORM retention, or a qualified timestamp provider. See [ADR 0038](../adr/0038-ci-only-separate-postgresql-witness-instance.md), scoped [#69](https://github.com/KeyserDSoze/TemporalMark/issues/69), parent [#64](https://github.com/KeyserDSoze/TemporalMark/issues/64) (STILL OPEN).
+
+## Deployment scope: ONLY the disposable Docker CI test profile
+
+- `docker/compose.yml` defines `witness-postgres` behind **`profiles: ["witness-ci"]`**. A regular `docker compose up -d` still starts the original app stack only. The profile is started from `tests/integration/mds-full-pgdump-restore.sh`, after the normal main PostgreSQL and app stack, using `docker compose --profile witness-ci up -d --wait witness-postgres`.
+- Uses `postgres:17.6-alpine`, separate **`witnesspgdata`** Docker volume and test-only `temporalmark_witness` DB; bound on **127.0.0.1:5433** instead of the main 127.0.0.1:5432. Credentials in Compose/CI are **explicit disposable test passwords** and must NEVER be used in staging/production; no Azure production dependency is introduced. Docker CI tears down the profile and volumes via `--profile witness-ci down -v`.
+- Initialization file `tests/integration/mds-witness-postgres-init/001-unapproved-witness.sql` creates a restricted reader `temporalmark_witness_reader`, owner `temporalmark_witness_owner` (test Postgres superuser), `unapproved_witness_checkpoints` keyed by synthetic uppercase-64 SHA256 policy, and owner-only `unapproved_witness_events`. `record_unapproved_highwater_witness` is restricted to owner and uses atomic `INSERT ... ON CONFLICT DO UPDATE ... WHERE excluded.serial > stored.serial` followed by audit insert in the **same transaction**. Equal/lower serial, same-version divergent SHA and malformed hashes fail closed. The owner still controls the tables and can rewrite them: this is NOT WORM and NOT an independent operational witness.
+- The SQL reader can **SELECT only** latest records, cannot INSERT/UPDATE/DELETE/TRUNCATE, cannot EXECUTE the writer and cannot read the audit event table. The API, approver, reviewer and registrar roles from the original PostgreSQL server **do not even exist on this new test cluster**. No SQL migration or privilege on the original DB changes: it remains at V017 with the V015/V016 issuance freeze.
+
+## Real full logical restore and cryptographic reconciliation
+
+The mandatory `docker-smoke` integration test first stages synthetic V017 candidate serial **3** in the primary DB, exports the **entire main database** as `pg_dump --format=custom`, then stages serial **4** and restores the old whole archive via `pg_restore --single-transaction --no-owner --exit-on-error` into a disposable secondary database on the **original** server. Original restored-DB ACLs are preserved (no dangerous `--no-acl`). All 17 migrations are verified; the original main DB remains at 4, restored DB at 3.
+
+In the same CI step, `MdsSeparatePostgresWitnessRestoreTests` opens the **second server** using a restricted witness reader, proves the two test PostgreSQL clusters have distinct `pg_control_system().system_identifier`, and generates **two independent disposable RSA-PSS/SHA256 signing keys** for ADR 0033/0034 witness manifest and seal. With the witness **owner** on the independent server it records the SHA256 of the correctly signed serial-3 seal, then atomically records serial 4; SQL rejects all stale/equal/ambiguous writes. It verifies two events are visible to owner but event table/write function inaccessible to reader.
+
+`ReviewerMdsIsolatedPostgresWitnessReader.ReconcileAsync` does not accept a caller-provided latest seal SHA. It:
+1. Requires separate OPEN primary-owner and independent restricted witness-reader Npgsql connections and explicit UTC time. Parses only the **untrusted single-candidate scope** for lookup without granting it authority.
+2. Starts a witness-server `REPEATABLE READ READ ONLY` SQL transaction, verifies actual session_user/current_user, test DB and physical table owner identity, plus **SELECT-only and no writer EXECUTE**. Fetches the one/latest version and seal SHA from the witness database. Fails closed on missing/outage/unprivileged or overprivileged reader, changed seal, stale/future observation and signed-serial mismatch.
+3. Delegates ALL cryptographic checks to the existing ADR 0034 original-byte RSA-PSS/SHA256 signed seal/manifest preflight, which in turn delegates to ADR 0033's **READ ONLY REPEATABLE READ** V017 owner-only full-scope exact checkpoint comparison. A successful result is **only `UNAPPROVED/SEPARATE_TEST_POSTGRES_WITNESS_NO_IMMUTABLE_CUSTODY`** with claimed serial/seal SHA and row count. No WORM, trusted key, qualified timestamp, API action or SQL grant.
+
+The test accepts only newest signed serial 4 + live original database as **UNAPPROVED**. It denies *both* older signed seal+older restored database and newer seal+older restored database, denies wrong test signing pin and signature, an absent policy, owner as witness reader, and unavailable witness service. SQL role hardening, absent scope, stale and future witness rows are covered. No fallback to a mutable local file or attacker-chosen old pin.
+
+## Critical remaining blockers / next work
+
+The second PostgreSQL server **does not provide independent immutability**. This CI host operates both containers, both Docker volumes and the synthetic signing keys, so a root/backup operator could restore **both** databases and replay old valid signed objects or rewrite witness SQL as owner/superuser; no independent append-only object lock, externally signed latest checkpoint, CAB/HSM bootstrap, signing-root rotation, independent host/server custody or cross-region/PITR proof exists. Reading witness then primary is not a distributed atomic transaction: a TOCTOU risk remains. This test does not even make test hashes authentic FIDO MDS content; actual FIDO R46/JWS/x5c CRL/OCSP and manufacturer status policies remain #57/#55. No on-prem/Azure *production witness* is provisioned, and no QA/legal qualification is claimed.
+
+**#64 and #61 remain OPEN**, as do #57/#55/#53/#44/#50/#46/#38, plus other project issues. V015/V016 registrar issuance SQL freeze and suspended CLI stay unchanged; there are **no activated reviewer credentials** and **no eIDAS/WORM/QTSP qualification**.
+
+## Sources
+
+- [ADR 0038](../adr/0038-ci-only-separate-postgresql-witness-instance.md)
+- [Earlier full PostgreSQL archive test](MDS_CRL_FULL_PGDUMP_RESTORE_TEST.md)
+- [PostgreSQL 17 INSERT ... ON CONFLICT](https://www.postgresql.org/docs/17/sql-insert.html)
+- [PostgreSQL 17 privilege management](https://www.postgresql.org/docs/17/ddl-priv.html)
