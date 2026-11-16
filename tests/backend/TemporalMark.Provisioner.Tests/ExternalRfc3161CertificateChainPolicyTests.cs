@@ -342,7 +342,7 @@ public sealed class ExternalRfc3161CertificateChainPolicyTests
             DateTimeOffset.UtcNow.AddDays(30));
     }
 
-    private static X509Certificate2 CreateIntermediate(X509Certificate2 root)
+    internal static X509Certificate2 CreateIntermediate(X509Certificate2 root)
     {
         using var key = RSA.Create(2048);
         var req = new CertificateRequest(
@@ -357,7 +357,7 @@ public sealed class ExternalRfc3161CertificateChainPolicyTests
         return signed.CopyWithPrivateKey(key);
     }
 
-    private static X509Certificate2 CreateSigner(
+    internal static X509Certificate2 CreateSigner(
         X509Certificate2 issuer,
         DateTimeOffset? notBefore = null,
         DateTimeOffset? notAfter = null)
