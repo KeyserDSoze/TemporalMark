@@ -120,7 +120,12 @@ public static class ExternalRfc3161CertificateChainPolicy
         return chain;
     }
 
-    public static void ValidateSignerChain(
+    /// <summary>
+    /// Return a caller-owned, already-built and validated offline chain.
+    /// The actual intermediate must be present in the CMS certificate set;
+    /// caller MUST dispose this chain once revocation checks finish.
+    /// </summary>
+    public static X509Chain BuildValidatedSignerChain(
         X509Certificate2? verifiedSigner,
         X509Certificate2 approvedRoot,
         X509Certificate2Collection cmsCertificates,
@@ -129,24 +134,24 @@ public static class ExternalRfc3161CertificateChainPolicy
         if (verifiedSigner is null || approvedRoot is null || cmsCertificates is null)
             throw new TimestampProviderResponseException(ResponseError);
 
+        X509Chain? chain = null;
         try
         {
-            using var chain = CreateOfflineChain(
-                approvedRoot, cmsCertificates, signedIssuanceTime);
+            chain = CreateOfflineChain(approvedRoot, cmsCertificates, signedIssuanceTime);
             if (!chain.Build(verifiedSigner) || chain.ChainElements.Count < 2)
                 throw new TimestampProviderResponseException(ResponseError);
 
-            // The path must really terminate at the exact reviewed DER root,
-            // never at a system anchor with a similar subject / same key.
             var elements = chain.ChainElements;
+            // Verify actual path endpoints exactly match the pinned signer
+            // and the independently reviewed root, never just a matching DN.
             if (!CryptographicOperations.FixedTimeEquals(
+                    elements[0].Certificate.RawData, verifiedSigner.RawData) ||
+                !CryptographicOperations.FixedTimeEquals(
                     elements[elements.Count - 1].Certificate.RawData, approvedRoot.RawData))
                 throw new TimestampProviderResponseException(ResponseError);
 
-            // The OS may have cached intermediary certificates, even when
-            // issuer downloads are disabled. Only intermediates actually
-            // embedded in this RFC3161 CMS response are permitted to build
-            // this application's independent chain.
+            // No host cache, AIA or arbitrary unverified CMS certificate
+            // may act as an intermediate in our acceptance decision.
             for (var i = 1; i < elements.Count - 1; i++)
             {
                 var certDer = elements[i].Certificate.RawData;
@@ -154,10 +159,28 @@ public static class ExternalRfc3161CertificateChainPolicy
                         CryptographicOperations.FixedTimeEquals(c.RawData, certDer)))
                     throw new TimestampProviderResponseException(ResponseError);
             }
+
+            return chain;
         }
         catch (CryptographicException)
         {
+            chain?.Dispose();
             throw new TimestampProviderResponseException(ResponseError);
         }
+        catch
+        {
+            chain?.Dispose();
+            throw;
+        }
+    }
+
+    public static void ValidateSignerChain(
+        X509Certificate2? verifiedSigner,
+        X509Certificate2 approvedRoot,
+        X509Certificate2Collection cmsCertificates,
+        DateTimeOffset signedIssuanceTime)
+    {
+        using var validatedChain = BuildValidatedSignerChain(
+            verifiedSigner, approvedRoot, cmsCertificates, signedIssuanceTime);
     }
 }
