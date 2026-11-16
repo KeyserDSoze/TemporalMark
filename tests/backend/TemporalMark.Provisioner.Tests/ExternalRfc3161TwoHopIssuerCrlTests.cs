@@ -165,6 +165,51 @@ public sealed class ExternalRfc3161TwoHopIssuerCrlTests
     }
 
     [Fact]
+    public void MoreThanOneIntermediateFailsEvenWhenPkixPathAndTwoCrlsLookValid()
+    {
+        using var root = ExternalRfc3161CertificateChainPolicyTests.CreateRoot();
+        using var firstMiddle = CreateMiddleWithPathLimit(root, 1);
+        using var secondMiddle = CreateMiddleWithPathLimit(firstMiddle, 0);
+        using var signer = ExternalRfc3161CertificateChainPolicyTests.CreateSigner(secondMiddle);
+        var cms = new X509Certificate2Collection();
+        cms.Add(firstMiddle);
+        cms.Add(secondMiddle);
+        var rootCrl = ExternalRfc3161IssuerCrlPolicyTests.BuildCrl(root, SignedGenTime);
+        var firstMiddleCrl = ExternalRfc3161IssuerCrlPolicyTests.BuildCrl(
+            firstMiddle, SignedGenTime);
+
+        using var validated = ExternalRfc3161CertificateChainPolicy.BuildValidatedSignerChain(
+            signer, root, cms, SignedGenTime);
+        Assert.Equal(4, validated.ChainElements.Count);
+
+        // An extra middle would require THREE per-issuer CRLs. Only two
+        // are configured. Do not promote chain-only proof to revocation.
+        Assert.Throws<TimestampProviderResponseException>(() =>
+            ExternalRfc3161IssuerCrlPolicy.ValidateSignerPathRevocation(
+                signer, root, cms, rootCrl, firstMiddleCrl, SignedGenTime));
+    }
+
+    private static X509Certificate2 CreateMiddleWithPathLimit(
+        X509Certificate2 parent, int maximumSubordinateCaDepth)
+    {
+        using var key = RSA.Create(2048);
+        var request = new CertificateRequest(
+            "CN=Disposable nested RFC3161 intermediate",
+            key, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+        request.CertificateExtensions.Add(new X509BasicConstraintsExtension(
+            true, true, maximumSubordinateCaDepth, true));
+        request.CertificateExtensions.Add(new X509KeyUsageExtension(
+            X509KeyUsageFlags.KeyCertSign | X509KeyUsageFlags.CrlSign, true));
+        request.CertificateExtensions.Add(
+            new X509SubjectKeyIdentifierExtension(request.PublicKey, false));
+        var serial = RandomNumberGenerator.GetBytes(16);
+        serial[0] = (byte)((serial[0] & 0x7F) | 0x01);
+        using var signed = request.Create(
+            parent, SignedGenTime.AddDays(-1), SignedGenTime.AddDays(7), serial);
+        return signed.CopyWithPrivateKey(key);
+    }
+
+    [Fact]
     public void DirectRootIssuedSignerRemainsAcceptedWithOnlyRootCrl()
     {
         using var root = ExternalRfc3161CertificateChainPolicyTests.CreateRoot();
