@@ -253,5 +253,12 @@ The previous [#69](https://github.com/KeyserDSoze/TemporalMark/issues/69) four-j
 
 - [x] ADR 0044 before RED. Actual [CI 43861421062](https://github.com/KeyserDSoze/TemporalMark/actions/runs/43861421062): 5/5 Python tests PASS but source policy DENIED both missing lockfiles, unfrozen npm install and Docker clean install mismatch. Initial synthetic fixture shallow-copy bug was corrected in forward commit 5be400c.
 - [x] GREEN candidate 842f477: genuine npm v10 v3 registry lockfiles (475 entries PWA, 9 entries tests), all registry packages verified for exact version, HTTPS source, integrity, all CI/npm installs switched to npm ci, Docker COPYs package-lock before clean install and temporary lockfile seed removed. [Runbook](NPM_LOCKED_INSTALLS.md).
-- [ ] Check full final-main four-job CI on exact SHA, with backend 5 tests and source policy PASS, frontend/browser, production Docker build, PWA security, two PostgreSQL restore suites, Keycloak MFA and Terraform. Close ONLY child #75 after this evidence.
+- [x] Child #75 closed: verified exact final HEAD 19cf39d on [four-job CI 43862523780](https://github.com/KeyserDSoze/TemporalMark/actions/runs/43862523780), including npm clean-install checks, 64/64 PostgreSQL, 2/2 full backup-restore witness and Keycloak MFA/PWA.
 - [ ] Parent #20 remains open for container digests, runners/toolchain provenance, SBOM/SAST, signed release artifacts, mobile install and tenant-isolation coverage. FIDO/witness #64/#61/#57 and V015/V016 freeze unaffected.
+
+## Registry-verified Docker image digest pins (#76, child of #20)
+
+- [x] ADR 0045 before TDD. Real [RED CI 43868733873](https://github.com/KeyserDSoze/TemporalMark/actions/runs/43868733873): 5/5 offline policy unit tests PASS, repository guard explicitly rejected all **eight** floating Docker image occurrences (four FROM and four Compose).
+- [x] Public registry manifest SHA256 resolution: initial seed failed without producing any digest; diagnostic [CI 43869063858](https://github.com/KeyserDSoze/TemporalMark/actions/runs/43869063858) returned all six expected manifests from Docker Hub, Quay and MCR. Code commit 16a962a pins eight occurrences and removes the temporary seed. See [runbook](CI_DOCKER_IMAGE_DIGESTS.md).
+- [ ] Final four-job CI on exact final main SHA (real Docker, PostgreSQL full restore/witness, Keycloak browser MFA/PKCE, PWA and Terraform), then close only #76.
+- [ ] Parent #20 stays OPEN for runner/build toolchain provenance, signature verification, SAST/SBOM/SCA, signed artifact attestations, PWA mobile install and cross-tenant testing. #64/#61/#57 and V015/V016 registrar freeze remain OPEN.
