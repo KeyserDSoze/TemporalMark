@@ -49,24 +49,15 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
-      - name: Temporary canonical npm 10 lockfile seed for #75 (public registry metadata only)
-        run: |
-          set -euo pipefail
-          for project in src/frontend tests/frontend; do
-            (cd "$project" && npm install --package-lock-only --ignore-scripts --no-audit --no-fund)
-            printf 'TEMPORALMARK_LOCK_BEGIN %s\n' "$project"
-            base64 --wrap=76 "$project/package-lock.json"
-            printf 'TEMPORALMARK_LOCK_END %s\n' "$project"
-          done
       - name: Install and build React PWA
         working-directory: src/frontend
         run: |
-          npm install --no-audit --no-fund
+          npm ci --no-audit --no-fund
           npm run build
       - name: Install Playwright
         working-directory: tests/frontend
         run: |
-          npm install --no-audit --no-fund
+          npm ci --no-audit --no-fund
           npx playwright install --with-deps chromium
       - name: Playwright desktop/mobile smoke
         working-directory: tests/frontend
@@ -93,7 +84,7 @@ jobs:
       - name: Install browser integration test runner
         working-directory: tests/frontend
         run: |
-          npm install --no-audit --no-fund
+          npm ci --no-audit --no-fund
           npx playwright install --with-deps chromium
       - name: Production PWA service-worker API navigation safety (RED/GREEN #71)
         working-directory: tests/frontend
