@@ -189,6 +189,44 @@ public sealed class MdsSeparatePostgresWitnessRestoreTests
                 MdsFullPgDumpRestoreWitnessFixture.Sign(sealSigner, newWitness),
                 newSeal, newSealSig, sealKeyPin));
 
+        // Missing scope in the independent witness must fail CLOSED:
+        // a caller cannot substitute an arbitrary latest SHA or fallback
+        // to a forged local journal.
+        var missingPolicy = Hash("unrecorded-witness-scope-" + Guid.NewGuid());
+        var missingManifest = MdsFullPgDumpRestoreWitnessFixture.Witness(
+            missingPolicy, issuer, 4, latestDigest, clock);
+        var missingSeal = MdsFullPgDumpRestoreWitnessFixture.Seal(
+            missingPolicy, missingManifest, clock);
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            Check(primary, witnessReader, missingManifest,
+                MdsFullPgDumpRestoreWitnessFixture.Sign(
+                    manifestSigner, missingManifest),
+                missingSeal, MdsFullPgDumpRestoreWitnessFixture.Sign(
+                    sealSigner, missingSeal), sealKeyPin));
+
+        // Clock/retention violations on the external witness are denied,
+        // even if its signed caller-side seal and primary state still match.
+        async Task SetWitnessObservation(string intervalExpression)
+        {
+            // SQL clause is fixed by the test, never user-supplied or
+            // interpolated from external command input.
+            var sql = "UPDATE public.unapproved_witness_checkpoints " +
+                "SET observed_utc = clock_timestamp() " + intervalExpression +
+                " WHERE source_policy_sha256=@policy";
+            await using var update = new NpgsqlCommand(sql, witnessOwner);
+            update.Parameters.AddWithValue("policy", policy);
+            Assert.Equal(1, await update.ExecuteNonQueryAsync());
+        }
+
+        await SetWitnessObservation("- interval '2 days'");
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            Check(primary, witnessReader, newWitness, newWitnessSig,
+                newSeal, newSealSig, sealKeyPin));
+        await SetWitnessObservation("+ interval '1 day'");
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            Check(primary, witnessReader, newWitness, newWitnessSig,
+                newSeal, newSealSig, sealKeyPin));
+
         // NO fallback to the old signed file or a caller-provided test
         // latest hash when the second PostgreSQL service is unavailable.
         await witnessReader.CloseAsync();
