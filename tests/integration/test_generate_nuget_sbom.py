@@ -51,6 +51,23 @@ class NugetInventoryTests(unittest.TestCase):
         self.assertEqual(2, len(self.inventory["components"]))
         sbom.verify_inventory(self.inventory, self.root, self.projects)
 
+    def test_supported_v4_sdk_analysis_alias_assets(self):
+        path = (self.root / self.projects[0]).parent / "obj/project.assets.json"
+        v4 = assets()
+        v4["version"] = 4
+        path.write_text(json.dumps(v4))
+        updated = sbom.make_inventory(self.root, self.projects)
+        sbom.verify_inventory(updated, self.root, self.projects)
+        self.assertEqual(2, len(updated["components"]))
+
+    def test_unknown_future_sdk_assets_fail_closed(self):
+        path = (self.root / self.projects[0]).parent / "obj/project.assets.json"
+        unsupported = assets()
+        unsupported["version"] = 5
+        path.write_text(json.dumps(unsupported))
+        with self.assertRaises(sbom.RestoreInventoryError):
+            sbom.make_inventory(self.root, self.projects)
+
     def test_same_version_across_projects_has_distinct_references(self):
         refs = [p["bom-ref"] for p in self.inventory["components"]]
         self.assertEqual(2, len(set(refs)))

@@ -56,8 +56,8 @@ def parse_assets(contents: bytes, project: Path) -> tuple[list[dict], dict]:
         assets = json.loads(contents)
     except (UnicodeError, ValueError) as e:
         raise RestoreInventoryError(f"Invalid NuGet assets for {project}") from e
-    if not isinstance(assets, dict) or assets.get("version") != 3:
-        raise RestoreInventoryError(f"Expected NuGet assets v3 for {project}")
+    if not isinstance(assets, dict) or assets.get("version") not in (3, 4):
+        raise RestoreInventoryError(f"Expected supported NuGet assets v3/v4 for {project}, found version {assets.get('version')!r}")
     if not isinstance(assets.get("targets"), dict) or not assets["targets"]:
         raise RestoreInventoryError(f"Missing restored target frameworks in {project}")
     libraries = assets.get("libraries")
