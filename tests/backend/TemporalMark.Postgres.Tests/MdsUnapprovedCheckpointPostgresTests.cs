@@ -324,11 +324,20 @@ public sealed class MdsUnapprovedCheckpointPostgresTests
         var results = await Task.WhenAll(Enumerable.Range(2, 8)
             .Select(i => TryStageAsync(i)));
         Assert.Contains(true, results);
+        // Concurrent callers may be fail-closed due to deadlock/serialization;
+        // the highest *accepted* serial must still be the final committed
+        // high-water mark, rather than assuming all eight submissions commit.
+        var highestAccepted = results
+            .Select((accepted, index) => (accepted, serial: (long)index + 2))
+            .Where(item => item.accepted)
+            .Max(item => item.serial);
         await using var db = Owner();
         await db.OpenAsync();
-        Assert.Equal(9L, (await CurrentAsync(db, c)).Version);
+        var actual = (await CurrentAsync(db, c)).Version;
+        Assert.Equal(highestAccepted, actual);
+        Assert.InRange(actual, 2L, 9L);
         Assert.InRange(await HistoryAsync(db, c), 2L, 9L);
-        await Assert.ThrowsAsync<PostgresException>(() => StageAsync(db, c, 8));
+        await Assert.ThrowsAsync<PostgresException>(() => StageAsync(db, c, actual - 1));
     }
 
     [Fact]
