@@ -315,3 +315,14 @@ The previous [#69](https://github.com/KeyserDSoze/TemporalMark/issues/69) four-j
 
 - [x] [CI 43895442047](https://github.com/KeyserDSoze/TemporalMark/actions/runs/43895442047): full real HTTP A/B isolation matrix PASS, including genuine signed wrong issuer/audience/expired JWT, inactive SQL membership, both sides' ZIP/TSR/audit, selector spoofing, and disabled TSA. Existing *single-tenant empty-registry* browser smoke then fails because new canary A was inserted first.
 - [x] Preserve the original empty-registry browser assertion and run it **before** the new disposable canary step; continue running the new real API matrix last before guaranteed Docker teardown. Exact-final-head four-job CI remains required before #82 closure.
+
+## Delegated TSA transport hardening (#83; parent #15 remains open)
+
+- [x] ADR 0052 and RED-first .NET 10 negative transport tests: no implicit redirect/cookie handling in the named TSA HttpClient; every 301/302/303/307/308 provider response rejected.
+- [x] Dedicated handler wired to `external-tsa` API registration on `main`; server-owned HTTPS endpoint, 20-second timeout and `Unverified` persisted state unchanged. [Transport runbook](TSA_HTTP_TRANSPORT.md).
+- [ ] Confirm four-job GitHub CI GREEN for the final exact `main` commit and close #83 only after this proof.
+- [ ] Parent #15 remains OPEN for complete signed RFC3161 / CMS / historical EU Trusted List, revocation, network egress allowlists, tested QTSP interoperability and legal status checks; WORM #17 and legal qualification #13 likewise remain OPEN.
+
+### CI API isolation closeout (#82)
+
+- [x] #82 closed after four-job GREEN on exact `main` SHA `dfbbe87fdc2506afc5763ecce95cad398e4a147a`: [Actions run #391](https://github.com/KeyserDSoze/TemporalMark/actions/runs/43897042542). Production RLS and broader tenant management remain #14/#20.
