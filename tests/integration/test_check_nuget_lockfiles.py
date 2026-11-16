@@ -75,6 +75,13 @@ class LockPolicyTests(unittest.TestCase):
         self.save()
         self.assertIn("target framework", " ".join(self.errors()))
 
+    def test_nuget_four_part_transitive_version_is_valid(self):
+        self.lock["dependencies"]["net10.0"]["libsodium"] = {
+            "type": "Transitive", "resolved": "1.0.20.1", "contentHash": HASH
+        }
+        self.save()
+        self.assertEqual([], self.errors())
+
     def test_source_workflow_explicit_locked_mode(self):
         snippet = (
             "jobs:\n  backend:\n    steps:\n"
