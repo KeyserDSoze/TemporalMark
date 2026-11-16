@@ -149,6 +149,6 @@ TEMPORALMARK_WITNESS_WRITER_TEST_DB="Host=127.0.0.1;Port=5433;Database=temporalm
 TEMPORALMARK_WITNESS_TEST_DB="Host=127.0.0.1;Port=5433;Database=temporalmark_witness;Username=temporalmark_witness_reader;Password=local-witness-reader-only" \
 dotnet test tests/backend/TemporalMark.Postgres.Tests/TemporalMark.Postgres.Tests.csproj \
   --configuration Release \
-  --filter 'FullyQualifiedName~MdsFullPgDumpRestorePostgresTests'
+  --filter 'FullyQualifiedName~MdsFullPgDumpRestorePostgresTests|FullyQualifiedName~MdsSeparatePostgresWitnessRestoreTests'
 
 printf '%s\n' "PASS: full PostgreSQL logical pg_dump/pg_restore rollback is detected only with latest TEST seal pin; all outcomes UNAPPROVED."
