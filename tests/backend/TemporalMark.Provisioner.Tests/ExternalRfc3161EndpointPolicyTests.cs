@@ -28,7 +28,8 @@ public sealed class ExternalRfc3161EndpointPolicyTests
         using var handler = new CountingHandler();
         using var http = new HttpClient(handler);
         var provider = new ExternalRfc3161TimestampProvider(
-            http, new Uri(url), "configured-provider");
+            http, new Uri(url), "configured-provider",
+            approvedSignerCertificateSha256: new string('A', 64));
 
         await Assert.ThrowsAsync<TimestampProviderUnavailableException>(() =>
             provider.RequestAsync(new byte[32], CancellationToken.None));
@@ -45,7 +46,8 @@ public sealed class ExternalRfc3161EndpointPolicyTests
         using var handler = new CountingHandler();
         using var http = new HttpClient(handler);
         var provider = new ExternalRfc3161TimestampProvider(
-            http, new Uri(url), "disposable-test-provider", allowDevelopmentLoopback: true);
+            http, new Uri(url), "disposable-test-provider", allowDevelopmentLoopback: true,
+            approvedSignerCertificateSha256: new string('A', 64));
 
         await Assert.ThrowsAsync<TimestampProviderResponseException>(() =>
             provider.RequestAsync(new byte[32], CancellationToken.None));
@@ -62,7 +64,8 @@ public sealed class ExternalRfc3161EndpointPolicyTests
         using var handler = new CountingHandler();
         using var http = new HttpClient(handler);
         var provider = new ExternalRfc3161TimestampProvider(
-            http, new Uri(url), "disposable-test-provider", allowDevelopmentLoopback: true);
+            http, new Uri(url), "disposable-test-provider", allowDevelopmentLoopback: true,
+            approvedSignerCertificateSha256: new string('A', 64));
 
         await Assert.ThrowsAsync<TimestampProviderUnavailableException>(() =>
             provider.RequestAsync(new byte[32], CancellationToken.None));
@@ -77,7 +80,8 @@ public sealed class ExternalRfc3161EndpointPolicyTests
         using var handler = new CountingHandler();
         using var http = new HttpClient(handler);
         var provider = new ExternalRfc3161TimestampProvider(
-            http, new Uri(url), "configured-provider");
+            http, new Uri(url), "configured-provider",
+            approvedSignerCertificateSha256: new string('A', 64));
 
         await Assert.ThrowsAsync<TimestampProviderResponseException>(() =>
             provider.RequestAsync(new byte[32], CancellationToken.None));
