@@ -112,6 +112,65 @@ public sealed class MdsFullPgDumpRestorePostgresTests
         var oldSealSignature = MdsFullPgDumpRestoreWitnessFixture.Sign(separateSealKey, oldSeal);
         var newSealSignature = MdsFullPgDumpRestoreWitnessFixture.Sign(separateSealKey, newSeal);
 
+        // The high-water evidence now survives an open/close/reopen of an
+        // actual separate on-disk file, not a variable inside either
+        // PostgreSQL database. The test file remains mutable by host admins,
+        // so this is STILL NOT an independently custodied WORM authority.
+        using (var journalKey = RSA.Create(2048))
+        {
+            var journalPath = Path.Combine(Path.GetTempPath(),
+                "temporalmark-unapproved-journal-" + Guid.NewGuid().ToString("N"));
+            var journalPin = MdsFullPgDumpRestoreWitnessFixture.SpkiPin(journalKey);
+            try
+            {
+                ReviewerMdsOfflineFileHighWaterJournal.BootstrapNewForTests(
+                    journalPath, policy, journalPin);
+
+                var original = MdsFullPgDumpRestoreWitnessFixture.JournalEvent(
+                    policy, 3, oldSealPin, new string('0', 64), now.AddSeconds(-2));
+                var first = ReviewerMdsOfflineFileHighWaterJournal.AppendSignedForTests(
+                    journalPath, policy, journalPin, journalKey, original,
+                    MdsFullPgDumpRestoreWitnessFixture.Sign(journalKey, original), now);
+                var olderFile = File.ReadAllBytes(journalPath);
+
+                var next = MdsFullPgDumpRestoreWitnessFixture.JournalEvent(
+                    policy, 4, latestSealPin, first.PayloadSha256, now.AddSeconds(-1));
+                ReviewerMdsOfflineFileHighWaterJournal.AppendSignedForTests(
+                    journalPath, policy, journalPin, journalKey, next,
+                    MdsFullPgDumpRestoreWitnessFixture.Sign(journalKey, next), now);
+
+                var observedAfterRestore =
+                    ReviewerMdsOfflineFileHighWaterJournal.InspectLatest(
+                        journalPath, policy, journalPin, journalKey, now);
+                Assert.Equal("UNAPPROVED", observedAfterRestore.ReviewStatus);
+                Assert.Equal(4L, observedAfterRestore.CandidateSerial);
+                Assert.Equal(latestSealPin, observedAfterRestore.SealSha256);
+
+                // The external on-disk high-water SHA (not a caller-chosen
+                // old one) rejects even a CORRECTLY signed past witness
+                // against the fully logically restored serial 3 database.
+                await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+                    ReviewerMdsOfflineSealedHighWaterCandidateVerifier.ReconcileAsync(
+                        restored, oldWitness, oldWitnessSignature, witnessKey,
+                        oldSeal, oldSealSignature, separateSealKey,
+                        authorityPin, observedAfterRestore.SealSha256, now));
+
+                // Deliberate residual attack: the same host administrator
+                // can restore an older file journal ALONG WITH the DB.
+                // This positive result is STILL UNAPPROVED, not trusted.
+                File.WriteAllBytes(journalPath, olderFile);
+                var replay = ReviewerMdsOfflineFileHighWaterJournal.InspectLatest(
+                    journalPath, policy, journalPin, journalKey, now);
+                Assert.Equal(3L, replay.CandidateSerial);
+                Assert.Equal(oldSealPin, replay.SealSha256);
+            }
+            finally
+            {
+                if (File.Exists(journalPath))
+                    File.Delete(journalPath);
+            }
+        }
+
         Task<ReviewerMdsSealedHighWaterCandidate> Reconcile(
             NpgsqlConnection db, byte[] witness, byte[] witnessSignature,
             byte[] seal, byte[] sealSignature, string expectedLatestSealPin) =>
