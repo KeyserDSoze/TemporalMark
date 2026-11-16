@@ -10,6 +10,9 @@ public static class ExternalRfc3161TransportPolicy
     public static HttpClientHandler CreateHandler() => new()
     {
         AllowAutoRedirect = false,
-        UseCookies = false
+        UseCookies = false,
+        // Do not inherit HTTPS_PROXY, ALL_PROXY or OS forward proxies:
+        // the timestamp imprint must use a reviewed direct TSA egress route.
+        UseProxy = false
     };
 }
