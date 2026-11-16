@@ -298,3 +298,8 @@ The previous [#69](https://github.com/KeyserDSoze/TemporalMark/issues/69) four-j
 - [x] **TDD RED** [CI 43887807050](https://github.com/KeyserDSoze/TemporalMark/actions/runs/43887807050), SHA `ac5311f`: 5/5 new offline policy unit tests pass; backend source scan rejects exactly 12 deprecated Node20 action references. Existing mutable SHA guard stays green.
 - [x] GREEN: replace all 12 references with immutable reviewed Node24 SHAs, retain four-job job topology, CLI Node22, .NET10, locked NuGet/npm, Keycloak MFA, PWA mobile and full PostgreSQL rollback regression.
 - [ ] Close only #81 after **exact final main SHA** all four CI jobs success and review logs for absence of forced Node20 action runtime warnings. #20 and all FIDO, evidence/WORM and signed human consent blockers stay OPEN.
+
+### #81 SBOM dependency-policy integration
+
+- [x] [CI 43888139709](https://github.com/KeyserDSoze/TemporalMark/actions/runs/43888139709) exposed a separate old Node20 SHA literal in the npm SBOM source allowlist; similarly identified NuGet's old literal. New native Node24 action guard was already passing, but first GREEN candidate backend failed at the inherited npm policy.
+- [x] Preserve both SBOM source gates, link their allowed upload SHA to the exact upstream-reviewed Node24 allowlist with negative regressions for old Node20 and unknown SHAs. Full exact-head CI verification remains mandatory before closing #81.

@@ -22,7 +22,7 @@ def workflow(restore=True, verify=True, pinned=True, retention=7, json_only=True
            '        run: python3 tests/integration/generate_nuget_sbom.py verify --output-dir "$RUNNER_TEMP/temporalmark-nuget-sbom"\n'
            if verify else "")
         + "      - uses: actions/upload-artifact@"
-        + ("ea165f8d65b6e75b540449e92b4886f43607fa02" if pinned else "v4")
+        + (policy.UPLOAD.split("@", 1)[1] if pinned else "v6")
         + "\n        with:\n          name: nuget-restored-cyclonedx\n"
         + ("          path: $" + "{{ runner.temp }}/temporalmark-nuget-sbom/*.json\n" if json_only else
            "          path: obj/project.assets.json\n")
@@ -44,6 +44,15 @@ class NugetWorkflowSourcePolicyTests(unittest.TestCase):
         self.assertTrue(policy.check_workflow(workflow(pinned=False)))
         self.assertTrue(policy.check_workflow(workflow(retention=30)))
         self.assertTrue(policy.check_workflow(workflow(json_only=False)))
+
+    def test_previous_node20_and_unreviewed_sha_uploads_denied(self):
+        current = policy.UPLOAD.split("@", 1)[1]
+        self.assertNotEqual("ea165f8d65b6e75b540449e92b4886f43607fa02", current)
+        for sha in ("ea165f8d65b6e75b540449e92b4886f43607fa02", "0" * 40):
+            with self.subTest(sha=sha):
+                self.assertIn("SHA-pin", " ".join(policy.check_workflow(
+                    workflow().replace(current, sha)
+                )))
 
     def test_verification_after_upload_denied(self):
         source = workflow()

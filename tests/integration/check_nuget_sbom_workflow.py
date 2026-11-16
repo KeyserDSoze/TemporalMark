@@ -7,7 +7,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 GENERATE = "python3 tests/integration/generate_nuget_sbom.py generate"
 VERIFY = "python3 tests/integration/generate_nuget_sbom.py verify"
-UPLOAD = "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
+from check_ci_action_runtimes import NATIVE_NODE24
+UPLOAD = "actions/upload-artifact@" + NATIVE_NODE24["actions/upload-artifact"]
 
 
 def check_workflow(source: str) -> list[str]:

@@ -17,7 +17,7 @@ def workflow(pinned=True, validate=True, two_installs=True, retention=7):
         + "        run: python3 tests/integration/generate_npm_sbom.py generate --output-dir \"$RUNNER_TEMP/temporalmark-npm-sbom\"\n"
         + ("      - name: Verify npm lockfile SBOMs\n        run: python3 tests/integration/generate_npm_sbom.py verify --output-dir \"$RUNNER_TEMP/temporalmark-npm-sbom\"\n" if validate else "")
         + "      - uses: actions/upload-artifact@"
-        + ("ea165f8d65b6e75b540449e92b4886f43607fa02" if pinned else "v4")
+        + (policy.PINNED_UPLOAD.split("@", 1)[1] if pinned else "v6")
         + "\n        with:\n          name: npm-lockfile-cyclonedx\n"
         + "          path: $" + "{{ runner.temp }}/temporalmark-npm-sbom/*.json\n"
         + "          if-no-files-found: error\n"
@@ -39,6 +39,15 @@ class SbomSourcePolicyTests(unittest.TestCase):
     def test_unpinned_upload_or_long_retention_denied(self):
         self.assertTrue(policy.check_workflow(workflow(pinned=False)))
         self.assertTrue(policy.check_workflow(workflow(retention=90)))
+
+    def test_previous_node20_and_unknown_full_sha_uploads_denied(self):
+        current = policy.PINNED_UPLOAD.split("@", 1)[1]
+        self.assertNotEqual("ea165f8d65b6e75b540449e92b4886f43607fa02", current)
+        for sha in ("ea165f8d65b6e75b540449e92b4886f43607fa02", "0" * 40):
+            with self.subTest(sha=sha):
+                self.assertIn("SHA-pinned", " ".join(policy.check_workflow(
+                    workflow().replace(current, sha)
+                )))
 
     def test_missing_second_install_or_broad_token_denied(self):
         self.assertTrue(policy.check_workflow(workflow(two_installs=False)))
