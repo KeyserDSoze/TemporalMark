@@ -157,3 +157,12 @@ Progress is recorded in issues and CI, not inferred from this file. Every slice 
 - [x] GREEN pure offline .NET 10 `ReviewerMdsOfflineTwoHopCrlCandidateVerifier`: exact `CustomRootTrust` path with downloads blocked, and **both non-root certificates** checked by the *same* BouncyCastle 2.7.0 CRL signature/issuer/date/revocation helper already used by #59. No host trust, CRL URL, SQL/CLI/API integration or production root. Every observation is **`UNAPPROVED`**. [Runbook](WEBAUTHN_MDS_TWO_HOP_CRL.md).
 - [ ] Close #60 only after the exact final `main` HEAD passes four CI jobs (backend/frontend/terraform/docker-smoke).
 - [ ] Production #57/#55: independent real FIDO root R46 custody, signed MDS JWT 2026 R3/R46 cross-cert path, actual all-hop CRL/OCSP and issuer AKI/CDP, signed CRL imports including air-gap, persistent monotonic CRLNumber+signed MDS snapshot, outage/time/SSRF and CAB/DPIA. This is an **untrusted test root**, not true manufacturer revocation provenance. V015/V016 and WebAuthn/SQL enrollment remain frozen; #53/#44/#50/#46/#38 OPEN. No eIDAS/WORM claims.
+
+
+## SQL-only owner-staged MDS/CRL candidate checkpoint (#62; parent #61 OPEN)
+
+- [x] ADR 0032 before RED tests documents PostgreSQL 17 per-key transactional lock, owner-only untrusted evidence source and **no credential-authorization integration**.
+- [x] RED live PostgreSQL regression: first/equal/higher candidate serial, digest equivocation at equal serial, rollback, changed policy, bad issuer/hash/TTL, expired/clock-backwards checkpoint, append-only pilot history, role privilege denial, concurrent independent SQL sessions with conflicting versions.
+- [x] GREEN V017 migration and CI count=17 (V001–V016 unchanged): only physical DB table-owner SQL session can stage **UNAPPROVED** candidate serial+SHA256; no PUBLIC/approver/provisioner/runtime/registrar access. No real MDS JWT/CRL/trust root verified by SQL. [Runbook](MDS_CRL_UNAPPROVED_CHECKPOINT.md).
+- [ ] #62 closes only after exact-final-main **four job** CI GREEN; parent #61 remains OPEN for a real independently verified signed input and externally witnessed monotonic checkpoint, multi-primary/backup restore corruption and clock rollback tests, immutable audit, authentically distributed CRLNumber/issuer AKI+CDP, real FIDO R46 roots/cross-chain governance, CAB/DPIA and fail-closed offline/Azure parity.
+- [ ] #57/#55/#53/#44/#50/#46/#38 remain OPEN; V015/V016 SQL stop-line and suspended registrar CLI untouched, no WebAuthn enrollment, WORM/eIDAS/QTSP claim.
