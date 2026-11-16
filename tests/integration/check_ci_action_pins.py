@@ -29,7 +29,10 @@ def check_text(source: str, name: str) -> tuple[list[str], int]:
             continue
         count += 1
         ref = parse_value(match.group(1))
-        if PIN.fullmatch(ref) or LOCAL.fullmatch(ref):
+        if PIN.fullmatch(ref) or (
+            LOCAL.fullmatch(ref)
+            and all(component not in (".", "..") for component in ref.split("/"))
+        ):
             continue
         errors.append(f"{name}:{number}: floating or invalid uses reference: {ref!r}")
     return errors, count
