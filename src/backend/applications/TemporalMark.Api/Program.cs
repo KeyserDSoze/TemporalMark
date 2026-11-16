@@ -41,13 +41,14 @@ builder.Services.AddScoped<ITimestampProvider>(sp =>
     if (!string.IsNullOrWhiteSpace(url) && !Uri.TryCreate(url, UriKind.Absolute, out _))
         throw new InvalidOperationException("TimestampProvider:Url must be a valid absolute URL.");
     var uri = string.IsNullOrWhiteSpace(url) ? null : new Uri(url);
-    // An arbitrary tenant cannot select the URL. Fixed administrator-owned deployment configuration only.
-    if (uri is not null && uri.Scheme != Uri.UriSchemeHttps &&
-        !(builder.Environment.IsDevelopment() && uri.IsLoopback && uri.Scheme == Uri.UriSchemeHttp))
-        throw new InvalidOperationException("External TSA URL must use HTTPS in deployed environments.");
+    // Fixed operator-owned URI, never caller-selected. Apply the same runtime
+    // policy here and inside the provider, including if the provider is reused.
+    var allowDevelopmentLoopback = builder.Environment.IsDevelopment();
+    if (uri is not null)
+        ExternalRfc3161EndpointPolicy.Validate(uri, allowDevelopmentLoopback);
     return new ExternalRfc3161TimestampProvider(
         sp.GetRequiredService<IHttpClientFactory>().CreateClient("external-tsa"),
-        uri, providerId);
+        uri, providerId, allowDevelopmentLoopback: allowDevelopmentLoopback);
 });
 
 var origins = builder.Configuration.GetSection("Cors:Origins").Get<string[]>() ?? [];
