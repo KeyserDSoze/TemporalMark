@@ -104,8 +104,8 @@ END;
 $$;
 
 
--- CI-only, non-authorizing, read-only append history reconciliation.
--- Limits per-policy traversal to 129 events; deny 129 or more.
+-- CI-only internal consistency ONLY; never immutable or authoritative.
+-- Bounded, STABLE read-only SECURITY DEFINER audit preflight.
 CREATE FUNCTION public.check_unapproved_witness_history(
     p_policy text, p_serial bigint, p_seal_sha256 text)
 RETURNS boolean
@@ -113,7 +113,7 @@ LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER
 SET search_path = pg_catalog, pg_temp
-AS $
+AS $$
 DECLARE
     item record;
     seen integer := 0;
@@ -121,7 +121,48 @@ DECLARE
     previous_observed timestamptz := '-infinity'::timestamptz;
     last_sha text := NULL;
 BEGIN
-    IF p_policy IS NULL OR p_policy !~ '^[0-9A-F]{64}, NOT by
+    IF p_policy IS NULL OR p_policy !~ '^[0-9A-F]{64}$' OR
+       p_seal_sha256 IS NULL OR p_seal_sha256 !~ '^[0-9A-F]{64}$' OR
+       p_serial IS NULL OR p_serial <= 0 THEN
+        RETURN false;
+    END IF;
+
+    -- Aborted transactions can skip event IDs, but accepted serials
+    -- strictly increase. LIMIT 129 bounds an untrusted audit history.
+    FOR item IN
+        SELECT candidate_serial, seal_sha256, observed_utc
+        FROM public.unapproved_witness_events
+        WHERE source_policy_sha256 = p_policy
+        ORDER BY event_id
+        LIMIT 129
+    LOOP
+        seen := seen + 1;
+        IF seen > 128 OR item.candidate_serial IS NULL OR
+           item.candidate_serial <= previous_serial OR
+           item.seal_sha256 IS NULL OR
+           item.seal_sha256 !~ '^[0-9A-F]{64}$' OR
+           item.observed_utc IS NULL OR
+           NOT pg_catalog.isfinite(item.observed_utc) OR
+           item.observed_utc < previous_observed THEN
+            RETURN false;
+        END IF;
+        previous_serial := item.candidate_serial;
+        previous_observed := item.observed_utc;
+        last_sha := item.seal_sha256;
+    END LOOP;
+
+    RETURN seen BETWEEN 1 AND 128 AND
+           previous_serial = p_serial AND last_sha = p_seal_sha256 AND
+           EXISTS (
+               SELECT 1 FROM public.unapproved_witness_checkpoints
+               WHERE source_policy_sha256 = p_policy
+                 AND candidate_serial = p_serial
+                 AND seal_sha256 = p_seal_sha256
+           );
+END;
+$$;
+
+-- These objects are owned by a NOLOGIN and NOSUPERUSER role, NOT by
 -- the connected writer. It is impossible for the writer to SET ROLE
 -- to this owner: no role membership is ever granted.
 ALTER TABLE public.unapproved_witness_checkpoints
@@ -159,154 +200,9 @@ GRANT EXECUTE ON FUNCTION
     public.record_unapproved_highwater_witness(text,bigint,text)
     TO temporalmark_witness_writer;
 
--- The reader can only invoke this bounded checker. It cannot SELECT
--- the event table, and the restricted writer cannot invoke the checker.
+-- Reader EXECUTE only: no audit-table SELECT and no writer/PUBLIC grant.
 GRANT EXECUTE ON FUNCTION
     public.check_unapproved_witness_history(text,bigint,text)
     TO temporalmark_witness_reader;
-
-COMMIT;
- OR
-       p_seal_sha256 IS NULL OR p_seal_sha256 !~ '^[0-9A-F]{64}, NOT by
--- the connected writer. It is impossible for the writer to SET ROLE
--- to this owner: no role membership is ever granted.
-ALTER TABLE public.unapproved_witness_checkpoints
-    OWNER TO temporalmark_witness_data_owner;
-ALTER TABLE public.unapproved_witness_events
-    OWNER TO temporalmark_witness_data_owner;
-ALTER FUNCTION public.record_unapproved_highwater_witness(text,bigint,text)
-    OWNER TO temporalmark_witness_data_owner;
-
--- Secure any future routines explicitly created by the non-login
--- data-owner, in addition to revoking THIS routine below.
-ALTER DEFAULT PRIVILEGES FOR ROLE temporalmark_witness_data_owner
-    REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
-
-REVOKE ALL ON TABLE
-    public.unapproved_witness_checkpoints,
-    public.unapproved_witness_events FROM PUBLIC;
-REVOKE ALL ON FUNCTION
-    public.record_unapproved_highwater_witness(text,bigint,text) FROM PUBLIC;
-REVOKE ALL ON SEQUENCE
-    public.unapproved_witness_events_event_id_seq FROM PUBLIC;
-
--- Read-only witness operator may SELECT the latest row only.
-GRANT SELECT ON TABLE public.unapproved_witness_checkpoints
-    TO temporalmark_witness_reader;
-
--- Separate non-superuser writer may only EXECUTE this ONE restricted,
--- atomic append function; it has NO direct table/event/sequence
--- privilege and NO membership in the non-login data-owner.
-GRANT EXECUTE ON FUNCTION
-    public.record_unapproved_highwater_witness(text,bigint,text)
-    TO temporalmark_witness_writer;
-
-COMMIT;
- OR
-       p_serial IS NULL OR p_serial <= 0 THEN
-        RETURN false;
-    END IF;
-
-    FOR item IN
-        SELECT candidate_serial, seal_sha256, observed_utc
-        FROM public.unapproved_witness_events
-        WHERE source_policy_sha256 = p_policy
-        ORDER BY event_id
-        LIMIT 129
-    LOOP
-        seen := seen + 1;
-        IF seen > 128 OR item.candidate_serial IS NULL OR
-           item.candidate_serial <= previous_serial OR
-           item.seal_sha256 IS NULL OR
-           item.seal_sha256 !~ '^[0-9A-F]{64}, NOT by
--- the connected writer. It is impossible for the writer to SET ROLE
--- to this owner: no role membership is ever granted.
-ALTER TABLE public.unapproved_witness_checkpoints
-    OWNER TO temporalmark_witness_data_owner;
-ALTER TABLE public.unapproved_witness_events
-    OWNER TO temporalmark_witness_data_owner;
-ALTER FUNCTION public.record_unapproved_highwater_witness(text,bigint,text)
-    OWNER TO temporalmark_witness_data_owner;
-
--- Secure any future routines explicitly created by the non-login
--- data-owner, in addition to revoking THIS routine below.
-ALTER DEFAULT PRIVILEGES FOR ROLE temporalmark_witness_data_owner
-    REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
-
-REVOKE ALL ON TABLE
-    public.unapproved_witness_checkpoints,
-    public.unapproved_witness_events FROM PUBLIC;
-REVOKE ALL ON FUNCTION
-    public.record_unapproved_highwater_witness(text,bigint,text) FROM PUBLIC;
-REVOKE ALL ON SEQUENCE
-    public.unapproved_witness_events_event_id_seq FROM PUBLIC;
-
--- Read-only witness operator may SELECT the latest row only.
-GRANT SELECT ON TABLE public.unapproved_witness_checkpoints
-    TO temporalmark_witness_reader;
-
--- Separate non-superuser writer may only EXECUTE this ONE restricted,
--- atomic append function; it has NO direct table/event/sequence
--- privilege and NO membership in the non-login data-owner.
-GRANT EXECUTE ON FUNCTION
-    public.record_unapproved_highwater_witness(text,bigint,text)
-    TO temporalmark_witness_writer;
-
-COMMIT;
- OR
-           item.observed_utc IS NULL OR
-           NOT pg_catalog.isfinite(item.observed_utc) OR
-           item.observed_utc < previous_observed THEN
-            RETURN false;
-        END IF;
-        previous_serial := item.candidate_serial;
-        previous_observed := item.observed_utc;
-        last_sha := item.seal_sha256;
-    END LOOP;
-
-    RETURN seen BETWEEN 1 AND 128 AND
-           previous_serial = p_serial AND last_sha = p_seal_sha256 AND
-           EXISTS (
-               SELECT 1 FROM public.unapproved_witness_checkpoints
-               WHERE source_policy_sha256 = p_policy
-                 AND candidate_serial = p_serial
-                 AND seal_sha256 = p_seal_sha256
-           );
-END;
-$;
-
--- These objects are owned by a NOLOGIN and NOSUPERUSER role, NOT by
--- the connected writer. It is impossible for the writer to SET ROLE
--- to this owner: no role membership is ever granted.
-ALTER TABLE public.unapproved_witness_checkpoints
-    OWNER TO temporalmark_witness_data_owner;
-ALTER TABLE public.unapproved_witness_events
-    OWNER TO temporalmark_witness_data_owner;
-ALTER FUNCTION public.record_unapproved_highwater_witness(text,bigint,text)
-    OWNER TO temporalmark_witness_data_owner;
-
--- Secure any future routines explicitly created by the non-login
--- data-owner, in addition to revoking THIS routine below.
-ALTER DEFAULT PRIVILEGES FOR ROLE temporalmark_witness_data_owner
-    REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
-
-REVOKE ALL ON TABLE
-    public.unapproved_witness_checkpoints,
-    public.unapproved_witness_events FROM PUBLIC;
-REVOKE ALL ON FUNCTION
-    public.record_unapproved_highwater_witness(text,bigint,text) FROM PUBLIC;
-REVOKE ALL ON SEQUENCE
-    public.unapproved_witness_events_event_id_seq FROM PUBLIC;
-
--- Read-only witness operator may SELECT the latest row only.
-GRANT SELECT ON TABLE public.unapproved_witness_checkpoints
-    TO temporalmark_witness_reader;
-
--- Separate non-superuser writer may only EXECUTE this ONE restricted,
--- atomic append function; it has NO direct table/event/sequence
--- privilege and NO membership in the non-login data-owner.
-GRANT EXECUTE ON FUNCTION
-    public.record_unapproved_highwater_witness(text,bigint,text)
-    TO temporalmark_witness_writer;
 
 COMMIT;
