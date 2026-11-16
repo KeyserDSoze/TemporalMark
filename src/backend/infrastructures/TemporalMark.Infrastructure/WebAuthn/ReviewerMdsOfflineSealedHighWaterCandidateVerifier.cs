@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
@@ -158,7 +159,7 @@ public static class ReviewerMdsOfflineSealedHighWaterCandidateVerifier
         string.Equals(raw, value.ToString(CultureInfo.InvariantCulture),
             StringComparison.Ordinal);
 
-    private static bool IsSha256(string? raw) =>
+    private static bool IsSha256([NotNullWhen(true)] string? raw) =>
         raw is { Length: 64 } &&
         raw.All(c => c is (>= '0' and <= '9') or (>= 'A' and <= 'F'));
 
