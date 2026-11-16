@@ -1,0 +1,23 @@
+# ADR 0034 — Non-authorizing sealed high-water test pin and scoped PostgreSQL COPY restore regression
+
+Status: **accepted ONLY as an isolated synthetic crypto + live database regression** (2026-11-16); child [#65](https://github.com/KeyserDSoze/TemporalMark/issues/65) of still OPEN #64/#61/#57. Reviewed ADR 0029–0033, V017, `docs/MDS_CRL_SIGNED_WITNESS_RECONCILIATION.md`, existing live PostgreSQL tests, [PostgreSQL 17 COPY](https://www.postgresql.org/docs/17/sql-copy.html) and [Npgsql COPY](https://www.npgsql.org/doc/copy.html).
+
+## Problem
+
+ADR 0033's caller-signed witness can distinguish a supplied latest signed manifest from a restored older PostgreSQL V017 checkpoint, but does **not** distinguish a *previously valid signed witness* replayed together with a restored database. For a real DR safety guarantee, the authoritative latest witnessed digest, verified seal signer key and custody must be independently anchored outside any backup, host owner and importing operator. Storing the seal only inside the same database is circular.
+
+## Decision and strict test-only boundary
+
+1. Add isolated `ReviewerMdsOfflineSealedHighWaterCandidateVerifier` which accepts the existing ADR 0033 signed manifest/ephemeral test signing key PLUS a separate RSA-PSS/SHA256 **signed** domain-separated seal. The seal signer RSA key must be distinct from the manifest signer in the test fixtures; the seal contains only source-policy hash, SHA-256 of the actual signed witness bytes and canonical time window. The caller passes **two distinct explicit out-of-band test pins**: SHA-256 of authority key SPKI and SHA-256 of the **latest** seal bytes. All pins are caller supplied, so they are **not production trust roots or independent immutable custody**.
+2. On each invocation fail closed if either pin missing/malformed, the exact original seal bytes hash differs from the retained latest-seal digest, RSA-PSS signature invalid, authority key SPKI mismatch, policy/window mismatch or the original witness signature is invalid. Reject bytes outside a strict canonical signed ASCII grammar, oversized or non-UTC inputs, stale/future signed window. Do **not** accept expired, previous or counterfeit seals or a new arbitrary signing key under a retained pin.
+3. Only then delegate to the unmodified ADR 0033 read-only `REPEATABLE READ` V017 full source-policy reconciliation. Return **only `UNAPPROVED/TEST_HIGH_WATER_SEAL_EXTERNAL_CUSTODY_UNPROVEN`**, witness+seal digests and count; no raw key, trusted signer, import action, SQL write, API/CLI, WORM evidence or FIDO attestation.
+4. TDD first: RED .NET 10 xUnit with two ephemeral independent RSA keys and real PostgreSQL checkpoint. Use real PostgreSQL 17 `COPY (SELECT ... WHERE ...) TO STDOUT (FORMAT CSV)` to export a scoped V017 table snapshot, advance the serial and sign the new witness/seal, and use owner-only `DELETE` + `COPY ... FROM STDIN (FORMAT CSV)` to restore **the old exported rows**. The newest retained seal hash and signed manifest must fail after restore. Old signed manifest/seal must also fail **when** the latest externally retained seal digest is provided. Same-version digest/equivocation, wrong key/pin, no/corrupt seal and stale time fail closed. A valid latest unchanged checkpoint returns only UNAPPROVED.
+5. **Honesty requirement:** This is a *scoped PostgreSQL COPY data rollback* test, not `pg_dump/pg_restore` of an entire cluster, full transaction timeline, point-in-time recovery, independent signer/HSM or external protected store. When an attacker can replace the caller's allegedly latest seal digest along with the database and old seal, the code cannot detect the replay. For that reason parent #64 stays **OPEN** for production independent immutable monotonic seal custody, approved signing key bootstrap and rotation, real full backup/restore and cross-region tests, CAB/privacy review and on-prem OSS/Azure parity. #61/#57/#55 remain OPEN for authentic signed FIDO R46 JWS/x5c, issuer-CRL/OCSP and authoritative update process. #53/#44/#50/#46/#38 also remain OPEN.
+6. No schema migration (V017 remains the latest), SQL grant, registrar activation, hardware trust anchor, network, Azure-only dependency or production signing key. V015/V016 SQL freeze and suspended registrar CLI remain in force. ADR precedes test/implementation; exactly four GitHub Actions jobs must succeed on final main HEAD before closing **only #65**.
+
+## Sources
+
+- [ADR 0033](0033-non-authorizing-external-signed-checkpoint-witness-reconciliation.md)
+- [PostgreSQL 17 COPY](https://www.postgresql.org/docs/17/sql-copy.html)
+- [Npgsql COPY](https://www.npgsql.org/doc/copy.html)
+- [FIDO MDS changelog and R3→R46 transition](https://fidoalliance.org/mds-changelog/)
