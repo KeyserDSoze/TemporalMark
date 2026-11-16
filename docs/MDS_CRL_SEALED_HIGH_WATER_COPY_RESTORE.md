@@ -38,3 +38,7 @@ No new SQL migrations (V017 remains latest), new SQL grants, network access, clo
 - [ADR 0033 signed witness](MDS_CRL_SIGNED_WITNESS_RECONCILIATION.md)
 - [PostgreSQL 17 COPY](https://www.postgresql.org/docs/17/sql-copy.html)
 - [Npgsql COPY](https://www.npgsql.org/doc/copy.html)
+
+## From scoped COPY to full logical PostgreSQL archive regression (#66)
+
+Companion [ADR 0035](../adr/0035-test-only-full-logical-pg-dump-restore-vs-signed-seal.md) and [runbook](MDS_CRL_FULL_PGDUMP_RESTORE_TEST.md) add a separate mandatory Docker CI test: `pg_dump -Fc` of the **entire** disposable TemporalMark PostgreSQL database, then `pg_restore` to a second new database (same PostgreSQL server) with ACLs preserved and 17 migration history entries checked. It reuses **the same** ADR 0033/0034 signed-witness cryptography and read-only snapshot verifier against old restored serial 3 and current serial 4; the test latest-seal hash remains only in its own CI process. This is not a physical backup or independently held immutable witness: an operator substituting old database + old seal + old latest-pin can still induce merely `UNAPPROVED`. #64/#61 and official R46/CRL trust #57/#55 stay open; no new SQL grants, eIDAS, WORM or active WebAuthn credentials.
