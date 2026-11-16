@@ -12,6 +12,8 @@ export default defineConfig({
         short_name: "TemporalMark",
         description: "Gestione multi-tenant delle evidenze di marca temporale.",
         display: "standalone",
+        // Stable origin-scoped installed-app identity, independent of future start_url changes.
+        id: "/",
         start_url: "/",
         scope: "/",
         theme_color: "#0f172a",

@@ -1,4 +1,4 @@
-import { test, expect, devices } from "@playwright/test";
+import { test, expect } from "@playwright/test";
 
 /**
  * Production-build Android-Chromium emulation, not native Android/iOS installation.
