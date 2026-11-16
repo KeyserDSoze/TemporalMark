@@ -124,7 +124,8 @@ public sealed class ExternalRfc3161SignerPinPolicyTests
         var provider = new ExternalRfc3161TimestampProvider(
             http, TestEndpoint, "operator-approved-identity", approvedSignerCertificateSha256: pin,
             approvedPolicyOid: "1.3.6.1.4.1.4146.2.2",
-            approvedTrustAnchorCertificateBase64Der: ExternalRfc3161TrustRootTestFixture.Base64Der);
+            approvedTrustAnchorCertificateBase64Der: ExternalRfc3161TrustRootTestFixture.Base64Der,
+            approvedIssuerCrlBase64Der: ExternalRfc3161TrustRootTestFixture.CrlBase64Der);
 
         await Assert.ThrowsAsync<TimestampProviderUnavailableException>(() =>
             provider.RequestAsync(new byte[32], CancellationToken.None));
@@ -140,7 +141,8 @@ public sealed class ExternalRfc3161SignerPinPolicyTests
             http, TestEndpoint, "operator-approved-identity",
             approvedSignerCertificateSha256: ExampleSha256Pin,
             approvedPolicyOid: "1.3.6.1.4.1.4146.2.2",
-            approvedTrustAnchorCertificateBase64Der: ExternalRfc3161TrustRootTestFixture.Base64Der);
+            approvedTrustAnchorCertificateBase64Der: ExternalRfc3161TrustRootTestFixture.Base64Der,
+            approvedIssuerCrlBase64Der: ExternalRfc3161TrustRootTestFixture.CrlBase64Der);
 
         await Assert.ThrowsAsync<TimestampProviderResponseException>(() =>
             provider.RequestAsync(new byte[32], CancellationToken.None));
