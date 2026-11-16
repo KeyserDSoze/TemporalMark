@@ -181,7 +181,8 @@ public sealed class MdsUnapprovedCheckpointPostgresTests
         // NOT prove that a real DB restore could be detected automatically.
         await using (var simulate = new NpgsqlCommand("""
             UPDATE public.mds_unapproved_candidate_checkpoints
-            SET expires_utc=clock_timestamp()-interval '1 second'
+            SET observed_utc=clock_timestamp()-interval '2 hours',
+                expires_utc=clock_timestamp()-interval '1 hour'
             WHERE candidate_kind=@kind AND issuer_key_sha256=@issuer
             """, db))
         {
