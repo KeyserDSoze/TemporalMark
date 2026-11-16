@@ -12,6 +12,7 @@ namespace TemporalMark.Postgres.Tests;
 /// second postgres:17.6 Docker profile. No production immutable witness,
 /// approved FIDO manufacturer certificate or reviewer authorization.
 /// </summary>
+[Collection("TemporalMarkFullLogicalRestoreSerial")]
 public sealed class MdsSeparatePostgresWitnessRestoreTests
 {
     private static string Required(string name) =>
