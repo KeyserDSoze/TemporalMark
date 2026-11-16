@@ -310,3 +310,8 @@ The previous [#69](https://github.com/KeyserDSoze/TemporalMark/issues/69) four-j
 - [x] Add development-only Keycloak principal and access-token org claim fixtures, independent wrong-audience and short-lived signed JWT clients. First fixture [CI 43893706831](https://github.com/KeyserDSoze/TemporalMark/actions/runs/43893706831) reveals account `resolve_required_actions` in Keycloak; complete required demo profile fields.
 - [x] Test strict JWT issuer/audience/lifetime distinction (API `ClockSkew=0`), actual PostgreSQL B membership/identity, positive/negative A/B own/cross-tenant list, summary, TSR, ZIP, audit, spoofed selectors, disabled TSA, all no-store and prepared-audit semantics. See [runbook](CI_API_TENANT_HTTP_ISOLATION.md).
 - [ ] Verify exact-final-main four-job CI GREEN including the entire new genuine HTTP matrix; only then close #82. Production RLS, independently trusted identity, WORM/QTSP and signed reviewer/registrar authorization remain open under parents #20/#14 and #64/#61/#57/#50/#44/#38/#17/#13.
+
+### #82 actual HTTP PASS and fixture sequencing
+
+- [x] [CI 43895442047](https://github.com/KeyserDSoze/TemporalMark/actions/runs/43895442047): full real HTTP A/B isolation matrix PASS, including genuine signed wrong issuer/audience/expired JWT, inactive SQL membership, both sides' ZIP/TSR/audit, selector spoofing, and disabled TSA. Existing *single-tenant empty-registry* browser smoke then fails because new canary A was inserted first.
+- [x] Preserve the original empty-registry browser assertion and run it **before** the new disposable canary step; continue running the new real API matrix last before guaranteed Docker teardown. Exact-final-head four-job CI remains required before #82 closure.

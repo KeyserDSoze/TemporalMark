@@ -35,3 +35,9 @@ Do not reuse test passwords/realm config outside local development. Because this
 - Final full four-job acceptance and exact SHA to be recorded in [issue #82](https://github.com/KeyserDSoze/TemporalMark/issues/82) **only after observed success**.
 
 **Nonclaims:** not HTTP evidence of global RLS, IdP live revocation/identity governance, actual FIDO human consent, registered QTSP qualification, immutable evidence, signed WORM custody or validated external TSA. Security #64/#61/#57/#50/#44/#38/#17/#13 and V015/V016 fail-closed interlocks remain unchanged.
+
+### Integration ordering regression and correction
+
+[CI 43895442047](https://github.com/KeyserDSoze/TemporalMark/actions/runs/43895442047), commit `d12099b`, **passed the entire new real signed-JWT / two-sided tenant HTTP test** after the complete synthetic Keycloak profiles and strict API token expiration change. The final *existing* `authenticated.spec.ts` PWA smoke then failed because the new tenant test had **already seeded an A canary record**, while that preexisting browser test explicitly expects an empty registry (`Nessuna marca registrata nel periodo selezionato.`). This was a test-fixture lifetime/order conflict, not an API cross-tenant failure.
+
+Do **not** weaken the original empty-dashboard browser test or delete append-only audit rows to mask the fixture. Run the existing `OIDC admin login and disabled external TSA smoke` **before** the new canary-seeding `api-tenant-isolation.py` step, then execute the new HTTP matrix as the **last functional** step before diagnostics/volume teardown. Preserve `if: always()` cleanup in CI. Only final exact-main four-job GREEN is acceptance evidence.

@@ -178,13 +178,15 @@ jobs:
           python3 tests/integration/configure-keycloak-registrar-mfa-ci.py restore-registrar-role
           python3 tests/integration/configure-keycloak-registrar-mfa-ci.py disable-registrar
           TEMPORALMARK_CI_REGISTRAR_EXPECT_DENIAL=true dotnet test tests/backend/TemporalMark.Provisioner.Tests/TemporalMark.Provisioner.Tests.csproj --configuration Release -p:RestoreLockedMode=true --filter 'FullyQualifiedName~RealKeycloakRegistrarMfaEndToEndTests'
+      - name: OIDC admin login and disabled external TSA smoke
+        working-directory: tests/frontend
+        run: npx playwright test --config authenticated.config.ts
+      # This destructive CI-only canary fixture runs LAST: the original
+      # authenticated browser smoke intentionally starts from an empty registry.
       - name: Real two-tenant signed Keycloak and PostgreSQL API 401/403 isolation (#82)
         env:
           TEMPORALMARK_CI_API_ISOLATION: "1"
         run: python3 tests/integration/api-tenant-isolation.py
-      - name: OIDC admin login and disabled external TSA smoke
-        working-directory: tests/frontend
-        run: npx playwright test --config authenticated.config.ts
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         if: failure()
         with:
