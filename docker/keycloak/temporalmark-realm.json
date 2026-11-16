@@ -108,6 +108,19 @@
       "redirectUris": [],
       "protocolMappers": [
         {
+          "name": "ci-isolation-organization-attribute",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.attribute": "organization_id",
+            "claim.name": "organization_id",
+            "jsonType.label": "String",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        },
+        {
           "name": "local-test-realm-roles",
           "protocol": "openid-connect",
           "protocolMapper": "oidc-usermodel-realm-role-mapper",
@@ -202,6 +215,73 @@
       "implicitFlowEnabled": false,
       "serviceAccountsEnabled": true,
       "fullScopeAllowed": true
+    },
+    {
+      "clientId": "temporalmark-isolation-no-api-audience-ci",
+      "name": "CI ONLY signed valid JWT without API audience, for negative authentication test",
+      "protocol": "openid-connect",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "implicitFlowEnabled": false,
+      "serviceAccountsEnabled": false,
+      "fullScopeAllowed": false,
+      "redirectUris": [],
+      "protocolMappers": []
+    },
+    {
+      "clientId": "temporalmark-isolation-short-token-ci",
+      "name": "CI ONLY genuinely expiring JWT with 3s lifespan, not a production client",
+      "protocol": "openid-connect",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "implicitFlowEnabled": false,
+      "serviceAccountsEnabled": false,
+      "fullScopeAllowed": false,
+      "attributes": {
+        "access.token.lifespan": "3"
+      },
+      "redirectUris": [],
+      "protocolMappers": [
+        {
+          "name": "ci-isolation-organization-attribute",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.attribute": "organization_id",
+            "claim.name": "organization_id",
+            "jsonType.label": "String",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        },
+        {
+          "name": "ci-isolation-roles",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "role",
+            "multivalued": "true",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        },
+        {
+          "name": "ci-isolation-api-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "temporalmark-api",
+            "access.token.claim": "true"
+          }
+        }
+      ]
     }
   ],
   "users": [
@@ -282,6 +362,85 @@
         {
           "type": "password",
           "value": "local-approver-only",
+          "temporary": false
+        }
+      ]
+    },
+    {
+      "id": "00000000-0000-0000-0000-000000000082",
+      "username": "demo-tenant-b",
+      "enabled": true,
+      "emailVerified": true,
+      "realmRoles": [
+        "tenant_admin"
+      ],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "local-tenant-b-only",
+          "temporary": false
+        }
+      ],
+      "attributes": {
+        "organization_id": [
+          "22222222-2222-2222-2222-222222222222"
+        ]
+      }
+    },
+    {
+      "id": "00000000-0000-0000-0000-000000000083",
+      "username": "demo-tenant-disabled",
+      "enabled": true,
+      "emailVerified": true,
+      "realmRoles": [
+        "tenant_admin"
+      ],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "local-disabled-only",
+          "temporary": false
+        }
+      ],
+      "attributes": {
+        "organization_id": [
+          "22222222-2222-2222-2222-222222222222"
+        ]
+      }
+    },
+    {
+      "id": "00000000-0000-0000-0000-000000000084",
+      "username": "demo-tenant-member",
+      "enabled": true,
+      "emailVerified": true,
+      "realmRoles": [
+        "tenant_member"
+      ],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "local-member-only",
+          "temporary": false
+        }
+      ],
+      "attributes": {
+        "organization_id": [
+          "11111111-1111-1111-1111-111111111111"
+        ]
+      }
+    },
+    {
+      "id": "00000000-0000-0000-0000-000000000085",
+      "username": "demo-isolation-no-org",
+      "enabled": true,
+      "emailVerified": true,
+      "realmRoles": [
+        "tenant_admin"
+      ],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "local-no-org-only",
           "temporary": false
         }
       ]

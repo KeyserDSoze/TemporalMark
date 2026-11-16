@@ -256,8 +256,7 @@ def main():
     _, raw = must_status("local disposable IdP metadata", well_known, 200)
     if json.loads(raw).get("issuer") != ISSUER:
         raise AssertionError("Refusing to use unexpected OIDC issuer")
-    if not (b"temporalmark" in checked_http(API + "/healthz")[2] or
-            checked_http(API + "/healthz")[0] == 200):
+    if checked_http(API + "/healthz")[0] != 200:
         raise AssertionError("Real compiled API is unavailable")
 
     check_unauthed()
@@ -267,7 +266,7 @@ def main():
     a_token = keycloak_token("demo-admin", "local-dev-only")
     member_token = keycloak_token("demo-tenant-member", "local-member-only")
     disabled_token = keycloak_token("demo-tenant-disabled", "local-disabled-only")
-    no_org_token = keycloak_token("demo-initial-admin", "local-admin-only")
+    no_org_token = keycloak_token("demo-isolation-no-org", "local-no-org-only")
     for label, token, org, sub in [
         ("A", a_token, ORG_A, SUB_A),
         ("B", b_token, ORG_B, SUB_B)
