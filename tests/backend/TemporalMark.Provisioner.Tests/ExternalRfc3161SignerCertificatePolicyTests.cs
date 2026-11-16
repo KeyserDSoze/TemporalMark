@@ -1,3 +1,4 @@
+using System.Formats.Asn1;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using TemporalMark.Business.Stamping;
@@ -100,11 +101,66 @@ public sealed class ExternalRfc3161SignerCertificatePolicyTests
     [Fact]
     public void MultipleEkuExtensionsAreRejectedEvenIfOneIsValid()
     {
-        using var certificate = CreateCertificate(
-            Eku(true, TimeStampingOid),
-            Eku(true, ServerAuthenticationOid));
+        // CertificateRequest deliberately forbids duplicate extensions.
+        // Create a duplicate ASN.1 X.509 extension from a disposable fixture:
+        // certificate signature will be invalid, which is OK here because
+        // this test covers ONLY raw signer-certificate EKU profile parsing.
+        using var original = CreateCertificate(Eku(true, TimeStampingOid));
+        using var duplicateExtension = DuplicateEkuInSyntheticCertificate(original);
 
-        AssertRejected(certificate);
+        AssertRejected(duplicateExtension);
+    }
+
+    private static X509Certificate2 DuplicateEkuInSyntheticCertificate(
+        X509Certificate2 original)
+    {
+        // X.509 Certificate ::= SEQUENCE { tbsCertificate, signatureAlgorithm,
+        // signatureValue }. Modify only the [3] EXPLICIT extensions field of
+        // tbsCertificate and copy the original (now invalid) signature verbatim.
+        // The test never uses VerifySignature on this intentionally invalid cert.
+        var outer = new AsnReader(original.RawData, AsnEncodingRules.DER).ReadSequence();
+        var originalTbs = outer.ReadEncodedValue();
+        var algorithm = outer.ReadEncodedValue();
+        var signature = outer.ReadEncodedValue();
+
+        var tbs = new AsnReader(originalTbs, AsnEncodingRules.DER).ReadSequence();
+        var fields = new List<ReadOnlyMemory<byte>>();
+        while (tbs.HasData)
+            fields.Add(tbs.ReadEncodedValue());
+
+        var explicitTag = new Asn1Tag(TagClass.ContextSpecific, 3, isConstructed: true);
+        var extensionContainer = new AsnReader(fields[^1], AsnEncodingRules.DER)
+            .ReadSequence(explicitTag);
+        var extensions = extensionContainer.ReadSequence();
+        var encodedExtensions = new List<ReadOnlyMemory<byte>>();
+        while (extensions.HasData)
+            encodedExtensions.Add(extensions.ReadEncodedValue());
+
+        Assert.Single(encodedExtensions);
+
+        var duplicateList = new AsnWriter(AsnEncodingRules.DER);
+        duplicateList.PushSequence(explicitTag);
+        duplicateList.PushSequence();
+        duplicateList.WriteEncodedValue(encodedExtensions[0].Span);
+        duplicateList.WriteEncodedValue(encodedExtensions[0].Span);
+        duplicateList.PopSequence();
+        duplicateList.PopSequence(explicitTag);
+
+        var modifiedTbs = new AsnWriter(AsnEncodingRules.DER);
+        modifiedTbs.PushSequence();
+        foreach (var field in fields.Take(fields.Count - 1))
+            modifiedTbs.WriteEncodedValue(field.Span);
+        modifiedTbs.WriteEncodedValue(duplicateList.Encode());
+        modifiedTbs.PopSequence();
+
+        var modifiedCertificate = new AsnWriter(AsnEncodingRules.DER);
+        modifiedCertificate.PushSequence();
+        modifiedCertificate.WriteEncodedValue(modifiedTbs.Encode());
+        modifiedCertificate.WriteEncodedValue(algorithm.Span);
+        modifiedCertificate.WriteEncodedValue(signature.Span);
+        modifiedCertificate.PopSequence();
+
+        return X509CertificateLoader.LoadCertificate(modifiedCertificate.Encode());
     }
 
     private static void AssertRejected(X509Certificate2 certificate)
