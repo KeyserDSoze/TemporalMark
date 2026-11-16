@@ -31,7 +31,7 @@ def check_text(source: str, name: str) -> tuple[list[str], int]:
         ref = parse_value(match.group(1))
         if PIN.fullmatch(ref) or (
             LOCAL.fullmatch(ref)
-            and all(component not in (".", "..") for component in ref.split("/"))
+            and all(component not in (".", "..") for component in ref.split("/")[1:])
         ):
             continue
         errors.append(f"{name}:{number}: floating or invalid uses reference: {ref!r}")
