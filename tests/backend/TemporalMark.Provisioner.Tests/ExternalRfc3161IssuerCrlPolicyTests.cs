@@ -139,9 +139,10 @@ public sealed class ExternalRfc3161IssuerCrlPolicyTests
         var when = DateTimeOffset.UtcNow;
         var crl = BuildCrl(root, when);
 
+        byte[] trailingDer = [.. crl, 0x00];
         Assert.Throws<TimestampProviderResponseException>(() =>
             ExternalRfc3161IssuerCrlPolicy.ValidateDirectIssuerLeaf(
-                leaf, root, [.. crl, 0x00], when));
+                leaf, root, trailingDer, when));
         Assert.Throws<TimestampProviderResponseException>(() =>
             ExternalRfc3161IssuerCrlPolicy.ValidateDirectIssuerLeaf(
                 leaf, root, new byte[] { 0x05, 0x00 }, when));
