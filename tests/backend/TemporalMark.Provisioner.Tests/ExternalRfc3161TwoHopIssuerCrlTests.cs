@@ -104,10 +104,12 @@ public sealed class ExternalRfc3161TwoHopIssuerCrlTests
 
         // Both middle CAs share an X.500 name; only one is on the
         // certificate-signature-validated chain.
+        var cmsCertificates = new X509Certificate2Collection();
+        cmsCertificates.Add(actualMiddle);
+        cmsCertificates.Add(impostorMiddle);
         Assert.Throws<TimestampProviderResponseException>(() =>
             ExternalRfc3161IssuerCrlPolicy.ValidateSignerPathRevocation(
-                signer, root,
-                new X509Certificate2Collection(actualMiddle, impostorMiddle),
+                signer, root, cmsCertificates,
                 rootCrl, impostorCrl, SignedGenTime));
     }
 
