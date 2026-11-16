@@ -94,6 +94,10 @@ jobs:
           TEMPORALMARK_PROVISIONING_TEST_DB: "Host=127.0.0.1;Port=5432;Database=temporalmark;Username=temporalmark_provisioner;Password=local-provisioner-only"
           TEMPORALMARK_APPROVER_TEST_DB: "Host=127.0.0.1;Port=5432;Database=temporalmark;Username=temporalmark_approver;Password=local-approver-only"
         run: dotnet test tests/backend/TemporalMark.Postgres.Tests/TemporalMark.Postgres.Tests.csproj --configuration Release
+      - name: Real PostgreSQL full logical pg_dump and pg_restore sealed-witness rollback regression
+        env:
+          TEMPORALMARK_TEST_DB: "Host=127.0.0.1;Port=5432;Database=temporalmark;Username=temporalmark;Password=local-dev-only"
+        run: bash tests/integration/mds-full-pgdump-restore.sh
       - name: OIDC-signed operator enrollment and database replay smoke
         run: bash tests/integration/provisioning-smoke.sh
       - name: Real browser Keycloak registrar + reviewer TOTP/PKCE, live current-role .NET smoke
