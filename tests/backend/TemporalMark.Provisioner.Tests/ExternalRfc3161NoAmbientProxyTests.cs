@@ -18,7 +18,7 @@ public sealed class ExternalRfc3161NoAmbientProxyTests
         Assert.False(handler.UseProxy);
         Assert.Null(handler.Proxy);
         Assert.Null(handler.DefaultProxyCredentials);
-        Assert.False(handler.UseDefaultCredentials);
+        // SocketsHttpHandler exposes Credentials directly (not UseDefaultCredentials).
         Assert.Null(handler.Credentials);
         Assert.False(handler.PreAuthenticate);
     }
