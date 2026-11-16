@@ -160,7 +160,7 @@ public static class ReviewerMdsOfflineFileHighWaterJournal
         {
             if (!CryptographicOperations.FixedTimeEquals(
                 SHA256.HashData(key.ExportSubjectPublicKeyInfo()),
-                Convert.FromHexString(pin)))
+                Convert.FromHexString(pin!)))
                 throw Denied();
         }
         catch (Exception error) when (error is not OutOfMemoryException)
