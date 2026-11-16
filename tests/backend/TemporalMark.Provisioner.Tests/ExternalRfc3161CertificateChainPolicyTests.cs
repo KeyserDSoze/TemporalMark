@@ -176,7 +176,7 @@ public sealed class ExternalRfc3161CertificateChainPolicyTests
         using var leaf = CreateSigner(root);
         using var approved = ParseRoot(root);
         ExternalRfc3161CertificateChainPolicy.ValidateSignerChain(
-            leaf, approved, new X509Certificate2Collection());
+            leaf, approved, new X509Certificate2Collection(), DateTimeOffset.UtcNow);
     }
 
     [Fact]
@@ -189,7 +189,7 @@ public sealed class ExternalRfc3161CertificateChainPolicyTests
 
         Assert.Throws<TimestampProviderResponseException>(() =>
             ExternalRfc3161CertificateChainPolicy.ValidateSignerChain(
-                leaf, approved, new X509Certificate2Collection(root)));
+                leaf, approved, new X509Certificate2Collection(root), DateTimeOffset.UtcNow));
     }
 
     [Fact]
@@ -200,7 +200,7 @@ public sealed class ExternalRfc3161CertificateChainPolicyTests
         using var approved = ParseRoot(root);
         Assert.Throws<TimestampProviderResponseException>(() =>
             ExternalRfc3161CertificateChainPolicy.ValidateSignerChain(
-                unapprovedSelfSigned, approved, new X509Certificate2Collection()));
+                unapprovedSelfSigned, approved, new X509Certificate2Collection(), DateTimeOffset.UtcNow));
     }
 
     [Fact]
@@ -213,7 +213,7 @@ public sealed class ExternalRfc3161CertificateChainPolicyTests
 
         Assert.Throws<TimestampProviderResponseException>(() =>
             ExternalRfc3161CertificateChainPolicy.ValidateSignerChain(
-                expiredLeaf, approved, new X509Certificate2Collection()));
+                expiredLeaf, approved, new X509Certificate2Collection(), DateTimeOffset.UtcNow));
     }
 
     [Fact]
@@ -226,10 +226,10 @@ public sealed class ExternalRfc3161CertificateChainPolicyTests
 
         Assert.Throws<TimestampProviderResponseException>(() =>
             ExternalRfc3161CertificateChainPolicy.ValidateSignerChain(
-                leaf, approved, new X509Certificate2Collection()));
+                leaf, approved, new X509Certificate2Collection(), DateTimeOffset.UtcNow));
 
         ExternalRfc3161CertificateChainPolicy.ValidateSignerChain(
-            leaf, approved, new X509Certificate2Collection(intermediate));
+            leaf, approved, new X509Certificate2Collection(intermediate), DateTimeOffset.UtcNow);
     }
 
     [Fact]
@@ -248,7 +248,7 @@ public sealed class ExternalRfc3161CertificateChainPolicyTests
 
         Assert.Throws<TimestampProviderResponseException>(() =>
             ExternalRfc3161CertificateChainPolicy.ValidateSignerChain(
-                tampered, approved, new X509Certificate2Collection()));
+                tampered, approved, new X509Certificate2Collection(), DateTimeOffset.UtcNow));
     }
 
     [Fact]
@@ -257,7 +257,7 @@ public sealed class ExternalRfc3161CertificateChainPolicyTests
         using var root = CreateRoot();
         using var approved = ParseRoot(root);
         using var chain = ExternalRfc3161CertificateChainPolicy.CreateOfflineChain(
-            approved, new X509Certificate2Collection());
+            approved, new X509Certificate2Collection(), DateTimeOffset.UtcNow);
 
         Assert.Equal(X509ChainTrustMode.CustomRootTrust, chain.ChainPolicy.TrustMode);
         Assert.Single(chain.ChainPolicy.CustomTrustStore);
@@ -276,7 +276,7 @@ public sealed class ExternalRfc3161CertificateChainPolicyTests
 
         Assert.Throws<TimestampProviderResponseException>(() =>
             ExternalRfc3161CertificateChainPolicy.ValidateSignerChain(
-                null, approved, new X509Certificate2Collection()));
+                null, approved, new X509Certificate2Collection(), DateTimeOffset.UtcNow));
     }
 
     [Theory]
