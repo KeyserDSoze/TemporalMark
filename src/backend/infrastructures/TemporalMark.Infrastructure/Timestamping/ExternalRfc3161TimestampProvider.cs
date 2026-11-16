@@ -16,7 +16,8 @@ public sealed class ExternalRfc3161TimestampProvider(
     Uri? providerEndpoint,
     string providerId,
     bool allowDevelopmentLoopback = false,
-    string? approvedSignerCertificateSha256 = null) : ITimestampProvider
+    string? approvedSignerCertificateSha256 = null,
+    string? approvedPolicyOid = null) : ITimestampProvider
 {
     private const int MaxResponseBytes = 1024 * 1024;
 
@@ -34,6 +35,10 @@ public sealed class ExternalRfc3161TimestampProvider(
         // The pin identifies the RFC 3161 CMS signer, NOT the HTTPS server.
         var signerPin = ExternalRfc3161SignerPinPolicy.ParseRequiredSha256(
             approvedSignerCertificateSha256);
+        // The caller may not let the TSA choose an arbitrary signing policy.
+        // Enforce canonical operator-owned reqPolicy before any outbound HTTP.
+        var reviewedPolicy = ExternalRfc3161ApprovedPolicy.ParseRequiredPolicyOid(
+            approvedPolicyOid);
 
         if (sha256Digest.Length != 32)
             throw new ArgumentException("RFC 3161 SHA-256 imprint must have 32 bytes.", nameof(sha256Digest));
@@ -42,6 +47,7 @@ public sealed class ExternalRfc3161TimestampProvider(
         var nonce = RandomNumberGenerator.GetBytes(16);
         var timeRequest = Rfc3161TimestampRequest.CreateFromHash(
             sha256Digest.AsMemory(), HashAlgorithmName.SHA256,
+            requestedPolicyId: reviewedPolicy,
             nonce: nonce.AsMemory(), requestSignerCertificates: true);
         request.Content = new ByteArrayContent(timeRequest.Encode());
         request.Content.Headers.ContentType = new MediaTypeHeaderValue("application/timestamp-query");
@@ -93,6 +99,10 @@ public sealed class ExternalRfc3161TimestampProvider(
                 // Verify the operator-reviewed full DER SHA-256 fingerprint of
                 // exactly the same cryptographically verified CMS signer.
                 ExternalRfc3161SignerPinPolicy.ValidateVerifiedSigner(signerCertificate, signerPin);
+                // RFC3161 §2.4.2: the signed TSTInfo.policy must be the
+                // explicitly requested, operator-approved TSA service policy.
+                ExternalRfc3161ApprovedPolicy.ValidateIssuedPolicy(
+                    token.TokenInfo.PolicyId, reviewedPolicy);
             }
             catch (CryptographicException)
             {
