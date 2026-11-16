@@ -1,7 +1,7 @@
 # Development/test stack ONLY — not WORM, certified time, QTSP or production security.
 services:
   postgres:
-    image: postgres:17.6-alpine
+    image: postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94
     restart: unless-stopped
     environment:
       POSTGRES_USER: temporalmark
@@ -22,7 +22,7 @@ services:
     # and read-only login; not an immutable witness or production service.
     # Never activated by the default on-prem/Azure application stack.
     profiles: ["witness-ci"]
-    image: postgres:17.6-alpine
+    image: postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94
     restart: "no"
     environment:
       POSTGRES_USER: temporalmark_witness_owner
@@ -40,7 +40,7 @@ services:
 
   migrate:
     # Runs versioned migrations against both new and existing development volumes.
-    image: postgres:17.6-alpine
+    image: postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94
     restart: "no"
     # Full shell command is ONE exec-form argument to -c, not a Compose-split command array.
     entrypoint: ["/bin/sh", "-c", "/bin/sh /scripts/apply-migrations.sh && /bin/sh /scripts/setup-local-db-roles.sh"]
@@ -63,7 +63,7 @@ services:
         condition: service_healthy
 
   keycloak:
-    image: quay.io/keycloak/keycloak:26.4.0
+    image: quay.io/keycloak/keycloak:26.4.0@sha256:5f3fb534cde6bf006d79f5912473e5d2c828c707cdfc52e16972803aca9d43dd
     command: ["start-dev", "--import-realm", "--hostname=http://localhost:8081"]
     environment:
       KC_BOOTSTRAP_ADMIN_USERNAME: local-admin
