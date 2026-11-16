@@ -18,6 +18,8 @@ jobs:
           python3 tests/integration/check_ci_action_pins.py
           python3 -m unittest discover -s tests/integration -p 'test_check_npm_lockfiles.py' -v
           python3 tests/integration/check_npm_lockfiles.py
+          python3 -m unittest discover -s tests/integration -p 'test_check_container_image_pins.py' -v
+          python3 tests/integration/check_container_image_pins.py
       - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
           dotnet-version: 10.0.x
@@ -49,6 +51,22 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
+      - name: Resolve public Docker image manifest digests for #76 (temporary seed)
+        run: |
+          set -euo pipefail
+          for image in \
+            postgres:17.6-alpine \
+            quay.io/keycloak/keycloak:26.4.0 \
+            node:22-alpine \
+            nginx:1.27-alpine \
+            mcr.microsoft.com/dotnet/sdk:10.0 \
+            mcr.microsoft.com/dotnet/aspnet:10.0; do
+            digest="$(docker buildx imagetools inspect "$image" | awk '$1=="Digest:" {print $2; exit}')"
+            if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+              echo "Unexpected/unavailable image digest for $image"; exit 1
+            fi
+            printf 'TEMPORALMARK_PUBLIC_IMAGE_DIGEST %s %s\n' "$image" "$digest"
+          done
       - name: Install and build React PWA
         working-directory: src/frontend
         run: |
