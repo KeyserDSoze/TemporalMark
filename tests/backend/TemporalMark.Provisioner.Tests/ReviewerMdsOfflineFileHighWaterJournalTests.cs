@@ -182,6 +182,25 @@ public sealed class ReviewerMdsOfflineFileHighWaterJournalTests
     }
 
     [Fact]
+    public void ReorderingEntireGenuineSignedLinesInvalidatesMonotonicHashChain()
+    {
+        using var f = new Fixture();
+        f.Bootstrap();
+        var first = f.Append(f.Payload(3, Hash("old"), new string('0', 64)));
+        f.Append(f.Payload(4, Hash("new"), first.PayloadSha256));
+        var signedLines = File.ReadAllText(f.PathName, Encoding.ASCII).Split('\n');
+        // Three signed/identified header lines, two genuine event lines,
+        // one terminal empty field. Tamper with order only, not signatures.
+        Assert.Equal(6, signedLines.Length);
+        (signedLines[3], signedLines[4]) = (signedLines[4], signedLines[3]);
+        File.WriteAllText(f.PathName, string.Join("\n", signedLines),
+            Encoding.ASCII);
+        Assert.Throws<UnauthorizedAccessException>(() => f.Read());
+        Assert.Throws<UnauthorizedAccessException>(() =>
+            f.Append(f.Payload(5, Hash("later"), first.PayloadSha256)));
+    }
+
+    [Fact]
     public async Task ConcurrentWriterCannotReplaceAlreadyAppendedSerial()
     {
         using var f = new Fixture();
