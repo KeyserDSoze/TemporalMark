@@ -53,6 +53,10 @@ builder.Services.AddScoped<ITimestampProvider>(sp =>
     // reviewed and installed by the deployment operator (not system CAs).
     var trustAnchorCertificateBase64Der =
         builder.Configuration["TimestampProvider:TrustAnchorCertificateBase64Der"];
+    // Deployment-owned, authenticated complete issuer CRL snapshot. Never
+    // follow untrusted CRL distribution URLs or read a tenant-supplied CRL.
+    var issuerCrlBase64Der =
+        builder.Configuration["TimestampProvider:IssuerCrlBase64Der"];
     if (!string.IsNullOrWhiteSpace(url) && !Uri.TryCreate(url, UriKind.Absolute, out _))
         throw new InvalidOperationException("TimestampProvider:Url must be a valid absolute URL.");
     var uri = string.IsNullOrWhiteSpace(url) ? null : new Uri(url);
@@ -66,7 +70,8 @@ builder.Services.AddScoped<ITimestampProvider>(sp =>
         uri, providerId, allowDevelopmentLoopback: allowDevelopmentLoopback,
         approvedSignerCertificateSha256: approvedSignerCertificateSha256,
         approvedPolicyOid: approvedPolicyOid,
-        approvedTrustAnchorCertificateBase64Der: trustAnchorCertificateBase64Der);
+        approvedTrustAnchorCertificateBase64Der: trustAnchorCertificateBase64Der,
+        approvedIssuerCrlBase64Der: issuerCrlBase64Der);
 });
 
 var origins = builder.Configuration.GetSection("Cors:Origins").Get<string[]>() ?? [];
