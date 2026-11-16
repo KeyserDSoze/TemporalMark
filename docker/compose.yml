@@ -17,6 +17,27 @@ services:
       retries: 20
       timeout: 3s
 
+  witness-postgres:
+    # CI-only second PostgreSQL SERVER with its own volume, credentials
+    # and read-only login; not an immutable witness or production service.
+    # Never activated by the default on-prem/Azure application stack.
+    profiles: ["witness-ci"]
+    image: postgres:17.6-alpine
+    restart: "no"
+    environment:
+      POSTGRES_USER: temporalmark_witness_owner
+      POSTGRES_PASSWORD: local-witness-owner-only
+      POSTGRES_DB: temporalmark_witness
+    volumes:
+      - witnesspgdata:/var/lib/postgresql/data
+      - ../tests/integration/mds-witness-postgres-init:/docker-entrypoint-initdb.d:ro
+    ports: ["127.0.0.1:5433:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U temporalmark_witness_owner -d temporalmark_witness"]
+      interval: 3s
+      retries: 20
+      timeout: 3s
+
   migrate:
     # Runs versioned migrations against both new and existing development volumes.
     image: postgres:17.6-alpine
@@ -88,3 +109,4 @@ services:
 volumes:
   pgdata:
   keycloakdata:
+  witnesspgdata:
