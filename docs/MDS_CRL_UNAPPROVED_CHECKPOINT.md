@@ -41,3 +41,7 @@ For on-prem use the existing PostgreSQL migration-owner one-shot migrator with a
 - [PostgreSQL 17 ON CONFLICT](https://www.postgresql.org/docs/17/sql-insert.html)
 - [PostgreSQL 17 row-level locks](https://www.postgresql.org/docs/17/explicit-locking.html)
 - [FIDO MDS changelog](https://fidoalliance.org/mds-changelog/)
+
+## Detached signed witness preflight remains non-authorizing (#63)
+
+ADR 0033 adds the [offline witness reconciliation runbook](MDS_CRL_SIGNED_WITNESS_RECONCILIATION.md) and a .NET 10 RSA-PSS SHA256 verification test against a PostgreSQL read-only, repeatable-read snapshot of one full source-policy partition. A signed manifest with **test-only caller-supplied key** can expose a restored-lower-version or changed digest when compared against the local V017 rows. It does **not** prove the test key is independently approved, the witness is the newest version, that production FIDO root R46/MDS CRLs have authentic provenance, or that an old database and old witness cannot be replayed together. The standalone witness result remains `UNAPPROVED`; no V018, CLI, SQL grant, enrollment or trusted metadata source is added. #61 and #57 remain open for true independent high-water-mark custody and audited R46 certificate revocation.
