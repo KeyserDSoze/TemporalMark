@@ -74,22 +74,15 @@ public sealed class ExternalRfc3161ResponseEnvelopeTests
     /// <summary>
     /// Throws if response DER is read at all; wrong envelopes must fail first.
     /// </summary>
-    private sealed class ReadDeniedContent(string? mime) : HttpContent
+    private sealed class ReadDeniedContent : HttpContent
     {
-        public bool ReadAttempted { get; private set; }
-
-        public ReadDeniedContent() : this(null) { }
-
-        // Primary constructor also configures headers.
-        // The property initializer is invoked before any read.
-        private readonly bool _configured = ConfigureMime(mime);
-
-        private bool ConfigureMime(string? value)
+        public ReadDeniedContent(string? mime)
         {
-            if (value is not null)
-                Headers.ContentType = MediaTypeHeaderValue.Parse(value);
-            return true;
+            if (mime is not null)
+                Headers.ContentType = MediaTypeHeaderValue.Parse(mime);
         }
+
+        public bool ReadAttempted { get; private set; }
 
         protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context)
         {
