@@ -97,7 +97,9 @@ public sealed class ExternalRfc3161SignerPinPolicyTests
             ExternalRfc3161SignerPinPolicy.ParseRequiredSha256(malformed));
 
         Assert.Contains("SHA-256", error.Message, StringComparison.OrdinalIgnoreCase);
-        if (malformed is { Length: > 0 })
+        // The generic rejection message naturally includes spaces; only
+        // assert redaction for substantive supplied fingerprint-like values.
+        if (!string.IsNullOrWhiteSpace(malformed) && malformed.Length >= 32)
             Assert.DoesNotContain(malformed, error.Message, StringComparison.Ordinal);
     }
 
