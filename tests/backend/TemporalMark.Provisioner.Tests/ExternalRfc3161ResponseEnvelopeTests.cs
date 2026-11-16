@@ -61,7 +61,8 @@ public sealed class ExternalRfc3161ResponseEnvelopeTests
         var provider = new ExternalRfc3161TimestampProvider(
             http, new Uri("https://tsa.example.invalid/issue"), "configured-test-tsa",
             approvedSignerCertificateSha256: new string('A', 64),
-            approvedPolicyOid: "1.3.6.1.4.1.4146.2.2");
+            approvedPolicyOid: "1.3.6.1.4.1.4146.2.2",
+            approvedTrustAnchorCertificateBase64Der: ExternalRfc3161TrustRootTestFixture.Base64Der);
         return await Assert.ThrowsAsync<TimestampProviderResponseException>(() =>
             provider.RequestAsync(new byte[32], CancellationToken.None));
     }
