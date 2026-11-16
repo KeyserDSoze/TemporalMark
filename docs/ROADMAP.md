@@ -320,9 +320,16 @@ The previous [#69](https://github.com/KeyserDSoze/TemporalMark/issues/69) four-j
 
 - [x] ADR 0052 and RED-first .NET 10 negative transport tests: no implicit redirect/cookie handling in the named TSA HttpClient; every 301/302/303/307/308 provider response rejected.
 - [x] Dedicated handler wired to `external-tsa` API registration on `main`; server-owned HTTPS endpoint, 20-second timeout and `Unverified` persisted state unchanged. [Transport runbook](TSA_HTTP_TRANSPORT.md).
-- [ ] Confirm four-job GitHub CI GREEN for the final exact `main` commit and close #83 only after this proof.
+- [x] #83 closed after verified exact final `main` SHA `c7c48bdebbc164785eac6bc73ee7c9678796553d` four-job [GREEN CI 43899567218](https://github.com/KeyserDSoze/TemporalMark/actions/runs/43899567218); parent #15 OPEN.
 - [ ] Parent #15 remains OPEN for complete signed RFC3161 / CMS / historical EU Trusted List, revocation, network egress allowlists, tested QTSP interoperability and legal status checks; WORM #17 and legal qualification #13 likewise remain OPEN.
 
 ### CI API isolation closeout (#82)
 
 - [x] #82 closed after four-job GREEN on exact `main` SHA `dfbbe87fdc2506afc5763ecce95cad398e4a147a`: [Actions run #391](https://github.com/KeyserDSoze/TemporalMark/actions/runs/43897042542). Production RLS and broader tenant management remain #14/#20.
+
+## RFC 3161 HTTP response envelope (#84; child of #15; ADR 0053)
+
+- [x] Re-read ADR 0002/0052, real provider and transport runbook; record strict 200-only (local policy) + exact `application/timestamp-reply` response MIME requirement, including RFC 3161 §3.4 verified erratum 1879 in [ADR 0053](../adr/0053-rfc3161-strict-http-response-envelope.md).
+- [x] RED-first [CI 43902202323](https://github.com/KeyserDSoze/TemporalMark/actions/runs/43902202323) at `869f61c3`: 10 targeted tests FAIL for premature body read on 201/202/204/206 and missing/wrong MIME; existing .NET business/domain tests and other provisioning tests PASS.
+- [x] Provider-only GREEN candidate: reject non-`200 OK` and wrong/missing `Content-Type` *before* reading DER. Preserve RFC3161 nonce/imprint/CMS check, 1 MiB cap, no redirect/cookies, HTTPS and `Unverified` semantics. Runbook: [TSA_HTTP_TRANSPORT.md](TSA_HTTP_TRANSPORT.md).
+- [ ] Close #84 only after exact final main four-job GREEN (backend, frontend, Docker Keycloak/PostgreSQL, Terraform). Parent QTSP #15, WORM #17, CAB #13 remain OPEN.
