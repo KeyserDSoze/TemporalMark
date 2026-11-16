@@ -31,3 +31,9 @@ For the dedicated genuine short-lived signed JWT case, Microsoft.IdentityModel.T
 The ZIP's internal manifest uses `JsonSerializer.SerializeAsync` without web camel-case options, hence its individual record property is `Id` (Pascal case); externally serialized HTTP list JSON uses web `id` casing. The integration test asserts each format as actually emitted, without weakening tenant scoping.
 
 Close #82 only after exact-final-main full four-job CI and the genuine two-sided canary evidence matrix pass.
+
+## Observed real integration success
+
+[Four-job CI 43897042542](https://github.com/KeyserDSoze/TemporalMark/actions/runs/43897042542) at `dfbbe87fdc2506afc5763ecce95cad398e4a147a`: backend, frontend, terraform and docker-smoke all SUCCESS; real Keycloak+PostgreSQL A/B `401/403` tenant test, old empty-registry PWA auth smoke, real PostgreSQL full witness backup/restore and Keycloak MFA all succeed. Earlier `d12099b` proved new A/B matrix green but exposed fixture ordering because its canary A was present during the empty-registry browser test; `dfbbe87` preserves both by running the original browser test first. Final documentation-inclusive HEAD validation is a separate close gate and must be recorded on the issue.
+
+The success is limited to disposable test users, synthetic *Unverified* evidence, the real API's existing SQL runtime role and the tested endpoints. It does not assert authorization continuity under real production identity revocation, SQL owner tampering, immutable audit custody, FIDO MDS trust, full PostgreSQL RLS or qualified time-stamping.
