@@ -108,7 +108,7 @@ public sealed class MdsSealedHighWaterCopyRestorePostgresTests
         Assert.Equal("UNAPPROVED", result.ReviewStatus);
         Assert.Equal("TEST_HIGH_WATER_SEAL_EXTERNAL_CUSTODY_UNPROVEN", result.PolicyStage);
         Assert.Equal(1, result.MatchedCandidates);
-        Assert.Equal(Hash(Convert.ToHexString(witness)), Hash(result.WitnessSha256));
+        Assert.Equal(Convert.ToHexString(SHA256.HashData(witness)), result.WitnessSha256);
         Assert.Equal(Convert.ToHexString(SHA256.HashData(seal)), result.SealSha256);
         Assert.DoesNotContain(typeof(ReviewerMdsSealedHighWaterCandidate).GetProperties(),
             p => p.Name.Contains("Trusted", StringComparison.OrdinalIgnoreCase) ||
