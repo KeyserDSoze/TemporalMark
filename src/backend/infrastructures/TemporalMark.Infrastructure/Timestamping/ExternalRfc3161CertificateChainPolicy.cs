@@ -5,7 +5,7 @@ using TemporalMark.Business.Stamping;
 namespace TemporalMark.Infrastructure.Timestamping;
 
 /// <summary>
-/// Offline, operator-anchored current-time PKIX path check for the *verified*
+/// Offline, operator-anchored issuance-time PKIX path check for the *verified*
 /// RFC3161 CMS signer. Revocation, historical EU Trusted Lists and legal QTSP
 /// qualification are NOT established by this policy.
 /// </summary>
@@ -99,7 +99,8 @@ public static class ExternalRfc3161CertificateChainPolicy
     /// </summary>
     public static X509Chain CreateOfflineChain(
         X509Certificate2 approvedRoot,
-        X509Certificate2Collection cmsCertificates)
+        X509Certificate2Collection cmsCertificates,
+        DateTimeOffset signedIssuanceTime)
     {
         ArgumentNullException.ThrowIfNull(approvedRoot);
         ArgumentNullException.ThrowIfNull(cmsCertificates);
@@ -111,7 +112,10 @@ public static class ExternalRfc3161CertificateChainPolicy
         chain.ChainPolicy.DisableCertificateDownloads = true;
         chain.ChainPolicy.RevocationMode = X509RevocationMode.NoCheck;
         chain.ChainPolicy.VerificationFlags = X509VerificationFlags.NoFlag;
-        chain.ChainPolicy.VerificationTime = DateTime.UtcNow;
+        // RFC3161: check certificate NotBefore/NotAfter at the SAME
+        // bounded, CMS-signed token genTime, not at validator wall-clock now.
+        // RevocationMode.NoCheck still does not assert historical revocation.
+        chain.ChainPolicy.VerificationTime = signedIssuanceTime.UtcDateTime;
         chain.ChainPolicy.ApplicationPolicy.Add(new Oid("1.3.6.1.5.5.7.3.8"));
         return chain;
     }
@@ -119,14 +123,16 @@ public static class ExternalRfc3161CertificateChainPolicy
     public static void ValidateSignerChain(
         X509Certificate2? verifiedSigner,
         X509Certificate2 approvedRoot,
-        X509Certificate2Collection cmsCertificates)
+        X509Certificate2Collection cmsCertificates,
+        DateTimeOffset signedIssuanceTime)
     {
         if (verifiedSigner is null || approvedRoot is null || cmsCertificates is null)
             throw new TimestampProviderResponseException(ResponseError);
 
         try
         {
-            using var chain = CreateOfflineChain(approvedRoot, cmsCertificates);
+            using var chain = CreateOfflineChain(
+                approvedRoot, cmsCertificates, signedIssuanceTime);
             if (!chain.Build(verifiedSigner) || chain.ChainElements.Count < 2)
                 throw new TimestampProviderResponseException(ResponseError);
 
