@@ -243,6 +243,28 @@ public sealed class MdsSeparatePostgresWitnessRestoreTests
         await Assert.ThrowsAsync<PostgresException>(() =>
             Stage(witnessReader, policy, 5, Hash("reader-cannot-write")));
 
+        // #73: witness reader can EXECUTE exactly the bounded history
+        // checker, without raw SELECT; the separate writer is denied.
+        static async Task<bool> History(NpgsqlConnection db, string scope,
+            long serial, string seal)
+        {
+            await using var cmd = new NpgsqlCommand("""
+                SELECT public.check_unapproved_witness_history(
+                    @policy,@serial,@seal)
+                """, db);
+            cmd.Parameters.AddWithValue("policy", scope);
+            cmd.Parameters.AddWithValue("serial", serial);
+            cmd.Parameters.AddWithValue("seal", seal);
+            return (bool)(await cmd.ExecuteScalarAsync() ??
+                throw new InvalidOperationException("No witness audit result"));
+        }
+        Assert.True(await History(witnessReader, policy, 4, latestSha));
+        Assert.False(await History(witnessReader, policy, 3, oldSha));
+        Assert.False(await History(witnessReader, policy, 4,
+            Hash("wrong-audit-seal")));
+        await Assert.ThrowsAsync<PostgresException>(() =>
+            History(witnessWriter, policy, 4, latestSha));
+
         Task<ReviewerMdsIsolatedPostgresWitnessCandidate> Check(
             NpgsqlConnection main, NpgsqlConnection external,
             byte[] witness, byte[] witnessSignature,
@@ -288,6 +310,79 @@ public sealed class MdsSeparatePostgresWitnessRestoreTests
         {
             await ChangeLatestAuditSha(latestSha);
         }
+
+        // Privileged deletion of latest audit event is detectable even
+        // though the checkpoint itself is still serial 4.
+        DateTime deletedEventObservation;
+        await using (var remove = new NpgsqlCommand("""
+            DELETE FROM public.unapproved_witness_events
+            WHERE source_policy_sha256=@policy AND candidate_serial=4
+            RETURNING observed_utc
+            """, witnessOwner))
+        {
+            remove.Parameters.AddWithValue("policy", policy);
+            deletedEventObservation = (DateTime)(
+                await remove.ExecuteScalarAsync() ??
+                throw new InvalidOperationException("Missing CI audit event"));
+        }
+        try
+        {
+            await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+                Check(primary, witnessReader, newWitness, newWitnessSig,
+                    newSeal, newSealSig, sealKeyPin));
+        }
+        finally
+        {
+            await using var restore = new NpgsqlCommand("""
+                INSERT INTO public.unapproved_witness_events
+                    (source_policy_sha256,candidate_serial,seal_sha256,observed_utc)
+                VALUES (@policy,4,@sha,@observed)
+                """, witnessOwner);
+            restore.Parameters.AddWithValue("policy", policy);
+            restore.Parameters.AddWithValue("sha", latestSha);
+            restore.Parameters.AddWithValue("observed", deletedEventObservation);
+            Assert.Equal(1, await restore.ExecuteNonQueryAsync());
+        }
+
+        // Earlier event changed to serial 10 produces a 10 -> 4 sequence.
+        // No monotonic checkpoint can be verified from that corrupt audit.
+        await using (var mutate = new NpgsqlCommand("""
+            UPDATE public.unapproved_witness_events SET candidate_serial=10
+            WHERE source_policy_sha256=@policy AND candidate_serial=3
+            """, witnessOwner))
+        {
+            mutate.Parameters.AddWithValue("policy", policy);
+            Assert.Equal(1, await mutate.ExecuteNonQueryAsync());
+        }
+        try
+        {
+            await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+                Check(primary, witnessReader, newWitness, newWitnessSig,
+                    newSeal, newSealSig, sealKeyPin));
+        }
+        finally
+        {
+            await using var restore = new NpgsqlCommand("""
+                UPDATE public.unapproved_witness_events SET candidate_serial=3
+                WHERE source_policy_sha256=@policy AND candidate_serial=10
+                """, witnessOwner);
+            restore.Parameters.AddWithValue("policy", policy);
+            Assert.Equal(1, await restore.ExecuteNonQueryAsync());
+        }
+
+        // Bounded traversal: 129 otherwise-valid synthetic events must
+        // refuse instead of silently trusting a truncated audit history.
+        var crowdedPolicy = Hash("audit-cap-" + Guid.NewGuid());
+        var crowdedLatestSha = "";
+        for (long serial = 1; serial <= 129; serial++)
+        {
+            crowdedLatestSha = Hash("audit-cap-seal-" + serial);
+            Assert.Equal("UNAPPROVED",
+                await Stage(witnessWriter, crowdedPolicy,
+                    serial, crowdedLatestSha));
+        }
+        Assert.False(await History(witnessReader, crowdedPolicy,
+            129, crowdedLatestSha));
 
         // A full logical restore of the main application DB to serial 3
         // does not roll back this SECOND PostgreSQL SERVER at serial 4.
@@ -426,20 +521,21 @@ public sealed class MdsSeparatePostgresWitnessRestoreTests
                 Assert.Equal(1, await update.ExecuteNonQueryAsync());
             }
 
+            DateTime? erasedAuditObservation = null;
             try
             {
                 await RewriteWitnessAsPrivilegedOwner(3, oldSha);
 
-                // Actual prior full pg_dump/pg_restore primary DB is at 3.
-                // The formerly signed old witness + rewritten second DB at
-                // 3 still passes the OLD two-source preflight UNAPPROVED.
-                var replayAcceptedByTwo = await Check(restored, witnessReader,
-                    oldWitness, oldWitnessSig, oldSeal, oldSealSig, sealKeyPin);
-                Assert.Equal("UNAPPROVED", replayAcceptedByTwo.ReviewStatus);
-                Assert.Equal(3L, replayAcceptedByTwo.LatestSerial);
+                // Real full pg_dump/pg_restore primary is at 3. The newest
+                // witness audit event is STILL at 4, so the two-source
+                // preflight must now DENY this partial SQL rollback.
+                await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+                    Check(restored, witnessReader,
+                        oldWitness, oldWitnessSig, oldSeal, oldSealSig,
+                        sealKeyPin));
 
-                // New file journal still retains 4, so three-store
-                // reconciliation must refuse coordinated SQL rollback.
+                // Retained signed file remains at 4 and three-source
+                // reconciliation must also refuse coordinated SQL rollback.
                 await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
                     CheckThree(restored, oldWitness, oldWitnessSig,
                         oldSeal, oldSealSig));
@@ -447,10 +543,33 @@ public sealed class MdsSeparatePostgresWitnessRestoreTests
                     CheckThree(primary, newWitness, newWitnessSig,
                         newSeal, newSealSig));
 
-                // Residual unsolved risk (EXPECTED): the privileged runner
-                // also replaces the journal with earlier correctly signed
-                // bytes. All three old values then agree, so this isolated
-                // check cannot establish that version 4 ever existed.
+                // RESIDUAL: a privileged witness superuser can delete the
+                // audit tail as well as roll back its checkpoint. A
+                // consistent old+old SQL state again passes UNAPPROVED.
+                await using (var erase = new NpgsqlCommand("""
+                    DELETE FROM public.unapproved_witness_events
+                    WHERE source_policy_sha256=@policy AND candidate_serial=4
+                    RETURNING observed_utc
+                    """, witnessOwner))
+                {
+                    erase.Parameters.AddWithValue("policy", policy);
+                    erasedAuditObservation = (DateTime)(
+                        await erase.ExecuteScalarAsync() ??
+                        throw new InvalidOperationException("Missing audit tail"));
+                }
+                var oldSqlReplay = await Check(restored, witnessReader,
+                    oldWitness, oldWitnessSig, oldSeal, oldSealSig, sealKeyPin);
+                Assert.Equal("UNAPPROVED", oldSqlReplay.ReviewStatus);
+                Assert.Equal(3L, oldSqlReplay.LatestSerial);
+
+                // The independent normal file still retains version 4.
+                await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+                    CheckThree(restored, oldWitness, oldWitnessSig,
+                        oldSeal, oldSealSig));
+
+                // With the SIGNED FILE ALSO restored to old valid bytes,
+                // ALL THREE mutable observations align at old serial 3.
+                // This explicitly proves no independent immutable custody.
                 File.WriteAllBytes(journalPath, replayableOldJournal);
                 var tripleRollbackStillUnapproved = await CheckThree(
                     restored, oldWitness, oldWitnessSig, oldSeal, oldSealSig);
@@ -460,7 +579,20 @@ public sealed class MdsSeparatePostgresWitnessRestoreTests
             }
             finally
             {
-                // Restore synthetic test state; no production authority.
+                if (erasedAuditObservation.HasValue)
+                {
+                    await using var restoreEvent = new NpgsqlCommand("""
+                        INSERT INTO public.unapproved_witness_events
+                            (source_policy_sha256,candidate_serial,seal_sha256,observed_utc)
+                        VALUES (@policy,4,@sha,@observed)
+                        """, witnessOwner);
+                    restoreEvent.Parameters.AddWithValue("policy", policy);
+                    restoreEvent.Parameters.AddWithValue("sha", latestSha);
+                    restoreEvent.Parameters.AddWithValue("observed",
+                        erasedAuditObservation.Value);
+                    Assert.Equal(1, await restoreEvent.ExecuteNonQueryAsync());
+                }
+                // Restore only the disposable CI fixture state.
                 await RewriteWitnessAsPrivilegedOwner(4, latestSha);
                 File.WriteAllBytes(journalPath, retainedLatestJournal);
             }
