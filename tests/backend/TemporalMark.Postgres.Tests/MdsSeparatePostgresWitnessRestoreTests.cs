@@ -38,10 +38,16 @@ public sealed class MdsSeparatePostgresWitnessRestoreTests
             Required("TEMPORALMARK_WITNESS_OWNER_TEST_DB"));
         await using var witnessReader = new NpgsqlConnection(
             Required("TEMPORALMARK_WITNESS_TEST_DB"));
+        await using var witnessWriter = new NpgsqlConnection(
+            Required("TEMPORALMARK_WITNESS_WRITER_TEST_DB"));
         await primary.OpenAsync();
         await restored.OpenAsync();
         await witnessOwner.OpenAsync();
         await witnessReader.OpenAsync();
+        // RED FIRST: CI does not yet bootstrap this non-superuser writer.
+        // The test must fail until the separate witness SQL grants exactly
+        // function EXECUTE and no direct state/audit access.
+        await witnessWriter.OpenAsync();
 
         // Prove this is a physically separate PostgreSQL 17 cluster,
         // rather than merely two databases on the same PostgreSQL server.
@@ -88,19 +94,19 @@ public sealed class MdsSeparatePostgresWitnessRestoreTests
                 throw new InvalidOperationException("Witness write missing result"));
         }
 
-        Assert.Equal("UNAPPROVED", await Stage(witnessOwner, policy, 3, oldSha));
-        Assert.Equal("UNAPPROVED", await Stage(witnessOwner, policy, 4, latestSha));
+        Assert.Equal("UNAPPROVED", await Stage(witnessWriter, policy, 3, oldSha));
+        Assert.Equal("UNAPPROVED", await Stage(witnessWriter, policy, 4, latestSha));
 
         // Version monotonicity enforced atomically by PostgreSQL SQL,
         // independently of main TemporalMark V017 and its pg_restore.
         await Assert.ThrowsAsync<PostgresException>(() =>
-            Stage(witnessOwner, policy, 3, oldSha));
+            Stage(witnessWriter, policy, 3, oldSha));
         await Assert.ThrowsAsync<PostgresException>(() =>
-            Stage(witnessOwner, policy, 4, Hash("same-version-different-seal")));
+            Stage(witnessWriter, policy, 4, Hash("same-version-different-seal")));
         await Assert.ThrowsAsync<PostgresException>(() =>
-            Stage(witnessOwner, policy, 4, latestSha));
+            Stage(witnessWriter, policy, 4, latestSha));
         await Assert.ThrowsAsync<PostgresException>(() =>
-            Stage(witnessOwner, policy, 5, "not-a-sha256"));
+            Stage(witnessWriter, policy, 5, "not-a-sha256"));
 
         await using (var audit = new NpgsqlCommand("""
             SELECT (SELECT candidate_serial
@@ -117,6 +123,93 @@ public sealed class MdsSeparatePostgresWitnessRestoreTests
             Assert.Equal(4L, row.GetInt64(0));
             Assert.Equal(2L, row.GetInt64(1));
             Assert.False(await row.ReadAsync());
+        }
+
+        // Writer is an ordinary login, NOT a member of the non-login
+        // definer and NOT a witness server superuser. It can EXECUTE one
+        // constrained function but cannot directly see/change any witness
+        // row, event, sequence, function body or database schema.
+        await using (var privilege = new NpgsqlCommand("""
+            SELECT current_user, session_user,
+                   r.rolsuper, r.rolcreaterole, r.rolcreatedb,
+                   r.rolreplication, r.rolinherit,
+                   has_function_privilege(current_user,
+                       'public.record_unapproved_highwater_witness(text,bigint,text)',
+                       'EXECUTE'),
+                   has_database_privilege(current_user,
+                       'temporalmark_witness', 'TEMPORARY'),
+                   has_schema_privilege(current_user, 'public', 'CREATE'),
+                   pg_has_role(current_user, 'temporalmark_witness_data_owner',
+                       'MEMBER'),
+                   has_sequence_privilege(current_user,
+                       'public.unapproved_witness_events_event_id_seq', 'USAGE'),
+                   (SELECT p.prosecdef FROM pg_catalog.pg_proc p
+                    WHERE p.oid =
+                    'public.record_unapproved_highwater_witness(text,bigint,text)'
+                        ::pg_catalog.regprocedure),
+                   (SELECT pg_catalog.pg_get_userbyid(c.relowner)
+                    FROM pg_catalog.pg_class c
+                    WHERE c.oid =
+                       'public.unapproved_witness_checkpoints'::pg_catalog.regclass),
+                   (SELECT pg_catalog.pg_get_userbyid(p.proowner)
+                    FROM pg_catalog.pg_proc p
+                    WHERE p.oid =
+                    'public.record_unapproved_highwater_witness(text,bigint,text)'
+                        ::pg_catalog.regprocedure)
+            FROM pg_catalog.pg_roles r WHERE r.rolname=current_user
+            """, witnessWriter))
+        await using (var row = await privilege.ExecuteReaderAsync())
+        {
+            Assert.True(await row.ReadAsync());
+            Assert.Equal("temporalmark_witness_writer", row.GetString(0));
+            Assert.Equal("temporalmark_witness_writer", row.GetString(1));
+            for (var i = 2; i <= 5; i++)
+                Assert.False(row.GetBoolean(i));
+            Assert.True(row.GetBoolean(7));
+            foreach (var index in new[] { 8, 9, 10, 11 })
+                Assert.False(row.GetBoolean(index));
+            Assert.True(row.GetBoolean(12));
+            Assert.Equal("temporalmark_witness_data_owner", row.GetString(13));
+            Assert.Equal("temporalmark_witness_data_owner", row.GetString(14));
+            Assert.False(await row.ReadAsync());
+        }
+
+        foreach (var relation in new[]
+                 {
+                     "public.unapproved_witness_checkpoints",
+                     "public.unapproved_witness_events"
+                 })
+        {
+            foreach (var operation in new[]
+                     {
+                         "SELECT", "INSERT", "UPDATE", "DELETE",
+                         "TRUNCATE", "REFERENCES", "TRIGGER"
+                     })
+            {
+                await using var grant = new NpgsqlCommand("""
+                    SELECT has_table_privilege(current_user,@relation,@permission)
+                    """, witnessWriter);
+                grant.Parameters.AddWithValue("relation", relation);
+                grant.Parameters.AddWithValue("permission", operation);
+                Assert.False((bool)(await grant.ExecuteScalarAsync())!);
+            }
+        }
+
+        foreach (var deniedSql in new[]
+                 {
+                     "SELECT count(*) FROM public.unapproved_witness_events",
+                     "SELECT count(*) FROM public.unapproved_witness_checkpoints",
+                     "DELETE FROM public.unapproved_witness_checkpoints",
+                     "TRUNCATE TABLE public.unapproved_witness_events",
+                     "UPDATE public.unapproved_witness_checkpoints SET candidate_serial=1",
+                     "CREATE TEMP TABLE witness_bypass (serial bigint)",
+                     "CREATE TABLE public.witness_bypass (serial bigint)",
+                     "SET ROLE temporalmark_witness_data_owner"
+                 })
+        {
+            await using var denied = new NpgsqlCommand(deniedSql, witnessWriter);
+            await Assert.ThrowsAsync<PostgresException>(() =>
+                denied.ExecuteNonQueryAsync());
         }
 
         // Reader is a different DB login on a separate PostgreSQL cluster.
