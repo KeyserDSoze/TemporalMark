@@ -49,6 +49,10 @@ builder.Services.AddScoped<ITimestampProvider>(sp =>
     // RFC3161 reqPolicy is operator-owned: never derive a policy from a
     // caller, tenant, HTTPS server or unverified TSA response.
     var approvedPolicyOid = builder.Configuration["TimestampProvider:PolicyOid"];
+    // Offline X.509 path root for verified CMS signer, independently
+    // reviewed and installed by the deployment operator (not system CAs).
+    var trustAnchorCertificateBase64Der =
+        builder.Configuration["TimestampProvider:TrustAnchorCertificateBase64Der"];
     if (!string.IsNullOrWhiteSpace(url) && !Uri.TryCreate(url, UriKind.Absolute, out _))
         throw new InvalidOperationException("TimestampProvider:Url must be a valid absolute URL.");
     var uri = string.IsNullOrWhiteSpace(url) ? null : new Uri(url);
@@ -61,7 +65,8 @@ builder.Services.AddScoped<ITimestampProvider>(sp =>
         sp.GetRequiredService<IHttpClientFactory>().CreateClient("external-tsa"),
         uri, providerId, allowDevelopmentLoopback: allowDevelopmentLoopback,
         approvedSignerCertificateSha256: approvedSignerCertificateSha256,
-        approvedPolicyOid: approvedPolicyOid);
+        approvedPolicyOid: approvedPolicyOid,
+        approvedTrustAnchorCertificateBase64Der: trustAnchorCertificateBase64Der);
 });
 
 var origins = builder.Configuration.GetSection("Cors:Origins").Get<string[]>() ?? [];
