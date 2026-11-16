@@ -41,6 +41,11 @@ builder.Services.AddScoped<ITimestampProvider>(sp =>
 {
     var url = builder.Configuration["TimestampProvider:Url"];
     var providerId = builder.Configuration["TimestampProvider:Id"] ?? "unknown";
+    // Operator-controlled identity of the RFC3161 *CMS signer* (not TLS peer).
+    // A configured TSA URL without this reviewed whole-DER SHA-256 pin
+    // cannot issue, even in Development: the provider fails before HTTP.
+    var approvedSignerCertificateSha256 =
+        builder.Configuration["TimestampProvider:SignerCertificateSha256"];
     if (!string.IsNullOrWhiteSpace(url) && !Uri.TryCreate(url, UriKind.Absolute, out _))
         throw new InvalidOperationException("TimestampProvider:Url must be a valid absolute URL.");
     var uri = string.IsNullOrWhiteSpace(url) ? null : new Uri(url);
@@ -51,7 +56,8 @@ builder.Services.AddScoped<ITimestampProvider>(sp =>
         ExternalRfc3161EndpointPolicy.Validate(uri, allowDevelopmentLoopback);
     return new ExternalRfc3161TimestampProvider(
         sp.GetRequiredService<IHttpClientFactory>().CreateClient("external-tsa"),
-        uri, providerId, allowDevelopmentLoopback: allowDevelopmentLoopback);
+        uri, providerId, allowDevelopmentLoopback: allowDevelopmentLoopback,
+        approvedSignerCertificateSha256: approvedSignerCertificateSha256);
 });
 
 var origins = builder.Configuration.GetSection("Cors:Origins").Get<string[]>() ?? [];
