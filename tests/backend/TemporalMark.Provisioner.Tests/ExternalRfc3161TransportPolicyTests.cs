@@ -31,7 +31,8 @@ public sealed class ExternalRfc3161TransportPolicyTests
         using var redirect = new RedirectingTestHandler(status);
         using var http = new HttpClient(redirect);
         var tsa = new ExternalRfc3161TimestampProvider(
-            http, new Uri("https://example.invalid/pinned-tsa"), "configured-tsa");
+            http, new Uri("https://example.invalid/pinned-tsa"), "configured-tsa",
+            approvedSignerCertificateSha256: new string('A', 64));
 
         await Assert.ThrowsAsync<TimestampProviderResponseException>(() =>
             tsa.RequestAsync(new byte[32], CancellationToken.None));
