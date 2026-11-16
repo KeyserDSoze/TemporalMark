@@ -138,7 +138,7 @@ jobs:
         run: docker compose -f docker/compose.yml logs --no-color --tail=200
       - name: Tear down
         if: always()
-        run: docker compose -f docker/compose.yml down -v
+        run: docker compose -f docker/compose.yml --profile witness-ci down -v
 
   terraform:
     runs-on: ubuntu-latest
