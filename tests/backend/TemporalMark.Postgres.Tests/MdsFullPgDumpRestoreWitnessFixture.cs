@@ -59,6 +59,24 @@ internal static class MdsFullPgDumpRestoreWitnessFixture
         ]));
     }
 
+    /// <summary>
+    /// Signed journal record held outside both databases in the scoped
+    /// logical-restore CI regression. This is caller-controlled TEST data.
+    /// </summary>
+    public static byte[] JournalEvent(
+        string policySha256, long serial, string sealSha256,
+        string previousPayloadSha256, DateTimeOffset observedUtc) =>
+        Encoding.ASCII.GetBytes(string.Join("\n",
+        [
+            "TEMPORALMARK-UNAPPROVED-SIGNED-FILE-HIGHWATER-EVENT-1",
+            policySha256,
+            serial.ToString(CultureInfo.InvariantCulture),
+            sealSha256,
+            previousPayloadSha256,
+            observedUtc.ToUnixTimeSeconds().ToString(CultureInfo.InvariantCulture),
+            ""
+        ]));
+
     public static byte[] Sign(RSA disposableKey, byte[] originalBytes) =>
         disposableKey.SignData(originalBytes, HashAlgorithmName.SHA256,
             RSASignaturePadding.Pss);
