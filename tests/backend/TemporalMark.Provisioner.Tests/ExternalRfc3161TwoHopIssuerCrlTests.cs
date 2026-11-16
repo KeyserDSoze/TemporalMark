@@ -194,7 +194,7 @@ public sealed class ExternalRfc3161TwoHopIssuerCrlTests
     {
         using var key = RSA.Create(2048);
         var request = new CertificateRequest(
-            "CN=Disposable nested RFC3161 intermediate",
+            $"CN=Disposable nested RFC3161 intermediate level {maximumSubordinateCaDepth}",
             key, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
         request.CertificateExtensions.Add(new X509BasicConstraintsExtension(
             true, true, maximumSubordinateCaDepth, true));
