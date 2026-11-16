@@ -332,18 +332,25 @@ The previous [#69](https://github.com/KeyserDSoze/TemporalMark/issues/69) four-j
 - [x] Re-read ADR 0002/0052, real provider and transport runbook; record strict 200-only (local policy) + exact `application/timestamp-reply` response MIME requirement, including RFC 3161 §3.4 verified erratum 1879 in [ADR 0053](../adr/0053-rfc3161-strict-http-response-envelope.md).
 - [x] RED-first [CI 43902202323](https://github.com/KeyserDSoze/TemporalMark/actions/runs/43902202323) at `869f61c3`: 10 targeted tests FAIL for premature body read on 201/202/204/206 and missing/wrong MIME; existing .NET business/domain tests and other provisioning tests PASS.
 - [x] Provider-only GREEN candidate: reject non-`200 OK` and wrong/missing `Content-Type` *before* reading DER. Preserve RFC3161 nonce/imprint/CMS check, 1 MiB cap, no redirect/cookies, HTTPS and `Unverified` semantics. Runbook: [TSA_HTTP_TRANSPORT.md](TSA_HTTP_TRANSPORT.md).
-- [ ] Close #84 only after exact final main four-job GREEN (backend, frontend, Docker Keycloak/PostgreSQL, Terraform). Parent QTSP #15, WORM #17, CAB #13 remain OPEN.
+- [x] #84 closed after exact-main four-job [GREEN CI 43902761373](https://github.com/KeyserDSoze/TemporalMark/actions/runs/43902761373), SHA `997fd035df7e102a024f001ed623767b1269cd71`. Parent #15/#17/#13 remain OPEN.
 
 ## RFC 3161 provider endpoint authority / development loopback (#85; child #15; ADR 0054)
 
 - [x] Re-read ADR 0002/0052/0053, actual provider/API, threat model and transport runbook; record fail-closed syntax/loopback decision in [ADR 0054](../adr/0054-rfc3161-endpoint-uri-development-loopback.md).
 - [x] RED-first [CI 43904739193](https://github.com/KeyserDSoze/TemporalMark/actions/runs/43904739193), SHA `9150a18a`, backend compiler CS1739 for missing dedicated `allowDevelopmentLoopback` on real-provider tests. Existing 9 domain + 219 business passed; Terraform green.
 - [x] Central `ExternalRfc3161EndpointPolicy` and provider default reject untrusted URI scheme/userinfo/fragment, HTTPS loopback and literal IP without an explicit flag; API injects that flag only from `IHostEnvironment.IsDevelopment`. [Runbook](TSA_HTTP_TRANSPORT.md). This is **not** DNS-binding, network egress or QTSP trust validation.
-- [ ] Close only #85 after four jobs GREEN on final exact `main` SHA and record RED/GREEN evidence. #15/#17/#13 remain OPEN.
+- [x] #85 closed after exact-main four-job [GREEN CI 43905297835](https://github.com/KeyserDSoze/TemporalMark/actions/runs/43905297835), SHA `fab01d607fdbe0f6abf298ed1e38be42a1b55b9d`; parent #15/#17/#13 remain OPEN.
 
 ## RFC 3161 TSA client ambient forward-proxy bypass (#86; child #15, ADR 0055)
 
 - [x] Reviewed ADR 0002/0052/0053/0054, threat model, operator runbook, dedicated `external-tsa` named HTTP handler and Microsoft .NET 10 default proxy behavior; record [ADR 0055](../adr/0055-rfc3161-no-ambient-forward-proxy.md) before code.
 - [x] **TDD RED** [CI 43907504241](https://github.com/KeyserDSoze/TemporalMark/actions/runs/43907504241), test-only SHA `47f0d5c`: two new proxy-negation tests FAIL on actual handler `UseProxy=true`; third new handler test and all prior suites pass (183 provisioner, 219 business, 9 domain).
 - [x] GREEN candidate: set `UseProxy=false` only in the named outbound TSA handler. Continue no redirect/cookies, 20-second timeout, strict 200/MIME, endpoint preflight, bounded DER verification and `Unverified` state. Document direct egress/firewall requirement and no implicit `HTTPS_PROXY` support in [TSA_HTTP_TRANSPORT.md](TSA_HTTP_TRANSPORT.md).
-- [ ] Verify final exact `main` SHA backend/frontend/docker-smoke/terraform 4/4 GREEN and close #86 only then. Parent #15, WORM #17, legal #13, and comprehensive egress/DNS controls remain OPEN.
+- [x] #86 closed after final exact-main four-job [GREEN CI 43907974158](https://github.com/KeyserDSoze/TemporalMark/actions/runs/43907974158), SHA `f1df57c19f5883c287ae436fb84a411d862614ad`; parent #15/#17/#13, network egress/DNS issues remain OPEN.
+
+## RFC 3161 connection-time DNS/IP denial + socket pinning (#87, child #15; ADR 0056)
+
+- [x] Re-read ADR 0002/0052–0055, real `external-tsa` HTTP factory/provider, threat model and runbook. Confirm .NET 10 `SocketsHttpHandler.ConnectCallback`, DNS and Socket APIs; record [ADR 0056](../adr/0056-rfc3161-connect-time-resolved-destination-policy.md) **before implementation**.
+- [x] **TDD RED** [CI 43911461382](https://github.com/KeyserDSoze/TemporalMark/actions/runs/43911461382), SHA `e1e4182b`: tests-first backend compile fails exactly due absent resolved-destination policy, callback and explicit Development-only loopback flag; domain 9/9, business 219/219, frontend and Terraform pass.
+- [x] **GREEN candidate** [CI 43912053272](https://github.com/KeyserDSoze/TemporalMark/actions/runs/43912053272) at `04a59817`: 9 domain, 219 business and 229 provisioner = **457 tests passing**, including 44 new IPv4/IPv6, mixed/empty DNS, no-implicit-proxy/redirect, real-loopback-TCP regressions. Handler now resolves once per **new socket**, validates all IP addresses before dialing, then connects by approved IP without another hostname resolution. Existing `UseDefaultCredentials`-specific test updated to Sockets handler `Credentials` semantics; only `external-tsa` affected. [Transport guide](TSA_HTTP_TRANSPORT.md).
+- [ ] Confirm **final documentation-inclusive main SHA** four CI jobs GREEN (backend, frontend, real Keycloak/PostgreSQL/browser Docker smoke, Terraform); close #87 only after this proof. Parent #15 (QTSP PKI, revocation, historical Trusted Lists, full compliant issuance), WORM #17 and legal #13 stay OPEN. Transparent network interception, public-IP DNS spoofing and operator-reviewed egress IP/service allowlisting still need production controls.
