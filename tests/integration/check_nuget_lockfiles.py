@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail-closed NuGet packages.lock.json and CI/Docker restore policy. ADR 0048.
+"""Fail-closed NuGet packages.lock.json and CI/Docker restore policy. ADR 0049.
 
 Only package inventory metadata is read; no feed queries, secrets or binaries.
 The authoritative dependency-graph check is still real dotnet --locked-mode.

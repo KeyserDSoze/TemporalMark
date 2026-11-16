@@ -31,33 +31,33 @@ jobs:
       - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
           dotnet-version: 10.0.x
-      - name: Domain tests
-        run: dotnet test tests/backend/TemporalMark.Domain.Tests/TemporalMark.Domain.Tests.csproj --configuration Release
-      - name: Business tests
-        run: dotnet test tests/backend/TemporalMark.Business.Tests/TemporalMark.Business.Tests.csproj --configuration Release
-      - name: Provisioning JWT signature and expiry tests
-        run: dotnet test tests/backend/TemporalMark.Provisioner.Tests/TemporalMark.Provisioner.Tests.csproj --configuration Release
-      - name: Publish API
-        run: dotnet publish src/backend/applications/TemporalMark.Api/TemporalMark.Api.csproj --configuration Release --output /tmp/temporalmark-api
-      - name: Publish isolated operator provisioning CLI
-        run: dotnet publish src/backend/applications/TemporalMark.Provisioner/TemporalMark.Provisioner.csproj --configuration Release --output /tmp/temporalmark-provisioner
-      - name: Registrar V015 CLI cannot run before signed ceremony
-        run: |
-          set -eu
-          if output="$(dotnet run --project src/backend/applications/TemporalMark.Provisioner/TemporalMark.Provisioner.csproj --configuration Release -- registrar-intent --registrar-token-file /dev/null --reviewer-token-file /dev/null 2>&1)"; then
-            echo "Unexpected successful registrar issue command"; exit 1
-          fi
-          # Exact explanatory denial is required; missing config/invalid
-          # token or Keycloak outage must not masquerade as the interlock.
-          printf '%s\n' "$output" | grep -Fq 'V015 registrar intent issuance suspended'
-      - name: Restore NuGet graph for all nine .NET projects
+      - name: Restore all nine .NET projects in locked mode
         run: |
           set -euo pipefail
           projects="$(find src/backend tests/backend -type f -name '*.csproj' | sort)"
           test "$(printf '%s\n' "$projects" | wc -l)" -eq 9
           while IFS= read -r project; do
-            dotnet restore "$project"
+            dotnet restore "$project" --locked-mode
           done <<< "$projects"
+      - name: Domain tests
+        run: dotnet test tests/backend/TemporalMark.Domain.Tests/TemporalMark.Domain.Tests.csproj --configuration Release --no-restore
+      - name: Business tests
+        run: dotnet test tests/backend/TemporalMark.Business.Tests/TemporalMark.Business.Tests.csproj --configuration Release --no-restore
+      - name: Provisioning JWT signature and expiry tests
+        run: dotnet test tests/backend/TemporalMark.Provisioner.Tests/TemporalMark.Provisioner.Tests.csproj --configuration Release --no-restore
+      - name: Publish API
+        run: dotnet publish src/backend/applications/TemporalMark.Api/TemporalMark.Api.csproj --configuration Release --output /tmp/temporalmark-api --no-restore
+      - name: Publish isolated operator provisioning CLI
+        run: dotnet publish src/backend/applications/TemporalMark.Provisioner/TemporalMark.Provisioner.csproj --configuration Release --output /tmp/temporalmark-provisioner --no-restore
+      - name: Registrar V015 CLI cannot run before signed ceremony
+        run: |
+          set -eu
+          if output="$(dotnet run --no-restore --project src/backend/applications/TemporalMark.Provisioner/TemporalMark.Provisioner.csproj --configuration Release -- registrar-intent --registrar-token-file /dev/null --reviewer-token-file /dev/null 2>&1)"; then
+            echo "Unexpected successful registrar issue command"; exit 1
+          fi
+          # Exact explanatory denial is required; missing config/invalid
+          # token or Keycloak outage must not masquerade as the interlock.
+          printf '%s\n' "$output" | grep -Fq 'V015 registrar intent issuance suspended'
       - name: Generate NuGet restore CycloneDX inventory
         run: python3 tests/integration/generate_nuget_sbom.py generate --output-dir "$RUNNER_TEMP/temporalmark-nuget-sbom"
       - name: Verify NuGet restore CycloneDX inventory
@@ -68,29 +68,6 @@ jobs:
           path: ${{ runner.temp }}/temporalmark-nuget-sbom/*.json
           if-no-files-found: error
           retention-days: 7
-
-  nuget-lock-seed:
-    # EPHEMERAL: public NuGet packages.lock.json metadata only, remove before GREEN.
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
-        with:
-          dotnet-version: 10.0.x
-      - name: Resolve genuine NuGet lockfiles from all nine project manifests for #79
-        run: |
-          set -euo pipefail
-          dotnet --version
-          projects="$(find src/backend tests/backend -type f -name '*.csproj' | sort)"
-          test "$(printf '%s\n' "$projects" | wc -l)" -eq 9
-          while IFS= read -r project; do
-            dotnet restore "$project" --use-lock-file --verbosity quiet
-            lock="$(dirname "$project")/packages.lock.json"
-            test -s "$lock"
-            printf 'TEMPORALMARK_NUGET_LOCK_BEGIN %s\n' "$lock"
-            base64 --wrap=76 "$lock"
-            printf 'TEMPORALMARK_NUGET_LOCK_END %s\n' "$lock"
-          done <<< "$projects"
 
   frontend:
     # Playwright 1.56.x Chromium does not support GitHub's Ubuntu 26.04 runner.
@@ -168,7 +145,7 @@ jobs:
           TEMPORALMARK_TEST_DB: "Host=127.0.0.1;Port=5432;Database=temporalmark;Username=temporalmark;Password=local-dev-only"
           TEMPORALMARK_PROVISIONING_TEST_DB: "Host=127.0.0.1;Port=5432;Database=temporalmark;Username=temporalmark_provisioner;Password=local-provisioner-only"
           TEMPORALMARK_APPROVER_TEST_DB: "Host=127.0.0.1;Port=5432;Database=temporalmark;Username=temporalmark_approver;Password=local-approver-only"
-        run: dotnet test tests/backend/TemporalMark.Postgres.Tests/TemporalMark.Postgres.Tests.csproj --configuration Release
+        run: dotnet test tests/backend/TemporalMark.Postgres.Tests/TemporalMark.Postgres.Tests.csproj --configuration Release -p:RestoreLockedMode=true
       - name: Real PostgreSQL full logical pg_dump and pg_restore sealed-witness rollback regression
         env:
           TEMPORALMARK_TEST_DB: "Host=127.0.0.1;Port=5432;Database=temporalmark;Username=temporalmark;Password=local-dev-only"
@@ -190,15 +167,15 @@ jobs:
           # Both browser sessions required real password + TOTP and signed
           # Keycloak audience-specific access tokens, not password grants.
           # Actual production OIDC, RFC7662, and current-directory adapters.
-          dotnet test tests/backend/TemporalMark.Provisioner.Tests/TemporalMark.Provisioner.Tests.csproj --configuration Release --filter 'FullyQualifiedName~RealKeycloakMfaEndToEndTests|FullyQualifiedName~RealKeycloakRegistrarMfaEndToEndTests'
+          dotnet test tests/backend/TemporalMark.Provisioner.Tests/TemporalMark.Provisioner.Tests.csproj --configuration Release -p:RestoreLockedMode=true --filter 'FullyQualifiedName~RealKeycloakMfaEndToEndTests|FullyQualifiedName~RealKeycloakRegistrarMfaEndToEndTests'
           # The exact SAME still-signed bearer must now be denied because a
           # current role was removed AFTER token issuance. No cached results.
           python3 tests/integration/configure-keycloak-registrar-mfa-ci.py remove-registrar-role
-          TEMPORALMARK_CI_REGISTRAR_EXPECT_DENIAL=true dotnet test tests/backend/TemporalMark.Provisioner.Tests/TemporalMark.Provisioner.Tests.csproj --configuration Release --filter 'FullyQualifiedName~RealKeycloakRegistrarMfaEndToEndTests'
+          TEMPORALMARK_CI_REGISTRAR_EXPECT_DENIAL=true dotnet test tests/backend/TemporalMark.Provisioner.Tests/TemporalMark.Provisioner.Tests.csproj --configuration Release -p:RestoreLockedMode=true --filter 'FullyQualifiedName~RealKeycloakRegistrarMfaEndToEndTests'
           # Restore role solely to isolate the disabled-account test.
           python3 tests/integration/configure-keycloak-registrar-mfa-ci.py restore-registrar-role
           python3 tests/integration/configure-keycloak-registrar-mfa-ci.py disable-registrar
-          TEMPORALMARK_CI_REGISTRAR_EXPECT_DENIAL=true dotnet test tests/backend/TemporalMark.Provisioner.Tests/TemporalMark.Provisioner.Tests.csproj --configuration Release --filter 'FullyQualifiedName~RealKeycloakRegistrarMfaEndToEndTests'
+          TEMPORALMARK_CI_REGISTRAR_EXPECT_DENIAL=true dotnet test tests/backend/TemporalMark.Provisioner.Tests/TemporalMark.Provisioner.Tests.csproj --configuration Release -p:RestoreLockedMode=true --filter 'FullyQualifiedName~RealKeycloakRegistrarMfaEndToEndTests'
       - name: OIDC admin login and disabled external TSA smoke
         working-directory: tests/frontend
         run: npx playwright test --config authenticated.config.ts
