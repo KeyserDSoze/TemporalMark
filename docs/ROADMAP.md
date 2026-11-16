@@ -333,3 +333,10 @@ The previous [#69](https://github.com/KeyserDSoze/TemporalMark/issues/69) four-j
 - [x] RED-first [CI 43902202323](https://github.com/KeyserDSoze/TemporalMark/actions/runs/43902202323) at `869f61c3`: 10 targeted tests FAIL for premature body read on 201/202/204/206 and missing/wrong MIME; existing .NET business/domain tests and other provisioning tests PASS.
 - [x] Provider-only GREEN candidate: reject non-`200 OK` and wrong/missing `Content-Type` *before* reading DER. Preserve RFC3161 nonce/imprint/CMS check, 1 MiB cap, no redirect/cookies, HTTPS and `Unverified` semantics. Runbook: [TSA_HTTP_TRANSPORT.md](TSA_HTTP_TRANSPORT.md).
 - [ ] Close #84 only after exact final main four-job GREEN (backend, frontend, Docker Keycloak/PostgreSQL, Terraform). Parent QTSP #15, WORM #17, CAB #13 remain OPEN.
+
+## RFC 3161 provider endpoint authority / development loopback (#85; child #15; ADR 0054)
+
+- [x] Re-read ADR 0002/0052/0053, actual provider/API, threat model and transport runbook; record fail-closed syntax/loopback decision in [ADR 0054](../adr/0054-rfc3161-endpoint-uri-development-loopback.md).
+- [x] RED-first [CI 43904739193](https://github.com/KeyserDSoze/TemporalMark/actions/runs/43904739193), SHA `9150a18a`, backend compiler CS1739 for missing dedicated `allowDevelopmentLoopback` on real-provider tests. Existing 9 domain + 219 business passed; Terraform green.
+- [x] Central `ExternalRfc3161EndpointPolicy` and provider default reject untrusted URI scheme/userinfo/fragment, HTTPS loopback and literal IP without an explicit flag; API injects that flag only from `IHostEnvironment.IsDevelopment`. [Runbook](TSA_HTTP_TRANSPORT.md). This is **not** DNS-binding, network egress or QTSP trust validation.
+- [ ] Close only #85 after four jobs GREEN on final exact `main` SHA and record RED/GREEN evidence. #15/#17/#13 remain OPEN.
