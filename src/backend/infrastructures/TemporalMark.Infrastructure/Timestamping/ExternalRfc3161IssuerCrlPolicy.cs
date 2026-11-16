@@ -69,6 +69,55 @@ public static class ExternalRfc3161IssuerCrlPolicy
         }
     }
 
+    /// <summary>
+    /// Verify the actual cryptographically verified CMS signer against its
+    /// already path-validated selected issuer(s). Each non-root certificate
+    /// requires a separately signed full CRL from its immediate CA.
+    /// Exactly one intermediate is supported; longer paths fail closed.
+    /// </summary>
+    public static void ValidateSignerPathRevocation(
+        X509Certificate2? verifiedSigner,
+        X509Certificate2 approvedRoot,
+        X509Certificate2Collection cmsCertificates,
+        ReadOnlyMemory<byte> rootCrlDer,
+        ReadOnlyMemory<byte> intermediateIssuerCrlDer,
+        DateTimeOffset signedGenTime)
+    {
+        using var chain = ExternalRfc3161CertificateChainPolicy.BuildValidatedSignerChain(
+            verifiedSigner, approvedRoot, cmsCertificates, signedGenTime);
+        var elements = chain.ChainElements;
+
+        if (elements.Count is < 2 or > 3)
+            throw new TimestampProviderResponseException(ResponseError);
+
+        if (elements.Count == 2)
+        {
+            // The directly root-issued signer has exactly one issuer.
+            // Reject a supplied but unused second CRL to avoid a silent
+            // misconfiguration, stale approval or ambiguity about topology.
+            if (!intermediateIssuerCrlDer.IsEmpty)
+                throw new TimestampProviderResponseException(ResponseError);
+            ValidateDirectIssuerLeaf(
+                elements[0].Certificate, elements[1].Certificate,
+                rootCrlDer, signedGenTime);
+            return;
+        }
+
+        // The selected chain is signer -> intermediate -> approved root.
+        // The root CRL checks the intermediate CA certificate's status.
+        // Only THEN the intermediate CA's own signed CRL can attest to
+        // the verified TSA signer leaf's status; no partial NoCheck path.
+        if (intermediateIssuerCrlDer.IsEmpty)
+            throw new TimestampProviderResponseException(ResponseError);
+
+        ValidateDirectIssuerLeaf(
+            elements[1].Certificate, elements[2].Certificate,
+            rootCrlDer, signedGenTime);
+        ValidateDirectIssuerLeaf(
+            elements[0].Certificate, elements[1].Certificate,
+            intermediateIssuerCrlDer, signedGenTime);
+    }
+
     public static void ValidateDirectIssuerLeaf(
         X509Certificate2? verifiedSigner,
         X509Certificate2 approvedRoot,
