@@ -122,7 +122,8 @@ public sealed class ExternalRfc3161SignerPinPolicyTests
         using var spy = new CountingHandler();
         using var http = new HttpClient(spy);
         var provider = new ExternalRfc3161TimestampProvider(
-            http, TestEndpoint, "operator-approved-identity", approvedSignerCertificateSha256: pin);
+            http, TestEndpoint, "operator-approved-identity", approvedSignerCertificateSha256: pin,
+            approvedPolicyOid: "1.3.6.1.4.1.4146.2.2");
 
         await Assert.ThrowsAsync<TimestampProviderUnavailableException>(() =>
             provider.RequestAsync(new byte[32], CancellationToken.None));
@@ -136,7 +137,8 @@ public sealed class ExternalRfc3161SignerPinPolicyTests
         using var http = new HttpClient(spy);
         var provider = new ExternalRfc3161TimestampProvider(
             http, TestEndpoint, "operator-approved-identity",
-            approvedSignerCertificateSha256: ExampleSha256Pin);
+            approvedSignerCertificateSha256: ExampleSha256Pin,
+            approvedPolicyOid: "1.3.6.1.4.1.4146.2.2");
 
         await Assert.ThrowsAsync<TimestampProviderResponseException>(() =>
             provider.RequestAsync(new byte[32], CancellationToken.None));
