@@ -165,3 +165,28 @@ dotnet test tests/backend/TemporalMark.Provisioner.Tests/TemporalMark.Provisione
 ```
 
 Test-first RED: [CI 43931749155](https://github.com/KeyserDSoze/TemporalMark/actions/runs/43931749155), SHA `6391bb4e8dc6eb996169a9ef85c9d77b3cd908d7`, failed on the intended missing policy and provider constructor symbols while domain/business/frontend/Terraform stayed green. See [ADR 0060](../adr/0060-rfc3161-operator-approved-request-and-signed-token-policy.md), [Microsoft CreateFromHash](https://learn.microsoft.com/en-us/dotnet/api/system.security.cryptography.pkcs.rfc3161timestamprequest.createfromhash?view=net-10.0), [RFC3161](https://www.rfc-editor.org/rfc/rfc3161).
+
+## Offline X.509 signer path to an operator-approved CA root (#92, ADR 0061)
+
+Even a signature-valid RFC 3161 token with a sole critical timeStamping EKU (#89), an operator-approved **leaf** SHA-256 fingerprint (#90), and an exact service policy OID (#91) **does not by itself demonstrate that the signer chains to an independently reviewed CA**. TemporalMark's delegated pilot now also requires a server-controlled `TimestampProvider:TrustAnchorCertificateBase64Der` when an external TSA URL is configured. The provider validates this setting **before HTTP transmission** and, after all existing CMS/nonce/imprint, signer EKU/pin and policy checks, builds an X.509 chain for **that same cryptographically verified CMS signer** to the approved root. An absent/malformed root or an untrusted/expired/incomplete chain causes the request to fail; no token is returned or recorded. Disabled TSA (empty URL) needs no anchor.
+
+### Operator preparation — Azure and on-prem
+
+1. Independently review which **X.509 root CA certificate** is authorized for the *RFC 3161 CMS signing certificate* by the actual QTSP. Do **not** use the HTTPS/TLS server's certificate, the TSA leaf, a randomly selected intermediate or a CA simply because it is trusted by the host OS. Confirm root owner/subject, DER SHA-256 fingerprint, policy, source authenticity and deployment approval **out of band**; an operator-provided anchor is a *trust decision*, not an automatic QTSP verification.
+2. Export exactly one reviewed root **certificate** (no private key) as DER and encode it as standard canonical **single-line Base64**:
+
+   ```sh
+   openssl x509 -in reviewed-tsa-root.pem -outform DER | openssl base64 -A
+   ```
+
+   Set `TimestampProvider__TrustAnchorCertificateBase64Der` (or secured `TimestampProvider:TrustAnchorCertificateBase64Der`) to **just the Base64 characters**. The parser rejects PEM markers, whitespace/newlines, noncanonical/multiple/trailing DER, oversized input (>64 KiB), a non-self-issued certificate, missing critical CA basic constraints or missing critical `KeyCertSign` key usage. `appsettings.json` leaves this blank intentionally. The companion required settings remain `TimestampProvider__Url`, `TimestampProvider__Id`, `TimestampProvider__SignerCertificateSha256` and `TimestampProvider__PolicyOid`.
+3. Review the TSA's returned **intermediate CA certificates**: the validator uses `token.AsSignedCms().Certificates` for intermediates and requires the resulting path to end at the **exact approved DER root**. A missing intermediate must be fixed at the provider/approved integration, not silently fetched from the internet or a local certificate store. Root changes require explicit operator review, configuration rollout and signed audit trail. Both Azure and on-prem use the same behavior; there is no Azure-only trust service or system-root fallback.
+4. This first offline step explicitly uses `.NET 10 X509ChainPolicy.TrustMode=CustomRootTrust`, `CustomTrustStore` containing **only** the operator-approved root, `ExtraStore` with the CMS bundle, `DisableCertificateDownloads=true`, `VerificationFlags=NoFlag`, and **`RevocationMode=NoCheck`**. It evaluates the path using **current UTC time** (`VerificationTime=DateTime.UtcNow`); it does **not** establish historical certificate validity or revocation at the claimed RFC3161 token issuance instant, and does not automatically check CRLs, OCSP or historical EU Trusted Lists. Even if a chain passes, the receipt remains `Unverified`. Build a separate, independently witnessed **signing-time revocation and historical qualified service-status** proof before considering production/legal launch under #15/#13; WORM/long-term custody remains #17.
+
+The regression suite generates disposable untrusted RSA **root→TSA leaf** and **root→intermediate→TSA leaf** certificates and checks authorized/offline path building, wrong roots, missing intermediates, expired leaf, non-CA/invalid anchor and pre-send failures; no real QTSP trust is claimed:
+
+```sh
+dotnet test tests/backend/TemporalMark.Provisioner.Tests/TemporalMark.Provisioner.Tests.csproj --configuration Release --filter FullyQualifiedName~ExternalRfc3161CertificateChainPolicyTests
+```
+
+TDD RED evidence: [CI 43942439055](https://github.com/KeyserDSoze/TemporalMark/actions/runs/43942439055) on tests-only `745a5853adaa49a12061dfcb1cb39b1516747bc3` failed on expected missing offline chain policy/constructor symbols, with Domain/Business/frontend/Terraform green; [ADR 0061](../adr/0061-rfc3161-operator-approved-offline-signer-x509-chain.md) was committed first. See [Microsoft X509ChainPolicy](https://learn.microsoft.com/en-us/dotnet/api/system.security.cryptography.x509certificates.x509chainpolicy?view=net-10.0) and [Rfc3161TimestampToken.AsSignedCms](https://learn.microsoft.com/en-us/dotnet/api/system.security.cryptography.pkcs.rfc3161timestamptoken.assignedcms?view=net-10.0).
