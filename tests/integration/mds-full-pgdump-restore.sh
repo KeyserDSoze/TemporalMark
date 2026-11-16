@@ -22,7 +22,7 @@ dc_pg() {
 # A SECOND PostgreSQL 17 SERVER, separate data volume and distinct
 # read-only witness login. This is opt-in CI only and is NOT WORM, HSM
 # or approved independent administrative custody.
-docker compose -f docker/compose.yml --profile witness-ci up -d witness-postgres
+docker compose -f docker/compose.yml --profile witness-ci up -d --wait witness-postgres
 docker compose -f docker/compose.yml --profile witness-ci exec -T \
   witness-postgres pg_isready -U temporalmark_witness_owner -d temporalmark_witness
 docker compose -f docker/compose.yml --profile witness-ci exec -T \
