@@ -74,8 +74,15 @@ public sealed class ExternalRfc3161TimestampProvider(
                 token = timeRequest.ProcessResponse(rawResponse, out bytesConsumed);
                 if (bytesConsumed != rawResponse.Length)
                     throw new TimestampProviderResponseException("Unexpected trailing bytes in RFC 3161 response.");
-                if (!token.VerifySignatureForHash(sha256Digest, HashAlgorithmName.SHA256, out _))
+                if (!token.VerifySignatureForHash(
+                        sha256Digest, HashAlgorithmName.SHA256, out var signerCertificate))
                     throw new TimestampProviderResponseException("The RFC 3161 signature/imprint is invalid.");
+
+                // Examine the *verified* CMS signer rather than any arbitrary
+                // certificate bundled in the reply. RFC 3161 §2.3 requires
+                // the timeStamping EKU to be critical and its sole key purpose.
+                // This check does not establish chain/revocation/QTSP status.
+                ExternalRfc3161SignerCertificatePolicy.Validate(signerCertificate);
             }
             catch (CryptographicException)
             {
