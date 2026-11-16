@@ -30,7 +30,10 @@ builder.Services.AddScoped<TenantAuditService>();
 builder.Services.AddHttpClient("external-tsa", http =>
 {
     http.Timeout = TimeSpan.FromSeconds(20);
-});
+})
+// The named TSA client must not follow 307/308 (or any HTTP redirects):
+// forwarded RFC3161 imprints could otherwise leave the pinned TSA origin.
+.ConfigurePrimaryHttpMessageHandler(ExternalRfc3161TransportPolicy.CreateHandler);
 builder.Services.AddScoped<ITimestampProvider>(sp =>
 {
     var url = builder.Configuration["TimestampProvider:Url"];
