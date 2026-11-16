@@ -33,7 +33,10 @@ builder.Services.AddHttpClient("external-tsa", http =>
 })
 // The named TSA client must not follow 307/308 (or any HTTP redirects):
 // forwarded RFC3161 imprints could otherwise leave the pinned TSA origin.
-.ConfigurePrimaryHttpMessageHandler(ExternalRfc3161TransportPolicy.CreateHandler);
+// Only the trusted deployment Development mode permits direct loopback TCP.
+// The outbound handler validates every DNS answer and pins the exact socket IP.
+.ConfigurePrimaryHttpMessageHandler(() =>
+    ExternalRfc3161TransportPolicy.CreateHandler(builder.Environment.IsDevelopment()));
 builder.Services.AddScoped<ITimestampProvider>(sp =>
 {
     var url = builder.Configuration["TimestampProvider:Url"];
