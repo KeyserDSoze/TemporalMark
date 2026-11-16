@@ -14,7 +14,8 @@ namespace TemporalMark.Infrastructure.Timestamping;
 public sealed class ExternalRfc3161TimestampProvider(
     HttpClient http,
     Uri? providerEndpoint,
-    string providerId) : ITimestampProvider
+    string providerId,
+    bool allowDevelopmentLoopback = false) : ITimestampProvider
 {
     private const int MaxResponseBytes = 1024 * 1024;
 
@@ -22,9 +23,9 @@ public sealed class ExternalRfc3161TimestampProvider(
     {
         if (providerEndpoint is null)
             throw new TimestampProviderUnavailableException("No external TSA endpoint is configured.");
-        if (providerEndpoint.Scheme != Uri.UriSchemeHttps &&
-            !(providerEndpoint.IsLoopback && providerEndpoint.Scheme == Uri.UriSchemeHttp))
-            throw new TimestampProviderUnavailableException("TSA endpoint must use HTTPS (except local test servers).");
+        // Fail closed even when this provider is constructed outside the API:
+        // local TSA access requires an explicit Development-only flag.
+        ExternalRfc3161EndpointPolicy.Validate(providerEndpoint, allowDevelopmentLoopback);
         if (string.IsNullOrWhiteSpace(providerId))
             throw new TimestampProviderUnavailableException("An explicit TSA provider identity is required.");
         if (sha256Digest.Length != 32)
