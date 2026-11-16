@@ -19,6 +19,17 @@ dc_pg() {
   docker compose -f docker/compose.yml exec -T postgres "$@"
 }
 
+# A SECOND PostgreSQL 17 SERVER, separate data volume and distinct
+# read-only witness login. This is opt-in CI only and is NOT WORM, HSM
+# or approved independent administrative custody.
+docker compose -f docker/compose.yml --profile witness-ci up -d witness-postgres
+docker compose -f docker/compose.yml --profile witness-ci exec -T \
+  witness-postgres pg_isready -U temporalmark_witness_owner -d temporalmark_witness
+docker compose -f docker/compose.yml --profile witness-ci exec -T \
+  witness-postgres psql -X -At -v ON_ERROR_STOP=1 \
+    -U temporalmark_witness_owner -d temporalmark_witness \
+    -c "SELECT count(*) FROM public.unapproved_witness_checkpoints" >/dev/null
+
 hash64() {
   printf '%s' "$1" | sha256sum | cut -d ' ' -f 1 | tr 'abcdef' 'ABCDEF'
 }
@@ -132,6 +143,9 @@ TEMPORALMARK_RESTORE_POLICY_SHA256="$policy" \
 TEMPORALMARK_RESTORE_ISSUER_SHA256="$issuer" \
 TEMPORALMARK_RESTORE_OLD_EVIDENCE_SHA256="$old_digest" \
 TEMPORALMARK_RESTORE_NEW_EVIDENCE_SHA256="$new_digest" \
+TEMPORALMARK_RUN_ISOLATED_WITNESS_TEST=1 \
+TEMPORALMARK_WITNESS_OWNER_TEST_DB="Host=127.0.0.1;Port=5433;Database=temporalmark_witness;Username=temporalmark_witness_owner;Password=local-witness-owner-only" \
+TEMPORALMARK_WITNESS_TEST_DB="Host=127.0.0.1;Port=5433;Database=temporalmark_witness;Username=temporalmark_witness_reader;Password=local-witness-reader-only" \
 dotnet test tests/backend/TemporalMark.Postgres.Tests/TemporalMark.Postgres.Tests.csproj \
   --configuration Release \
   --filter 'FullyQualifiedName~MdsFullPgDumpRestorePostgresTests'
