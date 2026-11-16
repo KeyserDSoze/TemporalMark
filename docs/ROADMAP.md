@@ -260,5 +260,12 @@ The previous [#69](https://github.com/KeyserDSoze/TemporalMark/issues/69) four-j
 
 - [x] ADR 0045 before TDD. Real [RED CI 43868733873](https://github.com/KeyserDSoze/TemporalMark/actions/runs/43868733873): 5/5 offline policy unit tests PASS, repository guard explicitly rejected all **eight** floating Docker image occurrences (four FROM and four Compose).
 - [x] Public registry manifest SHA256 resolution: initial seed failed without producing any digest; diagnostic [CI 43869063858](https://github.com/KeyserDSoze/TemporalMark/actions/runs/43869063858) returned all six expected manifests from Docker Hub, Quay and MCR. Code commit 16a962a pins eight occurrences and removes the temporary seed. See [runbook](CI_DOCKER_IMAGE_DIGESTS.md).
-- [ ] Final four-job CI on exact final main SHA (real Docker, PostgreSQL full restore/witness, Keycloak browser MFA/PKCE, PWA and Terraform), then close only #76.
+- [x] Child #76 CLOSED after exact final main c7e193d [four-job SUCCESS CI 43870257729](https://github.com/KeyserDSoze/TemporalMark/actions/runs/43870257729): 5/5 digest policy, PostgreSQL 64/64 and full witness restore 2/2, Keycloak MFA, PWA and Terraform.
 - [ ] Parent #20 stays OPEN for runner/build toolchain provenance, signature verification, SAST/SBOM/SCA, signed artifact attestations, PWA mobile install and cross-tenant testing. #64/#61/#57 and V015/V016 registrar freeze remain OPEN.
+
+## Lockfile-derived npm CycloneDX inventories for CI (#77, child of #20)
+
+- [x] ADR 0046 before TDD. Behavioral [RED CI 43873432766](https://github.com/KeyserDSoze/TemporalMark/actions/runs/43873432766): 5/5 new policy unit tests PASS, mandatory source policy FAIL for missing SBOM generation, verification and limited upload.
+- [x] GREEN implements deterministic Python-stdlib CycloneDX JSON v1.5 inventories with exact lockfile hash/SRI, path-unique nested packages and scoped npm purls; 474 PWA and 8 Playwright dependencies. [CI 43874005747](https://github.com/KeyserDSoze/TemporalMark/actions/runs/43874005747) generated, verified and uploaded a real seven-day artifact. Backend semantic tamper regressions (7 cases) are mandatory; [runbook](CI_NPM_CYCLONEDX_SBOM.md).
+- Final closure gate: [issue #77](https://github.com/KeyserDSoze/TemporalMark/issues/77) records the exact `main` SHA and **all four** CI results, including real PostgreSQL backup/restore, PWA, Keycloak MFA and Terraform; do not close child until verified.
+- [ ] #20 remains OPEN: .NET/NuGet and OCI/system-wide SBOM, actual security scanning/SCA/SAST, publisher signatures, runner attestation, signed release provenance, long-term evidence retention, mobile PWA installation and authenticated cross-tenant tests. No #64/#61/#57/#17 or V015/V016 release-blocker changes.

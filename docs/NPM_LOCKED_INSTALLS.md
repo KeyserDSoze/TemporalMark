@@ -24,3 +24,7 @@ On a dependency change: review upstream package advisories and manifest changes,
 npm ci only pins npm dependency resolution and checks tarball integrity; it does not make a package safe. Post-install scripts, Playwright browser downloads, Node 22 and nginx image manifests pinned as of #76 (see CI_DOCKER_IMAGE_DIGESTS.md), GitHub runner OS, .NET and Terraform providers may still change, and upstream package downloads may become unavailable. Container digest pinning, SBOM/SAST/SCA, release artifact attestations, API contract/cross-tenant tests and actual PWA installation checks remain #20. There is no independent FIDO MDS R46 root, CAB/HSM-signed monotonic witness, Azure/on-prem production parity, QTSP or eIDAS qualification. #64/#61/#57 and V015/V016 registration issuance interlocks remain OPEN.
 
 Technical sources: [npm ci](https://docs.npmjs.com/cli/v10/commands/npm-ci), [npm lockfile schema](https://docs.npmjs.com/cli/v10/configuring-npm/package-lock-json), [ADR 0044](../adr/0044-locked-npm-dependency-trees.md).
+
+## Separate npm dependency inventory for CI (#77)
+
+The PWA and browser lockfiles also feed deterministic CycloneDX JSON 1.5 `npm-lockfile-only` inventories through `tests/integration/generate_npm_sbom.py`. The frontend CI verifies then uploads two short-lived JSON files; details and strict nonclaims in [runbook](CI_NPM_CYCLONEDX_SBOM.md). This adds no vulnerability verdict, publisher signature, installed-asset attestation, container/.NET system inventory or long-term evidence custody.

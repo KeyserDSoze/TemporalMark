@@ -27,8 +27,13 @@ def check_workflow(text: str) -> list[str]:
     verified = frontend.find(VERIFY)
     if verified < 0 or position < 0 or verified <= position:
         errors.append("Frontend must verify both SBOMs after generation")
+    upload_at = frontend.find(PINNED_UPLOAD)
     if frontend.count(PINNED_UPLOAD) != 1:
         errors.append("Frontend needs one SHA-pinned upload-artifact step")
+    elif verified < 0 or upload_at <= verified:
+        errors.append("Frontend must upload only after semantic verification")
+    if "if-no-files-found: error" not in frontend:
+        errors.append("Empty SBOM artifacts must fail the frontend job")
     if "name: npm-lockfile-cyclonedx" not in frontend:
         errors.append("Expected short-lived npm-only SBOM artifact missing")
     if "retention-days: 7" not in frontend:

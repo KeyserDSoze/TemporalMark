@@ -20,6 +20,7 @@ def workflow(pinned=True, validate=True, two_installs=True, retention=7):
         + ("ea165f8d65b6e75b540449e92b4886f43607fa02" if pinned else "v4")
         + "\n        with:\n          name: npm-lockfile-cyclonedx\n"
         + "          path: $" + "{{ runner.temp }}/temporalmark-npm-sbom/*.json\n"
+        + "          if-no-files-found: error\n"
         + f"          retention-days: {retention}\n"
         + "  docker-smoke:\n    steps:\n      - run: true\n"
     )
@@ -44,6 +45,18 @@ class SbomSourcePolicyTests(unittest.TestCase):
         self.assertTrue(policy.check_workflow(workflow().replace(
             "  docker-smoke:\n", "    permissions:\n      id-token: write\n  docker-smoke:\n"
         )))
+
+    def test_upload_before_verify_or_empty_artifact_not_allowed(self):
+        original = workflow()
+        verify_at = original.index("      - name: Verify npm")
+        upload_at = original.index("      - uses: actions/upload-artifact@")
+        end_at = original.index("  docker-smoke:\n")
+        altered = (original[:verify_at] + original[upload_at:end_at]
+                   + original[verify_at:upload_at] + original[end_at:])
+        self.assertTrue(policy.check_workflow(altered))
+        self.assertTrue(policy.check_workflow(
+            workflow().replace("          if-no-files-found: error\n", "")
+        ))
 
     def test_missing_job_denied(self):
         self.assertTrue(policy.check_workflow("name: CI\njobs: {}"))
