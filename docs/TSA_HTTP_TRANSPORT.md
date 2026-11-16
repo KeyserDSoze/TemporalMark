@@ -207,3 +207,30 @@ Local focused regression command:
 ```sh
 dotnet test tests/backend/TemporalMark.Provisioner.Tests/TemporalMark.Provisioner.Tests.csproj --configuration Release --filter 'FullyQualifiedName~ExternalRfc3161IssuanceTimePolicyTests|FullyQualifiedName~ExternalRfc3161CertificateChainPolicyTests'
 ```
+
+## Offline, operator-reviewed full CRL for directly root-issued TSA signer (#94; ADR 0063)
+
+The earlier offline custom-root X.509 path (#92) deliberately used `RevocationMode=NoCheck`. A chain with a valid CA signature and certificate validity at bounded signed `genTime` (#93) cannot by itself establish that its TSA signing certificate has not been revoked. **This new conservative pilot control** requires one independently obtained, fully signed issuer **certificate revocation list (CRL)** covering the *same signed issuance instant* and **only** supports a **direct approved root CA → TSA signing leaf**. A root→intermediate→leaf chain is now **rejected by live delegated issuance** until independently verified per-issuer CRLs/OCSP can cover every non-root certificate. The separate X509 path unit tests still cover multi-hop chain construction; they do not establish multi-hop revocation.
+
+### Operator configuration and offline evidence handling
+
+1. Independently identify the **CRL issuer for the actual RFC3161 CMS signing certificate**, its distribution point/scope, CA identity and published full CRL. Verify origin and approve the CRL through an authenticated CA/QTSP channel, not an unauthenticated link. The issuer must be the **same reviewed CA root** as `TimestampProvider:TrustAnchorCertificateBase64Der`. The root must authorize `CrlSign`; its certificate and `SubjectKeyIdentifier` are used to bind the CRL's issuer and authority key identifier. A CRL signed by a different CA with an identical issuer name fails signature verification.
+2. Convert exactly one authenticated **complete DER CRL** to canonical single-line Base64 (no PEM markers or whitespace). For example, if your approved source distributes a DER `issuer.crl`:
+
+   ```sh
+   openssl crl -inform DER -in issuer.crl -noout -issuer -lastupdate -nextupdate
+   openssl base64 -A -in issuer.crl
+   ```
+
+   Configure `TimestampProvider__IssuerCrlBase64Der` (or secured `TimestampProvider:IssuerCrlBase64Der`) via the **server deployment**, alongside the already mandatory TSA URL/id, approved signer DER SHA-256, service policy OID and root DER certificate. Azure and on-prem use the same option. No user/tenant request may supply a CRL. Missing, malformed, oversized (>1 MiB), noncanonical, unsupported/delta/indirect CRL input **fails before any HTTP POST**.
+3. The validator enforces **RFC 5280 v2 complete CRL** structure, inner/outer `sha256WithRSAEncryption` algorithm equality, CRL issuer DER X.500 DN matching reviewed root and signer issuer, authenticated RSA SHA-256/PKCS#1 v1.5 signature over the original `TBSCertList`, approved-root CA `CrlSign`, root SKI matching CRL AKI, mandatory `CRLNumber`, and signed `thisUpdate <= token.genTime < nextUpdate`. A signer serial **appearing anywhere in the authenticated CRL is rejected**, even if its listed revocation date is after `genTime`: this first slice intentionally favors conservative refusal over retrospective claims about revocation reason/invalidity date. Unsupported entry extensions, unknown critical CRL semantics, indirect/delta lists, signature tampering, wrong root and chain intermediates fail closed rather than silently passing. Neither DNS nor the host's system CRL cache is used.
+4. Operationally **rotate and re-approve the complete CRL before `nextUpdate`**. An expired/not-yet-effective CRL blocks issuance, not merely raises a warning; do not disable the guard to recover. Preserve the exact externally received CRL and evidence of independent authentication/approval in an auditable archive **outside** the normal application configuration as a separate operational obligation; TemporalMark does **not yet** persist independent CRL/OCSP proof, long-term trusted-list snapshots, witnesses, or qualification. Plan an incident procedure if a signer is revoked, distribution changes, or any intermediate CA becomes necessary. No automatic fetch or trust-on-first-use is implemented.
+5. **Security/legal boundary:** `X509Chain.RevocationMode=NoCheck` stays explicit because path building remains offline. The dedicated **separate CRL verifier** now covers only the direct root→leaf case. It does **not** provide complete historical all-hop PKIX revocation (including OCSP), CA-qualified service identity at issuance, EU Trusted List service status, eIDAS qualification, QTSP HSM/UTC(k), proof preservation, replay/rollback-safe CRL history or WORM (#17); #15 and #13 remain OPEN. The exact CRL freshness window is a **pilot operational constraint**, not an EU legal validation result. Even passing this check, the receipt remains `Unverified`.
+
+Tests use disposable .NET `CertificateRevocationListBuilder.Build` **genuinely signed** CA CRLs (clean, revoked, wrong root with same DN, tampered, stale/future, corrupt, multi-hop denied) and do not use real QTSP credentials:
+
+```sh
+dotnet test tests/backend/TemporalMark.Provisioner.Tests/TemporalMark.Provisioner.Tests.csproj --configuration Release --filter FullyQualifiedName~ExternalRfc3161IssuerCrlPolicyTests
+```
+
+TDD RED evidence: [CI 43961838074](https://github.com/KeyserDSoze/TemporalMark/actions/runs/43961838074) on test-first SHA `7ba52b4bec7d9fdd7c78cb4b88cf56189546816a` failed on missing CRL verifier and provider named arguments, with existing Domain/Business/frontend/Terraform green; [ADR 0063](../adr/0063-rfc3161-offline-direct-issuer-signed-full-crl.md) committed first. References: [RFC5280 §5.1](https://www.rfc-editor.org/rfc/rfc5280#section-5.1), [CertificateRevocationListBuilder.Build](https://learn.microsoft.com/en-us/dotnet/api/system.security.cryptography.x509certificates.certificaterevocationlistbuilder.build?view=net-10.0).
