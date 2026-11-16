@@ -15,7 +15,8 @@ public sealed class ExternalRfc3161TimestampProvider(
     HttpClient http,
     Uri? providerEndpoint,
     string providerId,
-    bool allowDevelopmentLoopback = false) : ITimestampProvider
+    bool allowDevelopmentLoopback = false,
+    string? approvedSignerCertificateSha256 = null) : ITimestampProvider
 {
     private const int MaxResponseBytes = 1024 * 1024;
 
@@ -28,6 +29,12 @@ public sealed class ExternalRfc3161TimestampProvider(
         ExternalRfc3161EndpointPolicy.Validate(providerEndpoint, allowDevelopmentLoopback);
         if (string.IsNullOrWhiteSpace(providerId))
             throw new TimestampProviderUnavailableException("An explicit TSA provider identity is required.");
+
+        // No explicit independent signer approval -> do not send the imprint.
+        // The pin identifies the RFC 3161 CMS signer, NOT the HTTPS server.
+        var signerPin = ExternalRfc3161SignerPinPolicy.ParseRequiredSha256(
+            approvedSignerCertificateSha256);
+
         if (sha256Digest.Length != 32)
             throw new ArgumentException("RFC 3161 SHA-256 imprint must have 32 bytes.", nameof(sha256Digest));
 
@@ -83,6 +90,9 @@ public sealed class ExternalRfc3161TimestampProvider(
                 // the timeStamping EKU to be critical and its sole key purpose.
                 // This check does not establish chain/revocation/QTSP status.
                 ExternalRfc3161SignerCertificatePolicy.Validate(signerCertificate);
+                // Verify the operator-reviewed full DER SHA-256 fingerprint of
+                // exactly the same cryptographically verified CMS signer.
+                ExternalRfc3161SignerPinPolicy.ValidateVerifiedSigner(signerCertificate, signerPin);
             }
             catch (CryptographicException)
             {
