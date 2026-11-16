@@ -18,7 +18,8 @@ public sealed class ExternalRfc3161TimestampProvider(
     bool allowDevelopmentLoopback = false,
     string? approvedSignerCertificateSha256 = null,
     string? approvedPolicyOid = null,
-    string? approvedTrustAnchorCertificateBase64Der = null) : ITimestampProvider
+    string? approvedTrustAnchorCertificateBase64Der = null,
+    string? approvedIssuerCrlBase64Der = null) : ITimestampProvider
 {
     private const int MaxResponseBytes = 1024 * 1024;
 
@@ -45,6 +46,11 @@ public sealed class ExternalRfc3161TimestampProvider(
         using var approvedRoot =
             ExternalRfc3161CertificateChainPolicy.ParseRequiredAnchorBase64Der(
                 approvedTrustAnchorCertificateBase64Der);
+        // One complete reviewed issuer CRL is mandatory before sending the
+        // imprint. Only direct root-issued TSA signing leaves are supported
+        // by this deliberately restricted revocation policy.
+        var reviewedIssuerCrl = ExternalRfc3161IssuerCrlPolicy.ParseRequiredCrlBase64Der(
+            approvedIssuerCrlBase64Der);
 
         if (sha256Digest.Length != 32)
             throw new ArgumentException("RFC 3161 SHA-256 imprint must have 32 bytes.", nameof(sha256Digest));
@@ -127,6 +133,13 @@ public sealed class ExternalRfc3161TimestampProvider(
                 ExternalRfc3161CertificateChainPolicy.ValidateSignerChain(
                     signerCertificate, approvedRoot,
                     token.AsSignedCms().Certificates, signedGenTime);
+
+                // After the *same* actual CMS signer has built its approved
+                // custom-root path, check a genuinely issuer-signed CRL at
+                // the bounded signed genTime. Multi-hop chains fail closed:
+                // they need separately verified CRLs for every issuer.
+                ExternalRfc3161IssuerCrlPolicy.ValidateDirectIssuerLeaf(
+                    signerCertificate, approvedRoot, reviewedIssuerCrl, signedGenTime);
             }
             catch (CryptographicException)
             {
