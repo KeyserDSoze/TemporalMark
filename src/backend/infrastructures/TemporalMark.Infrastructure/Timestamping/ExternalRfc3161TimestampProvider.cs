@@ -61,6 +61,9 @@ public sealed class ExternalRfc3161TimestampProvider(
 
         try
         {
+            // Bound the *CMS-signed* genTime to this actual outbound HTTP
+            // request interval; not to the tenant's or TSA's unsigned date.
+            var requestStartedAt = DateTimeOffset.UtcNow;
             using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
             // Strict local RFC 3161 HTTP profile: no polling, partial responses or
             // non-200 success. Reject mismatched MIME *before reading any body*.
@@ -86,6 +89,7 @@ public sealed class ExternalRfc3161TimestampProvider(
             }
 
             var rawResponse = buffer.ToArray();
+            var responseReceivedAt = DateTimeOffset.UtcNow;
             Rfc3161TimestampToken token;
             int bytesConsumed;
             try
@@ -109,12 +113,20 @@ public sealed class ExternalRfc3161TimestampProvider(
                 // explicitly requested, operator-approved TSA service policy.
                 ExternalRfc3161ApprovedPolicy.ValidateIssuedPolicy(
                     token.TokenInfo.PolicyId, reviewedPolicy);
-                // Build the *verified CMS signer's* path to exactly the
-                // operator-reviewed root. Intermediate certs may come only
-                // from this CMS. Revocation and historical qualified status
-                // are NOT established by this offline path check.
+                // Enforce a fresh live issuance time relative to local HTTP
+                // start and full-body receipt before using it for X509.
+                // This is a consistency guard, NOT attested UTC accuracy.
+                var signedGenTime = token.TokenInfo.Timestamp;
+                ExternalRfc3161IssuanceTimePolicy.ValidateLiveGenTime(
+                    signedGenTime, requestStartedAt, responseReceivedAt);
+
+                // Build the *verified CMS signer's* path at its validated,
+                // CMS-signed genTime, never implicitly at wall-clock now.
+                // Intermediates may come only from this CMS; revocation and
+                // historical QTSP qualified status remain unresolved.
                 ExternalRfc3161CertificateChainPolicy.ValidateSignerChain(
-                    signerCertificate, approvedRoot, token.AsSignedCms().Certificates);
+                    signerCertificate, approvedRoot,
+                    token.AsSignedCms().Certificates, signedGenTime);
             }
             catch (CryptographicException)
             {
