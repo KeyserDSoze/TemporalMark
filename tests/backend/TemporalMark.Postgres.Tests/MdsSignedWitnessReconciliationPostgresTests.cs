@@ -135,7 +135,7 @@ public sealed class MdsSignedWitnessReconciliationPostgresTests
     [Fact]
     public async Task RestoredLowerDatabaseSerialAndEqualVersionContentEquivocationAreRejected()
     {
-        var c = Candidate.Fresh("ISSUER_CRL");
+        var c = Candidate.Fresh(kind: "ISSUER_CRL");
         await using var db = Owner();
         await db.OpenAsync();
         await Stage(db, c with { Serial = 6, Digest = Hash("older") });
@@ -198,7 +198,7 @@ public sealed class MdsSignedWitnessReconciliationPostgresTests
         // An extra row in the same source-policy scope rejects an old witness.
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
             Check(db, key, one, oneSig, now));
-        var both = Manifest(policy, now, [second.Line, first.Line]);
+        // The second V017 row was observed after the first witness clock.\n        // Take a fresh trusted test observation before signing the NEW scope.\n        now = DateTimeOffset.UtcNow;\n        var both = Manifest(policy, now, [second.Line, first.Line]);
         var bothSig = Sign(key, both);
         Assert.Equal("UNAPPROVED",
             (await Check(db, key, both, bothSig, now)).ReviewStatus);
