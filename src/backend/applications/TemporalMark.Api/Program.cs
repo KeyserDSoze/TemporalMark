@@ -46,6 +46,9 @@ builder.Services.AddScoped<ITimestampProvider>(sp =>
     // cannot issue, even in Development: the provider fails before HTTP.
     var approvedSignerCertificateSha256 =
         builder.Configuration["TimestampProvider:SignerCertificateSha256"];
+    // RFC3161 reqPolicy is operator-owned: never derive a policy from a
+    // caller, tenant, HTTPS server or unverified TSA response.
+    var approvedPolicyOid = builder.Configuration["TimestampProvider:PolicyOid"];
     if (!string.IsNullOrWhiteSpace(url) && !Uri.TryCreate(url, UriKind.Absolute, out _))
         throw new InvalidOperationException("TimestampProvider:Url must be a valid absolute URL.");
     var uri = string.IsNullOrWhiteSpace(url) ? null : new Uri(url);
@@ -57,7 +60,8 @@ builder.Services.AddScoped<ITimestampProvider>(sp =>
     return new ExternalRfc3161TimestampProvider(
         sp.GetRequiredService<IHttpClientFactory>().CreateClient("external-tsa"),
         uri, providerId, allowDevelopmentLoopback: allowDevelopmentLoopback,
-        approvedSignerCertificateSha256: approvedSignerCertificateSha256);
+        approvedSignerCertificateSha256: approvedSignerCertificateSha256,
+        approvedPolicyOid: approvedPolicyOid);
 });
 
 var origins = builder.Configuration.GetSection("Cors:Origins").Get<string[]>() ?? [];
