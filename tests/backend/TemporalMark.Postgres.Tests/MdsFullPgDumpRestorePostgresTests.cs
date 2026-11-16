@@ -159,10 +159,10 @@ public sealed class MdsFullPgDumpRestorePostgresTests
                 // can restore an older file journal ALONG WITH the DB.
                 // This positive result is STILL UNAPPROVED, not trusted.
                 File.WriteAllBytes(journalPath, olderFile);
-                var replay = ReviewerMdsOfflineFileHighWaterJournal.InspectLatest(
+                var replayedJournal = ReviewerMdsOfflineFileHighWaterJournal.InspectLatest(
                     journalPath, policy, journalPin, journalKey, now);
-                Assert.Equal(3L, replay.CandidateSerial);
-                Assert.Equal(oldSealPin, replay.SealSha256);
+                Assert.Equal(3L, replayedJournal.CandidateSerial);
+                Assert.Equal(oldSealPin, replayedJournal.SealSha256);
             }
             finally
             {
