@@ -182,6 +182,25 @@ public sealed class ExternalRfc3161CertificateChainPolicyTests
     }
 
     [Fact]
+    public void LeafCertificateWithTamperedCaSignatureMustFailChain()
+    {
+        using var root = CreateRoot();
+        using var leaf = CreateSigner(root);
+        using var approved = ParseRoot(root);
+
+        // Mutate the final byte of the DER signature BIT STRING while
+        // retaining a parseable X.509 certificate. The issuing CA's
+        // cryptographic signature must NOT be ignored by the path builder.
+        var tamperedDer = leaf.RawData.ToArray();
+        tamperedDer[^1] ^= 0x01;
+        using var tampered = X509CertificateLoader.LoadCertificate(tamperedDer);
+
+        Assert.Throws<TimestampProviderResponseException>(() =>
+            ExternalRfc3161CertificateChainPolicy.ValidateSignerChain(
+                tampered, approved, new X509Certificate2Collection()));
+    }
+
+    [Fact]
     public void OfflineChainMustUseOnlyConfiguredRootAndNeverFetchAiaOrRevocation()
     {
         using var root = CreateRoot();
