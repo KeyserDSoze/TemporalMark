@@ -210,6 +210,8 @@ dotnet test tests/backend/TemporalMark.Provisioner.Tests/TemporalMark.Provisione
 
 ## Offline, operator-reviewed full CRL for directly root-issued TSA signer (#94; ADR 0063)
 
+*Historical scope of #94: since #95/ADR 0064, live issuance also supports **exactly one CA intermediate** when both the root's and intermediate's signed CRLs are explicitly reviewed and supplied; see the next section. The original direct-root profile remains available.*
+
 The earlier offline custom-root X.509 path (#92) deliberately used `RevocationMode=NoCheck`. A chain with a valid CA signature and certificate validity at bounded signed `genTime` (#93) cannot by itself establish that its TSA signing certificate has not been revoked. **This new conservative pilot control** requires one independently obtained, fully signed issuer **certificate revocation list (CRL)** covering the *same signed issuance instant* and **only** supports a **direct approved root CA → TSA signing leaf**. A root→intermediate→leaf chain is now **rejected by live delegated issuance** until independently verified per-issuer CRLs/OCSP can cover every non-root certificate. The separate X509 path unit tests still cover multi-hop chain construction; they do not establish multi-hop revocation.
 
 ### Operator configuration and offline evidence handling
@@ -234,3 +236,25 @@ dotnet test tests/backend/TemporalMark.Provisioner.Tests/TemporalMark.Provisione
 ```
 
 TDD RED evidence: [CI 43961838074](https://github.com/KeyserDSoze/TemporalMark/actions/runs/43961838074) on test-first SHA `7ba52b4bec7d9fdd7c78cb4b88cf56189546816a` failed on missing CRL verifier and provider named arguments, with existing Domain/Business/frontend/Terraform green; [ADR 0063](../adr/0063-rfc3161-offline-direct-issuer-signed-full-crl.md) committed first. References: [RFC5280 §5.1](https://www.rfc-editor.org/rfc/rfc5280#section-5.1), [CertificateRevocationListBuilder.Build](https://learn.microsoft.com/en-us/dotnet/api/system.security.cryptography.x509certificates.certificaterevocationlistbuilder.build?view=net-10.0).
+
+## Two complete per-issuer CRLs for one X.509 intermediate (#95; ADR 0064)
+
+The delegated RFC3161 pilot now validates the **actual CustomRootTrust certificate path** selected from the CMS response with **complete signed revocation coverage at each non-root certificate**, for exactly two supported path shapes:
+
+- **Direct:** reviewed root CA → verified TSA signing leaf. `TimestampProvider:IssuerCrlBase64Der` is mandatory and must be a genuine **root-signed full CRL**; **leave `TimestampProvider:IntermediateIssuerCrlBase64Der` empty**. If a second CRL is configured unnecessarily, issuance fails rather than silently ignoring it.
+- **One intermediate:** reviewed root CA → intermediate CA → verified TSA signing leaf. **Both** root-signed `TimestampProvider:IssuerCrlBase64Der` **and** intermediate-signed `TimestampProvider:IntermediateIssuerCrlBase64Der` are required. First verify that the **intermediate CA certificate serial is not revoked** on the authenticated root CRL; then verify that the **exact cryptographically verified RFC3161 signer leaf serial is not revoked** on the authenticated intermediate CA CRL. Each check uses the *immediate issuer selected by the previously validated X.509 path*, not a matching-subject certificate included arbitrarily in the CMS response. Both CRLs must be valid at the **same bounded CMS-signed** `TSTInfo.genTime`. A missing or invalid CRL at either level rejects issuance.
+
+### Operator rollout, Azure and on-prem
+
+1. Independently review the TSA signer path and each CA's authenticated **full CRL** from that CA's legitimate CRL distribution source and relevant service policy. For one intermediate, retain the existing reviewed **root-signed** full DER CRL configuration, and independently obtain the **intermediate CA-signed** full DER CRL for the TSA leaf. Convert its exact DER bytes to canonical single-line standard Base64, for example `openssl base64 -A -in reviewed-intermediate-issuer.crl`. The root and intermediate CRLs cannot be substituted for one another.
+2. Configure the **server only**, identically on both Azure and on-prem, with `TimestampProvider__IntermediateIssuerCrlBase64Der` (or secured `TimestampProvider:IntermediateIssuerCrlBase64Der`). Leave it blank if the actual pinned signer is issued directly by the reviewed root. When non-empty, the value must pass the same strict complete-v2-CRL DER and Base64 parser **before any HTTP request**. For an intermediate signer chain, a blank value fails **after token verification** because chain length and actual selected intermediate are only known then. Never accept a CRL URL, an ambient OS cache, tenant input or a guessed issuer certificate.
+3. Rotate **both** full signed CRLs with documented independent approval **before their respective `nextUpdate`**, monitoring root and intermediate changes. Each issuer's `CrlSign`, issuer DER name, RSA SHA-256 issuer signature, root/intermediate SKI–CRL AKI, CRLNumber and `thisUpdate <= signed genTime < nextUpdate` are checked separately. A listed certificate is conservatively rejected **regardless of its reported revocation date**. A wrong-key CA with the same subject DN cannot authorize the TSA signing leaf's CRL, nor can an unverified CMS-bundled cert override the path selected by custom root X.509 validation.
+4. A longer chain with **two or more intermediate CAs** remains **unsupported and fails closed**, even if a plausible CRL is supplied. Delta, indirect, partially reason-partitioned and unsupported signature formats, CRL/OCSP network retrieval, historic issuer status, rollback-resistant CRL history and immutable proof custody are also **not implemented**. This is not a complete generic RFC5280 §6.3 validator, nor proof of eIDAS-qualified QTSP status, preserved CRL review, UTC(k), historical EU Trusted List service qualification, WORM (#17) or CAB/AgID conformity (#13). Open #15 remains the parent; all pilot marks remain `Unverified`.
+
+Focused tests generate disposable RSA root, intermediate and signer certificates and **two genuinely issuer-signed CRLs**. Revoking either intermediate or leaf, wrong signer keys with identical DN, missing CMS intermediate, swapped/malformed/stale CRLs and superfluous CRL in the direct path fail closed.
+
+```sh
+dotnet test tests/backend/TemporalMark.Provisioner.Tests/TemporalMark.Provisioner.Tests.csproj --configuration Release --filter FullyQualifiedName~ExternalRfc3161TwoHopIssuerCrlTests
+```
+
+[ADR 0064](../adr/0064-rfc3161-intermediate-issuer-complete-crl-coverage.md) · [RFC5280 §6.3](https://www.rfc-editor.org/rfc/rfc5280#section-6.3) · [RFC10007 cRLSign clarification](https://www.rfc-editor.org/rfc/rfc10007.html). 
