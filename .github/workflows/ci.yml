@@ -16,6 +16,8 @@ jobs:
         run: |
           python3 -m unittest discover -s tests/integration -p 'test_check_ci_action_pins.py' -v
           python3 tests/integration/check_ci_action_pins.py
+          python3 -m unittest discover -s tests/integration -p 'test_check_npm_lockfiles.py' -v
+          python3 tests/integration/check_npm_lockfiles.py
       - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
           dotnet-version: 10.0.x
@@ -47,6 +49,15 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
+      - name: Temporary canonical npm 10 lockfile seed for #75 (public registry metadata only)
+        run: |
+          set -euo pipefail
+          for project in src/frontend tests/frontend; do
+            (cd "$project" && npm install --package-lock-only --ignore-scripts --no-audit --no-fund)
+            printf 'TEMPORALMARK_LOCK_BEGIN %s\n' "$project"
+            base64 --wrap=76 "$project/package-lock.json"
+            printf 'TEMPORALMARK_LOCK_END %s\n' "$project"
+          done
       - name: Install and build React PWA
         working-directory: src/frontend
         run: |
