@@ -260,6 +260,35 @@ public sealed class MdsSeparatePostgresWitnessRestoreTests
         Assert.Equal(latestSha, current.SealSha256);
         Assert.Equal(1, current.MatchedCandidates);
 
+        // #73 RED: privileged witness owner rewrites ONLY its latest audit
+        // event, leaving the current checkpoint at 4. The old reader never
+        // inspected the event history and silently accepted the mismatch.
+        var corruptAuditSha = Hash("attacker-changed-audit-event-" + policy);
+        async Task ChangeLatestAuditSha(string sha)
+        {
+            await using var cmd = new NpgsqlCommand("""
+                UPDATE public.unapproved_witness_events
+                SET seal_sha256=@sha
+                WHERE source_policy_sha256=@policy AND candidate_serial=4
+                """, witnessOwner);
+            cmd.Parameters.AddWithValue("sha", sha);
+            cmd.Parameters.AddWithValue("policy", policy);
+            Assert.Equal(1, await cmd.ExecuteNonQueryAsync());
+        }
+        await ChangeLatestAuditSha(corruptAuditSha);
+        try
+        {
+            // Must be denied even when primary data, checkpoint and original
+            // RSA-PSS seal still match: internal witness audit is corrupt.
+            await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+                Check(primary, witnessReader, newWitness, newWitnessSig,
+                    newSeal, newSealSig, sealKeyPin));
+        }
+        finally
+        {
+            await ChangeLatestAuditSha(latestSha);
+        }
+
         // A full logical restore of the main application DB to serial 3
         // does not roll back this SECOND PostgreSQL SERVER at serial 4.
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
