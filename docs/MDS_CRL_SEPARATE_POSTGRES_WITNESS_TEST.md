@@ -34,3 +34,7 @@ The second PostgreSQL server **does not provide independent immutability**. This
 - [Earlier full PostgreSQL archive test](MDS_CRL_FULL_PGDUMP_RESTORE_TEST.md)
 - [PostgreSQL 17 INSERT ... ON CONFLICT](https://www.postgresql.org/docs/17/sql-insert.html)
 - [PostgreSQL 17 privilege management](https://www.postgresql.org/docs/17/ddl-priv.html)
+
+## Separate SQL writer role and non-login SECURITY DEFINER owner (#70)
+
+The [ADR 0039](../adr/0039-ci-nonlogin-definer-and-execute-only-witness-writer.md) and [test-only writer runbook](MDS_CRL_EXECUTE_ONLY_WITNESS_WRITER_TEST.md) add a **dedicated non-superuser witness writer** allowed to execute only the monotonic append function. A separate NOLOGIN/NOSUPERUSER data owner owns the two synthetic tables and the restricted SECURITY DEFINER function with qualified names and fixed catalog/pg_temp search_path. Default PUBLIC function EXECUTE and database TEMPORARY grants are revoked atomically during CI bootstrap. The reader stays SELECT-only; the main TemporalMark application and V001–V017 are unchanged. The owner superuser/CI host can still rewrite both volumes and forge synthetic roots; no production HSM/immutable WORM custody, CAB approval, official FIDO R46 JWS/CRL/OCSP or active WebAuthn credential is implied. #64/#61 remain OPEN.
