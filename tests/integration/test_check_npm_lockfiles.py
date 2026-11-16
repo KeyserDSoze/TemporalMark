@@ -25,7 +25,7 @@ class LockPolicyTests(unittest.TestCase):
             "version": "0.1.0",
             "lockfileVersion": 3,
             "packages": {
-                "": dict(self.manifest),
+                "": json.loads(json.dumps(self.manifest)),
                 "node_modules/react": {
                     "version": "19.2.0",
                     "resolved": "https://registry.npmjs.org/react/-/react-19.2.0.tgz",
