@@ -298,6 +298,153 @@ public sealed class MdsSeparatePostgresWitnessRestoreTests
                 missingSeal, MdsFullPgDumpRestoreWitnessFixture.Sign(
                     sealSigner, missingSeal), sealKeyPin));
 
+        // #72 RED: a HOST PRIVILEGED operator can restore BOTH SQL states to
+        // serial 3, so the pre-existing two-store check accepts stale but
+        // correctly signed old+old as UNAPPROVED. An independently retained
+        // TEST-ONLY signed file journal at 4 must make a new three-source
+        // preflight fail CLOSED. None of these stores has immutable custody.
+        var journalDirectory = Path.Combine(Path.GetTempPath(),
+            "temporalmark-three-source-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(journalDirectory);
+        try
+        {
+            var journalPath = Path.Combine(journalDirectory, "signed-latest.log");
+            using var journalSigner = RSA.Create(2048);
+            var journalPin = MdsFullPgDumpRestoreWitnessFixture.SpkiPin(journalSigner);
+            ReviewerMdsOfflineFileHighWaterJournal.BootstrapNewForTests(
+                journalPath, policy, journalPin);
+
+            byte[] Event(long serial, string sealHash, string previousHash) =>
+                Encoding.ASCII.GetBytes(string.Join("\n", [
+                    "TEMPORALMARK-UNAPPROVED-SIGNED-FILE-HIGHWATER-EVENT-1",
+                    policy,
+                    serial.ToString(CultureInfo.InvariantCulture),
+                    sealHash,
+                    previousHash,
+                    clock.AddSeconds(-1).ToUnixTimeSeconds()
+                        .ToString(CultureInfo.InvariantCulture),
+                    ""
+                ]));
+
+            void Append(byte[] signedEvent)
+            {
+                var detached = MdsFullPgDumpRestoreWitnessFixture.Sign(
+                    journalSigner, signedEvent);
+                var appended = ReviewerMdsOfflineFileHighWaterJournal
+                    .AppendSignedForTests(journalPath, policy, journalPin,
+                        journalSigner, signedEvent, detached, clock);
+                Assert.Equal("UNAPPROVED", appended.ReviewStatus);
+            }
+
+            var oldEvent = Event(3, oldSha, new string('0', 64));
+            Append(oldEvent);
+            var replayableOldJournal = File.ReadAllBytes(journalPath);
+            var newEvent = Event(4, latestSha,
+                Convert.ToHexString(SHA256.HashData(oldEvent)));
+            Append(newEvent);
+            var retainedLatestJournal = File.ReadAllBytes(journalPath);
+
+            Task<ReviewerMdsThreeSourceHighWaterCandidate> CheckThree(
+                NpgsqlConnection main, byte[] signedManifest,
+                byte[] manifestSig, byte[] signedSeal, byte[] sealSig,
+                string? testPin = null) =>
+                ReviewerMdsThreeSourceHighWaterCandidateReconciler.ReconcileAsync(
+                    main, witnessReader, journalPath, policy,
+                    testPin ?? journalPin, journalSigner,
+                    signedManifest, manifestSig, manifestSigner,
+                    signedSeal, sealSig, sealSigner, sealKeyPin, clock);
+
+            var fresh = await CheckThree(primary, newWitness, newWitnessSig,
+                newSeal, newSealSig);
+            Assert.Equal("UNAPPROVED", fresh.ReviewStatus);
+            Assert.Equal("THREE_TEST_STORES_NO_INDEPENDENT_CUSTODY",
+                fresh.PolicyStage);
+            Assert.Equal(4L, fresh.LatestSerial);
+            Assert.Equal(latestSha, fresh.SealSha256);
+            Assert.Equal(1, fresh.MatchedCandidates);
+
+            // Fail closed on wrong journal key/pin and missing/corrupt file.
+            await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+                CheckThree(primary, newWitness, newWitnessSig,
+                    newSeal, newSealSig, Hash("wrong-journal-test-pin")));
+            File.Delete(journalPath);
+            await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+                CheckThree(primary, newWitness, newWitnessSig,
+                    newSeal, newSealSig));
+            File.WriteAllBytes(journalPath, retainedLatestJournal);
+            await File.AppendAllTextAsync(journalPath, "corrupt\n");
+            await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+                CheckThree(primary, newWitness, newWitnessSig,
+                    newSeal, newSealSig));
+            File.WriteAllBytes(journalPath, retainedLatestJournal);
+
+            // CI test superuser/owner can illegally bypass the definer
+            // function and rewrite its checkpoint. Protected audit is NOT
+            // immutable and still reports both serial 3 and serial 4.
+            async Task RewriteWitnessAsPrivilegedOwner(long serial, string sha)
+            {
+                await using var update = new NpgsqlCommand("""
+                    UPDATE public.unapproved_witness_checkpoints
+                    SET candidate_serial=@serial, seal_sha256=@sha,
+                        observed_utc=@observed
+                    WHERE source_policy_sha256=@policy
+                    """, witnessOwner);
+                update.Parameters.AddWithValue("serial", serial);
+                update.Parameters.AddWithValue("sha", sha);
+                update.Parameters.AddWithValue("observed",
+                    clock.UtcDateTime.AddSeconds(-1));
+                update.Parameters.AddWithValue("policy", policy);
+                Assert.Equal(1, await update.ExecuteNonQueryAsync());
+            }
+
+            try
+            {
+                await RewriteWitnessAsPrivilegedOwner(3, oldSha);
+
+                // Actual prior full pg_dump/pg_restore primary DB is at 3.
+                // The formerly signed old witness + rewritten second DB at
+                // 3 still passes the OLD two-source preflight UNAPPROVED.
+                var replayAcceptedByTwo = await Check(restored, witnessReader,
+                    oldWitness, oldWitnessSig, oldSeal, oldSealSig, sealKeyPin);
+                Assert.Equal("UNAPPROVED", replayAcceptedByTwo.ReviewStatus);
+                Assert.Equal(3L, replayAcceptedByTwo.LatestSerial);
+
+                // New file journal still retains 4, so three-store
+                // reconciliation must refuse coordinated SQL rollback.
+                await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+                    CheckThree(restored, oldWitness, oldWitnessSig,
+                        oldSeal, oldSealSig));
+                await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+                    CheckThree(primary, newWitness, newWitnessSig,
+                        newSeal, newSealSig));
+
+                // Residual unsolved risk (EXPECTED): the privileged runner
+                // also replaces the journal with earlier correctly signed
+                // bytes. All three old values then agree, so this isolated
+                // check cannot establish that version 4 ever existed.
+                File.WriteAllBytes(journalPath, replayableOldJournal);
+                var tripleRollbackStillUnapproved = await CheckThree(
+                    restored, oldWitness, oldWitnessSig, oldSeal, oldSealSig);
+                Assert.Equal("UNAPPROVED",
+                    tripleRollbackStillUnapproved.ReviewStatus);
+                Assert.Equal(3L, tripleRollbackStillUnapproved.LatestSerial);
+            }
+            finally
+            {
+                // Restore synthetic test state; no production authority.
+                await RewriteWitnessAsPrivilegedOwner(4, latestSha);
+                File.WriteAllBytes(journalPath, retainedLatestJournal);
+            }
+
+            var reconciledAgain = await CheckThree(primary,
+                newWitness, newWitnessSig, newSeal, newSealSig);
+            Assert.Equal(4L, reconciledAgain.LatestSerial);
+        }
+        finally
+        {
+            Directory.Delete(journalDirectory, recursive: true);
+        }
+
         // Clock/retention violations on the external witness are denied,
         // even if its signed caller-side seal and primary state still match.
         async Task SetWitnessObservation(string intervalExpression)
