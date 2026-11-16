@@ -66,6 +66,18 @@ jobs:
       - name: Playwright desktop/mobile smoke
         working-directory: tests/frontend
         run: npm test
+      - name: Generate npm lockfile CycloneDX inventories
+        run: |
+          python3 tests/integration/generate_npm_sbom.py generate --output-dir "$RUNNER_TEMP/temporalmark-npm-sbom"
+      - name: Verify npm lockfile CycloneDX inventories
+        run: |
+          python3 tests/integration/generate_npm_sbom.py verify --output-dir "$RUNNER_TEMP/temporalmark-npm-sbom"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: npm-lockfile-cyclonedx
+          path: ${{ runner.temp }}/temporalmark-npm-sbom/*.json
+          if-no-files-found: error
+          retention-days: 7
 
   docker-smoke:
     runs-on: ubuntu-24.04
