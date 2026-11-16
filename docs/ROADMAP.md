@@ -246,5 +246,12 @@ The previous [#69](https://github.com/KeyserDSoze/TemporalMark/issues/69) four-j
 ## Immutable GitHub Actions references — child #74 of #20
 
 - [x] ADR 0043 committed before RED. Real [CI 43857785628](https://github.com/KeyserDSoze/TemporalMark/actions/runs/43857785628) proved 3 Python unit tests GREEN while the real policy rejected all 10 floating action refs; the local-path traversal regression was caught and corrected first.
-- [ ] GREEN candidate 354ea83 pins all ten uses declarations to the five verified 40-character upstream action commit SHAs. Keep the policy check in the backend job, preserve all four jobs and verify all on **exact final main SHA** before closing only child #74. [Runbook](CI_ACTION_PINNING.md).
-- [ ] Parent #20 remains OPEN: npm lockfiles + npm ci, pinned container digests and runner/toolchain provenance, SAST/SBOM, attested releases, PWA maskable/install coverage and cross-tenant tests. #64/#61/#57 and V015/V016 security freeze remain unaffected.
+- [x] GREEN verified on [CI 43858384707](https://github.com/KeyserDSoze/TemporalMark/actions/runs/43858384707) at 0872290; candidate 354ea83 pins all ten uses declarations to the five verified 40-character upstream action commit SHAs. Keep the policy check in the backend job, preserve all four jobs and verify all on **exact final main SHA** before closing only child #74. [Runbook](CI_ACTION_PINNING.md).
+- [ ] Parent #20 remains OPEN: npm lockfiles + npm ci addressed under child #75, pinned container digests and runner/toolchain provenance, SAST/SBOM, attested releases, PWA maskable/install coverage and cross-tenant tests. #64/#61/#57 and V015/V016 security freeze remain unaffected.
+
+## npm v10 dependency lockfiles and clean CI/Docker installs (#75, child #20)
+
+- [x] ADR 0044 before RED. Actual [CI 43861421062](https://github.com/KeyserDSoze/TemporalMark/actions/runs/43861421062): 5/5 Python tests PASS but source policy DENIED both missing lockfiles, unfrozen npm install and Docker clean install mismatch. Initial synthetic fixture shallow-copy bug was corrected in forward commit 5be400c.
+- [x] GREEN candidate 842f477: genuine npm v10 v3 registry lockfiles (475 entries PWA, 9 entries tests), all registry packages verified for exact version, HTTPS source, integrity, all CI/npm installs switched to npm ci, Docker COPYs package-lock before clean install and temporary lockfile seed removed. [Runbook](NPM_LOCKED_INSTALLS.md).
+- [ ] Check full final-main four-job CI on exact SHA, with backend 5 tests and source policy PASS, frontend/browser, production Docker build, PWA security, two PostgreSQL restore suites, Keycloak MFA and Terraform. Close ONLY child #75 after this evidence.
+- [ ] Parent #20 remains open for container digests, runners/toolchain provenance, SBOM/SAST, signed release artifacts, mobile install and tenant-isolation coverage. FIDO/witness #64/#61/#57 and V015/V016 freeze unaffected.
