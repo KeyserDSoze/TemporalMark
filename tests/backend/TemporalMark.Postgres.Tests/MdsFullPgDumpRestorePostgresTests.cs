@@ -12,6 +12,7 @@ namespace TemporalMark.Postgres.Tests;
 /// Test keys/pins live solely in this test process, not in either database.
 /// The successful result is NEVER FIDO/CRL trust or authorization.
 /// </summary>
+[Collection("TemporalMarkFullLogicalRestoreSerial")]
 public sealed class MdsFullPgDumpRestorePostgresTests
 {
     [Fact]
@@ -222,5 +223,23 @@ public sealed class MdsFullPgDumpRestorePostgresTests
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
             Reconcile(restored, oldWitness, oldWitnessSignature,
                 oldSeal, oldSealSignature, oldSealPin));
+
+        // The separate-cluster regression now REALLY runs in the same
+        // mandatory CI invocation. Restore the disposable old snapshot
+        // fixture so the other same-collection test observes serial 3's
+        // authentic original digest, regardless of xUnit class order.
+        await using (var reset = new NpgsqlCommand("""
+            UPDATE public.mds_unapproved_candidate_checkpoints
+            SET signed_evidence_sha256=@digest
+            WHERE source_policy_sha256=@policy
+              AND candidate_kind='MDS_BLOB'
+              AND issuer_key_sha256=@issuer
+            """, restored))
+        {
+            reset.Parameters.AddWithValue("digest", oldDigest);
+            reset.Parameters.AddWithValue("policy", policy);
+            reset.Parameters.AddWithValue("issuer", issuer);
+            Assert.Equal(1, await reset.ExecuteNonQueryAsync());
+        }
     }
 }
