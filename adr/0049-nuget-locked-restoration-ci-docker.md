@@ -1,8 +1,10 @@
-# ADR 0048 — Commit real NuGet package graphs and require locked restores in .NET CI/Docker
+# ADR 0049 — Commit real NuGet package graphs and require locked restores in .NET CI/Docker
 
 Status: **accepted for source dependency resolution reproducibility only** (2026-11-16), scoped child [#79](https://github.com/KeyserDSoze/TemporalMark/issues/79) of open [#20](https://github.com/KeyserDSoze/TemporalMark/issues/20).
 
 ## Context, prior decisions and sources
+
+Numbering correction: ADR 0048 already records the independent PWA child #80. This NuGet decision is ADR 0049; the duplicate earlier path was retired without changing the security decision.
 
 Reviewed ADR 0001 and ADR 0043–0047, `docs/ROADMAP.md`, `docs/THREAT_MODEL.md`, `docs/CI_NUGET_CYCLONEDX_SBOM.md`, `docs/CI_NPM_CYCLONEDX_SBOM.md`, nine `.csproj` under `src/backend` and `tests/backend`, .NET SDK Dockerfile and all GitHub Actions CI jobs. #78 exports *restored* NuGet CycloneDX 1.5 from nine temporary `obj/project.assets.json` graphs, but none of the project inputs records the resolved transitive package graph under version control. `setup-dotnet: 10.0.x`, pinned Docker SDK image content and the transient NuGet feed may change the restore result; this creates a mismatch between a source SHA and the versions tested/packaged.
 

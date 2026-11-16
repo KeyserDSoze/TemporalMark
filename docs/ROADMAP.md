@@ -284,3 +284,10 @@ The previous [#69](https://github.com/KeyserDSoze/TemporalMark/issues/69) four-j
 - [x] TDD RED on [CI 43882463108](https://github.com/KeyserDSoze/TemporalMark/actions/runs/43882463108), exact SHA `154781e`: backend/frontend/terraform SUCCESS, docker-smoke fails **only** at expected missing `manifest.id` (`undefined`, required `"/"`).
 - [x] GREEN source: explicit origin-scoped `id: "/"` in Vite PWA manifest with unchanged start and scope. Reproduction and nonclaims in [PWA mobile CI runbook](PWA_MOBILE_INSTALLABILITY_CI.md).
 - [ ] #80 closure requires all four CI jobs SUCCESS on exact final GREEN main SHA. Parent #20 stays OPEN for actual device installation, attested artifacts, SAST/secret scans and authenticated cross-tenant API. Security #38/#44/#46/#50/#57/#61/#64, WORM #17 and legal/QTSP #13 all remain OPEN.
+
+## NuGet locked restores (#79, ADR 0049)
+
+- [x] CI-first RED on [43883455966](https://github.com/KeyserDSoze/TemporalMark/actions/runs/43883455966): unit regressions pass while nine missing NuGet locks and mutable restore commands fail source policy.
+- [x] Nine genuine NuGet .NET 10 lock files, 62,364 bytes total, recovered from disposable registry-backed CI resolver and committed in `6717fa3` without inventing package versions or hashes.
+- [x] Replace seed with all-project `dotnet restore --locked-mode` before backend tests; `--no-restore` test/publish; API Docker and integration tests `RestoreLockedMode=true`; runbook [CI_NUGET_LOCKED_RESTORES.md](CI_NUGET_LOCKED_RESTORES.md).
+- [ ] Close #79 only with final-main four-job GREEN, including production mobile PWA #80. Parent #20 and independent security/FIDO/QTSP issues remain OPEN.
