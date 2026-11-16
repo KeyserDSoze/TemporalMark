@@ -17,7 +17,8 @@ public sealed class ExternalRfc3161TimestampProvider(
     string providerId,
     bool allowDevelopmentLoopback = false,
     string? approvedSignerCertificateSha256 = null,
-    string? approvedPolicyOid = null) : ITimestampProvider
+    string? approvedPolicyOid = null,
+    string? approvedTrustAnchorCertificateBase64Der = null) : ITimestampProvider
 {
     private const int MaxResponseBytes = 1024 * 1024;
 
@@ -39,6 +40,11 @@ public sealed class ExternalRfc3161TimestampProvider(
         // Enforce canonical operator-owned reqPolicy before any outbound HTTP.
         var reviewedPolicy = ExternalRfc3161ApprovedPolicy.ParseRequiredPolicyOid(
             approvedPolicyOid);
+        // An operator-approved CA root is mandatory before transmitting any
+        // imprint. Keep parsing entirely local; never fetch CA certs by URL.
+        using var approvedRoot =
+            ExternalRfc3161CertificateChainPolicy.ParseRequiredAnchorBase64Der(
+                approvedTrustAnchorCertificateBase64Der);
 
         if (sha256Digest.Length != 32)
             throw new ArgumentException("RFC 3161 SHA-256 imprint must have 32 bytes.", nameof(sha256Digest));
@@ -103,6 +109,12 @@ public sealed class ExternalRfc3161TimestampProvider(
                 // explicitly requested, operator-approved TSA service policy.
                 ExternalRfc3161ApprovedPolicy.ValidateIssuedPolicy(
                     token.TokenInfo.PolicyId, reviewedPolicy);
+                // Build the *verified CMS signer's* path to exactly the
+                // operator-reviewed root. Intermediate certs may come only
+                // from this CMS. Revocation and historical qualified status
+                // are NOT established by this offline path check.
+                ExternalRfc3161CertificateChainPolicy.ValidateSignerChain(
+                    signerCertificate, approvedRoot, token.AsSignedCms().Certificates);
             }
             catch (CryptographicException)
             {
