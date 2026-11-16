@@ -10,9 +10,11 @@ def workflow(restore=True, verify=True, pinned=True, retention=7, json_only=True
     return (
         "name: CI\njobs:\n  backend:\n    steps:\n"
         + ('      - name: Restore every .NET project\n'
-           '        run: |\n          while IFS= read -r project; do\n'
+           '        run: |\n'
+           "          projects=\"$(find src/backend tests/backend -type f -name '*.csproj' | sort)\"\n"
+           '          while IFS= read -r project; do\n'
            '            dotnet restore "$project"\n'
-           "          done < <(find src/backend tests/backend -type f -name '*.csproj' | sort)\n"
+           '          done <<< "$projects"\n'
            if restore else "")
         + '      - name: Generate NuGet SBOM\n'
         + '        run: python3 tests/integration/generate_nuget_sbom.py generate --output-dir "$RUNNER_TEMP/temporalmark-nuget-sbom"\n'

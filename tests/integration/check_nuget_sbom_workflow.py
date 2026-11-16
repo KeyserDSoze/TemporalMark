@@ -20,7 +20,7 @@ def check_workflow(source: str) -> list[str]:
     generate = backend.find(GENERATE)
     verify = backend.find(VERIFY)
     upload = backend.find(UPLOAD)
-    if discovery < 0 or restore < 0 or restore >= discovery:
+    if discovery < 0 or restore < 0 or restore <= discovery:
         errors.append("Backend must enumerate and restore all .NET projects")
     if generate < 0 or restore < 0 or generate <= restore:
         errors.append("Backend must generate NuGet inventory after restore")
