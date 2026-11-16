@@ -114,6 +114,33 @@ Regression tests generate disposable short-lived **self-signed X.509 fixtures** 
 dotnet test tests/backend/TemporalMark.Provisioner.Tests/TemporalMark.Provisioner.Tests.csproj --configuration Release --filter FullyQualifiedName~ExternalRfc3161SignerCertificatePolicyTests
 ```
 
-The tests do **not** make self-signed certificates trusted, do not generate legally valid qualified timestamps and do not prove end-to-end interoperability with a genuine QTSP. **TDD RED**: [CI 43919547198](https://github.com/KeyserDSoze/TemporalMark/actions/runs/43919547198) on test-first SHA `778bf077` failed compilation only because the policy was not yet present; domain and business tests remained green. #89 can close only after all four jobs on exact final `main` SHA are successful.
+The tests do **not** make self-signed certificates trusted, do not generate legally valid qualified timestamps and do not prove end-to-end interoperability with a genuine QTSP. **TDD RED**: [CI 43919547198](https://github.com/KeyserDSoze/TemporalMark/actions/runs/43919547198) on test-first SHA `778bf077` failed compilation only because the policy was not yet present; domain and business tests remained green. #89 **closed** after four-job GREEN on exact final `main` SHA `1906437f615cf0f03797890ab54cc08fe6747edd`, [CI 43920557678](https://github.com/KeyserDSoze/TemporalMark/actions/runs/43920557678).
 
 **Unresolved #15/#17/#13:** RFC3161 EKU exclusivity by itself says nothing about who issued the TSA certificate, independent certification path/trust anchors, certificate/key revocation at signing time, qualified service status in **historical EU Trusted Lists**, cryptographic algorithm validity, independently verified UTC, retained validation material, WORM custody or AgID/CAB qualification. Signed pilot records still persist as `Unverified` and may never be described as qualified based only on these checks. See [ADR 0058](../adr/0058-rfc3161-critical-exclusive-timestamp-signer-eku.md) and [Microsoft Rfc3161TimestampToken.VerifySignatureForHash](https://learn.microsoft.com/en-us/dotnet/api/system.security.cryptography.pkcs.rfc3161timestamptoken.verifysignatureforhash?view=net-10.0).
+
+## Required, operator-reviewed RFC 3161 signing certificate SHA-256 pin (#90; ADR 0059)
+
+An RFC 3161 reply with a valid self-consistent CMS signature, nonce, imprint and sole critical EKU is **not necessarily from the operator-approved TSA**. Before this change, a signer could generate its own untrusted certificate and response satisfying those cryptographic checks; TemporalMark did not bind the verified CMS signer to an independently approved signing certificate. The provider now requires a server-owned `TimestampProvider:SignerCertificateSha256` **whenever an external TSA URL is configured**. A missing, blank or malformed pin fails closed with a generic configuration error **before an outbound HTTP POST**. The default disabled `TimestampProvider:Url=""` needs no pin.
+
+### Operator configuration (both Azure and on-prem)
+
+1. Obtain the **actual RFC3161 CMS token signer X.509 certificate** from a trusted, independently verified QTSP/operator channel; it is **not** the HTTPS transport/TLS server certificate. Independently review its source, validity, purpose and change approval. The certificate hash is **SHA-256 over the entire DER-encoded leaf certificate**, not the SHA-1 value in .NET's default `Thumbprint`, not a subject name, public key/SPKI hash, issuer or certificate serial number.
+2. For a verified **PEM** signer certificate, compute its fingerprint offline:
+
+   ```sh
+   openssl x509 -in reviewed-rfc3161-tsa-signer.pem -outform DER | openssl dgst -sha256
+   ```
+
+   Copy **only the 64 hexadecimal characters** output after `=`. Configure the server-controlled environment variable `TimestampProvider__SignerCertificateSha256` (or `TimestampProvider:SignerCertificateSha256` in secured application configuration). Both uppercase and lowercase ASCII hexadecimal are supported. **Do not include** `SHA256`, colons, `0x`, whitespace, line breaks or multiple comma-separated values. `TimestampProvider:Url` and `TimestampProvider:Id` remain operator controlled.
+3. Reissuing or rotating that **leaf certificate** changes its DER SHA-256 fingerprint even if it retains the same private key. Review and deploy the new fingerprint through your ordinary change-control process **before** the provider switches. This pilot deliberately supports **one approved leaf at a time**; it has no trust-on-first-use, remote auto-discovery, permissive bypass or multi-pin rollover. A non-matching signer causes issuance to fail, not an automatic fallback. Operations requiring overlapping CA/signer rollover need a separately reviewed implementation.
+4. Do **not** log or submit raw stamp imprints, certificate private keys or token contents to a generic diagnostic pipeline. An approved fingerprint is public metadata but is still security-critical configuration subject to change auditing. The signer identity is checked **after** the existing RFC3161 CMS signature/imprint/nonce and strict critical-only EKU checks against the **same cryptographically verified signer**, using .NET 10 `X509Certificate2.GetCertHash(HashAlgorithmName.SHA256)` and `CryptographicOperations.FixedTimeEquals`. Any nonmatching or absent signer fails with a generic `TimestampProviderResponseException`; no record is returned.
+
+Test the policy and network preflight with synthetic certificates and a counting HTTP handler:
+
+```sh
+dotnet test tests/backend/TemporalMark.Provisioner.Tests/TemporalMark.Provisioner.Tests.csproj --configuration Release --filter FullyQualifiedName~ExternalRfc3161SignerPinPolicyTests
+```
+
+TDD RED evidence: [CI 43927346733](https://github.com/KeyserDSoze/TemporalMark/actions/runs/43927346733) on tests-only `main` SHA `a3e06c8615e7d9d51ec5081b1ec762a3b547c93b` failed precisely on missing signer-pin policy/constructor parameter; old business/domain tests passed. The strict pin protects against *unapproved new signer leaf identity*, not a compromised approved signer key, compromised operator configuration, forged public DNS routing, PKIX chain/path failure, revocation at signing instant, service qualified-status history, WORM or independent UTC. Actual QTSP service qualification must be established separately under open #15, #17 and #13. All pilot timestamps remain `Unverified`. See [ADR 0059](../adr/0059-rfc3161-operator-approved-signer-certificate-sha256.md).
+
+Authoritative .NET references: [GetCertHash(HashAlgorithmName)](https://learn.microsoft.com/en-us/dotnet/api/system.security.cryptography.x509certificates.x509certificate.getcerthash?view=net-10.0), [FixedTimeEquals](https://learn.microsoft.com/en-us/dotnet/api/system.security.cryptography.cryptographicoperations.fixedtimeequals?view=net-10.0).
