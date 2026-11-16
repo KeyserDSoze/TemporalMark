@@ -11,12 +11,12 @@ jobs:
   backend:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Verify immutable GitHub Action source references
         run: |
           python3 -m unittest discover -s tests/integration -p 'test_check_ci_action_pins.py' -v
           python3 tests/integration/check_ci_action_pins.py
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
           dotnet-version: 10.0.x
       - name: Domain tests
@@ -43,8 +43,8 @@ jobs:
     # Playwright 1.56.x Chromium does not support GitHub's Ubuntu 26.04 runner.
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
       - name: Install and build React PWA
@@ -65,7 +65,7 @@ jobs:
     runs-on: ubuntu-24.04
     needs: [backend, frontend]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Build local application containers
         run: docker compose -f docker/compose.yml build api web
       - name: Run local integration stack
@@ -76,7 +76,7 @@ jobs:
           curl -fsS --retry 40 --retry-delay 3 --retry-all-errors --retry-connrefused http://127.0.0.1:8080/healthz
           curl -fsS --retry 40 --retry-delay 3 --retry-all-errors --retry-connrefused http://127.0.0.1:3000/
           curl -fsS --retry 40 --retry-delay 3 --retry-all-errors --retry-connrefused http://127.0.0.1:8081/realms/temporalmark/.well-known/openid-configuration
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
       - name: Install browser integration test runner
@@ -87,7 +87,7 @@ jobs:
       - name: Production PWA service-worker API navigation safety (RED/GREEN #71)
         working-directory: tests/frontend
         run: npx playwright test --config pwa-security.config.ts
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
           dotnet-version: 10.0.x
       - name: Reapply migrations to prove checksum-safe idempotency
@@ -134,7 +134,7 @@ jobs:
       - name: OIDC admin login and disabled external TSA smoke
         working-directory: tests/frontend
         run: npx playwright test --config authenticated.config.ts
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: failure()
         with:
           name: authenticated-browser-failure
@@ -150,8 +150,8 @@ jobs:
   terraform:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: hashicorp/setup-terraform@v3
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
       - name: Terraform format
         run: terraform -chdir=infra/azure fmt -check -recursive
       - name: Terraform init without remote backend
