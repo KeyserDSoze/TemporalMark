@@ -1,5 +1,7 @@
 using System.Net;
+using System.Net.Security;
 using System.Net.Sockets;
+using System.Security.Authentication;
 using TemporalMark.Business.Stamping;
 
 namespace TemporalMark.Infrastructure.Timestamping;
@@ -17,6 +19,15 @@ public static class ExternalRfc3161TransportPolicy
         UseCookies = false,
         // Do not inherit HTTPS_PROXY/ALL_PROXY or the operating system proxy.
         UseProxy = false,
+        // A reused socket bypasses ConnectCallback until the pool replaces it.
+        // One-minute lease bounds idle connection age (not in-flight requests).
+        PooledConnectionLifetime = TimeSpan.FromSeconds(60),
+        // Deliberate TSA-only TLS floor; keep platform chain/hostname/SNI
+        // validation intact by not setting a certificate validation callback.
+        SslOptions = new SslClientAuthenticationOptions
+        {
+            EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13
+        },
         // Connections must not bypass a public-address check via native DNS
         // after policy preflight. TLS/SNI is handled by SocketsHttpHandler.
         ConnectCallback = (context, ct) => ConnectValidatedAsync(
