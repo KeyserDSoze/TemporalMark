@@ -291,3 +291,10 @@ The previous [#69](https://github.com/KeyserDSoze/TemporalMark/issues/69) four-j
 - [x] Nine genuine NuGet .NET 10 lock files, 62,364 bytes total, recovered from disposable registry-backed CI resolver and committed in `6717fa3` without inventing package versions or hashes.
 - [x] Replace seed with all-project `dotnet restore --locked-mode` before backend tests; `--no-restore` test/publish; API Docker and integration tests `RestoreLockedMode=true`; runbook [CI_NUGET_LOCKED_RESTORES.md](CI_NUGET_LOCKED_RESTORES.md).
 - [ ] Close #79 only with final-main four-job GREEN, including production mobile PWA #80. Parent #20 and independent security/FIDO/QTSP issues remain OPEN.
+
+## Native Node 24 action runtime selection (#81; child #20, ADR 0050)
+
+- [x] Verified five official upstream version-tag refs **and their exact-SHA action.yml `runs.using=node24`**, including upload-artifact v6 (v5 is still Node20); see [runbook](CI_NODE24_ACTION_RUNTIMES.md).
+- [x] **TDD RED** [CI 43887807050](https://github.com/KeyserDSoze/TemporalMark/actions/runs/43887807050), SHA `ac5311f`: 5/5 new offline policy unit tests pass; backend source scan rejects exactly 12 deprecated Node20 action references. Existing mutable SHA guard stays green.
+- [x] GREEN: replace all 12 references with immutable reviewed Node24 SHAs, retain four-job job topology, CLI Node22, .NET10, locked NuGet/npm, Keycloak MFA, PWA mobile and full PostgreSQL rollback regression.
+- [ ] Close only #81 after **exact final main SHA** all four CI jobs success and review logs for absence of forced Node20 action runtime warnings. #20 and all FIDO, evidence/WORM and signed human consent blockers stay OPEN.
