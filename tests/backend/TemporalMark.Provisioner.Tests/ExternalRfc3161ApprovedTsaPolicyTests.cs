@@ -110,7 +110,8 @@ public sealed class ExternalRfc3161ApprovedTsaPolicyTests
             approvedSignerCertificateSha256: DummySignerSha256,
             approvedPolicyOid: invalid,
             approvedTrustAnchorCertificateBase64Der: ExternalRfc3161TrustRootTestFixture.Base64Der,
-            approvedIssuerCrlBase64Der: ExternalRfc3161TrustRootTestFixture.CrlBase64Der);
+            approvedIssuerCrlBase64Der: ExternalRfc3161TrustRootTestFixture.CrlBase64Der,
+            approvedRootCrlNumberFloor: "1");
 
         await Assert.ThrowsAsync<TimestampProviderUnavailableException>(() =>
             provider.RequestAsync(new byte[32], CancellationToken.None));
@@ -128,7 +129,8 @@ public sealed class ExternalRfc3161ApprovedTsaPolicyTests
             approvedSignerCertificateSha256: DummySignerSha256,
             approvedPolicyOid: ReviewedPolicyOid,
             approvedTrustAnchorCertificateBase64Der: ExternalRfc3161TrustRootTestFixture.Base64Der,
-            approvedIssuerCrlBase64Der: ExternalRfc3161TrustRootTestFixture.CrlBase64Der);
+            approvedIssuerCrlBase64Der: ExternalRfc3161TrustRootTestFixture.CrlBase64Der,
+            approvedRootCrlNumberFloor: "1");
 
         await Assert.ThrowsAsync<TimestampProviderResponseException>(() =>
             provider.RequestAsync(imprint, CancellationToken.None));
