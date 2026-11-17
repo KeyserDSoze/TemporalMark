@@ -63,7 +63,8 @@ public sealed class ExternalRfc3161ResponseEnvelopeTests
             approvedSignerCertificateSha256: new string('A', 64),
             approvedPolicyOid: "1.3.6.1.4.1.4146.2.2",
             approvedTrustAnchorCertificateBase64Der: ExternalRfc3161TrustRootTestFixture.Base64Der,
-            approvedIssuerCrlBase64Der: ExternalRfc3161TrustRootTestFixture.CrlBase64Der);
+            approvedIssuerCrlBase64Der: ExternalRfc3161TrustRootTestFixture.CrlBase64Der,
+            approvedRootCrlNumberFloor: "1");
         return await Assert.ThrowsAsync<TimestampProviderResponseException>(() =>
             provider.RequestAsync(new byte[32], CancellationToken.None));
     }
