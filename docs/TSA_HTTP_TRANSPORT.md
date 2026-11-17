@@ -257,4 +257,27 @@ Focused tests generate disposable RSA root, intermediate and signer certificates
 dotnet test tests/backend/TemporalMark.Provisioner.Tests/TemporalMark.Provisioner.Tests.csproj --configuration Release --filter FullyQualifiedName~ExternalRfc3161TwoHopIssuerCrlTests
 ```
 
-[ADR 0064](../adr/0064-rfc3161-intermediate-issuer-complete-crl-coverage.md) · [RFC5280 §6.3](https://www.rfc-editor.org/rfc/rfc5280#section-6.3) · [RFC10007 cRLSign clarification](https://www.rfc-editor.org/rfc/rfc10007.html). 
+[ADR 0064](../adr/0064-rfc3161-intermediate-issuer-complete-crl-coverage.md) · [RFC5280 §6.3](https://www.rfc-editor.org/rfc/rfc5280#section-6.3) · [RFC10007 cRLSign clarification](https://www.rfc-editor.org/rfc/rfc10007.html).
+
+## Operator-reviewed signed CRLNumber minimums (#96; ADR 0065)
+
+RFC 5280 §5.2.3 defines `CRLNumber` as a **monotonically increasing signed sequence for a given CRL issuer and scope** (the extension must be noncritical). The earlier #94/#95 checks authenticated each full CRL's issuer RSA signature, scope-restricted extension profile, AKI/SKI, revoked-serial list and `thisUpdate <= bounded CMS-signed genTime < nextUpdate`, but did not use the **signed** `CRLNumber`. A *still-current*, correctly signed **older CRL** could therefore replace the independently reviewed newer CRL in operator configuration.
+
+The delegated TSA provider now requires separately **operator-approved per-issuer lower bounds** on that signed CRL number. This is a **static deployment-owned anti-rollback threshold**, not a monotonically witnessed or cryptographically preserved CRL history.
+
+- For **every configured external TSA**, provide `TimestampProvider__IssuerCrlNumberFloor` (or `TimestampProvider:IssuerCrlNumberFloor`) as the **minimum accepted signed root-issued CRLNumber**. It applies to root→TSA direct and root→intermediate CA→TSA paths.
+- Only if `TimestampProvider__IntermediateIssuerCrlBase64Der` is configured, also provide `TimestampProvider__IntermediateIssuerCrlNumberFloor`. This is the **minimum signed intermediate-CA-issued CRLNumber** and is checked separately against its CRL, not against the root's numbering sequence. With no intermediate CRL, leave the intermediate floor blank; a nonempty floor without that CRL fails pre-send.
+- Each floor must be **canonical positive ASCII decimal** (e.g. `1`, `42`, `1208925819614629174706176`), with no leading zeroes, `+`/`-`, whitespace, exponent, locale digits or values requiring over 20 unsigned octets. Missing/invalid floors or inconsistent presence of the second CRL/floor **reject before any imprint is transmitted**. `appsettings.json` leaves both blank so the delegated pilot cannot be activated by accident. Disabled/no external TSA URL still needs no floor.
+- For each CA, the application reads the CRLNumber from the **DER-encoded signed TBSCertList**, validates RFC5280's mandatory noncritical CRLNumber and up-to-20-octet range, and after verifying that **same CRL's issuer identity and RSA SHA256 signature**, requires `signedCRLNumber >= approvedOperatorFloor`. The direct path applies one comparison; the intermediate path applies **both independent comparisons**. A correctly signed lower-numbered CRL, even if still within its `nextUpdate` interval and clean of the signer serial, is rejected. Equal-number repeat validation is allowed; a higher authenticated number passes the configured lower bound.
+- **Operator rotation process:** independently authenticate the CRL provenance and the CA/scope, compare its signed CRLNumber with the **last approved** number held in independently controlled records, and approve a new floor that does **not decrease** before/alongside the replacement CRL. Use change control, audit and rollback prevention in **both** Azure and on-prem deployments. A server administrator who can roll back **both** CRL bytes and the floor defeats this guard. Same-number CRL equivocation, delayed CRL distribution, independent last-seen monotonic witness custody, archived revocation evidence, historical EU Trusted List qualified service status and OCSP/reason-partitioned validation are still **OPEN requirements**. The software does not update or preserve this floor independently.
+- Existing SHA-256 leaf pinning, signed policy OID, live signed genTime consistency, CustomRootTrust PKIX chain and complete full issuer CRL signature/freshness/revocation checks are unchanged. No tenant-input/ambient-OS trust, automatic CRL fetch, Azure-only dependency or qualified assertion is introduced. **Records remain `Unverified`.**
+
+Focused regression tests use disposable RSA root→TSA and root→intermediate→TSA chains with **genuinely signed CRLs numbered 1, 2 and 4**, checking equal/higher floors, signed lower-number rejection, independent root/intermediate checks, >32-bit numbers and strict missing/malformed preflight. Tests do not supply production QTSP credentials.
+
+```sh
+dotnet test tests/backend/TemporalMark.Provisioner.Tests/TemporalMark.Provisioner.Tests.csproj --configuration Release --filter FullyQualifiedName~ExternalRfc3161CrlNumberFloorTests
+```
+
+TDD RED: [Actions CI 44009723455](https://github.com/KeyserDSoze/TemporalMark/actions/runs/44009723455) tests-only SHA `c11665a654a7eaeb1ffa13c60f353080680108f9` failed on missing floor parser/issuer validation/provider named args after [ADR 0065](../adr/0065-rfc3161-operator-crl-number-minimum-floors.md) was committed first.
+
+See [RFC5280 §5.2.3](https://www.rfc-editor.org/rfc/rfc5280#section-5.2.3), [ADR 0065](../adr/0065-rfc3161-operator-crl-number-minimum-floors.md), [threat model](THREAT_MODEL.md).
