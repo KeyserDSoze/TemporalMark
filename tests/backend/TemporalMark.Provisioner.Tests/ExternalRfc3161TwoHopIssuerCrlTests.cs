@@ -278,7 +278,10 @@ public sealed class ExternalRfc3161TwoHopIssuerCrlTests
             approvedPolicyOid: "1.3.6.1.4.1.4146.2.2",
             approvedTrustAnchorCertificateBase64Der: ExternalRfc3161TrustRootTestFixture.Base64Der,
             approvedIssuerCrlBase64Der: ExternalRfc3161TrustRootTestFixture.CrlBase64Der,
-            approvedIntermediateIssuerCrlBase64Der: middleCrl);
+            approvedIntermediateIssuerCrlBase64Der: middleCrl,
+            approvedRootCrlNumberFloor: "1",
+            approvedIntermediateCrlNumberFloor:
+                string.IsNullOrEmpty(middleCrl) ? null : "1");
 
     private sealed class CountingHandler : HttpMessageHandler
     {
