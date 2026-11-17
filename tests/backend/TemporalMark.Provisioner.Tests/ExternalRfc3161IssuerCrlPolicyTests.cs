@@ -248,10 +248,11 @@ public sealed class ExternalRfc3161IssuerCrlPolicyTests
         DateTimeOffset when,
         CertificateRevocationListBuilder? builder = null,
         DateTimeOffset? thisUpdate = null,
-        DateTimeOffset? nextUpdate = null)
+        DateTimeOffset? nextUpdate = null,
+        BigInteger? crlNumber = null)
     {
         return (builder ?? new CertificateRevocationListBuilder()).Build(
-            issuer, BigInteger.One,
+            issuer, crlNumber ?? BigInteger.One,
             nextUpdate ?? when.AddDays(1),
             HashAlgorithmName.SHA256,
             RSASignaturePadding.Pkcs1,
