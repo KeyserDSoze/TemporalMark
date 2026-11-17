@@ -20,7 +20,9 @@ public sealed class ExternalRfc3161TimestampProvider(
     string? approvedPolicyOid = null,
     string? approvedTrustAnchorCertificateBase64Der = null,
     string? approvedIssuerCrlBase64Der = null,
-    string? approvedIntermediateIssuerCrlBase64Der = null) : ITimestampProvider
+    string? approvedIntermediateIssuerCrlBase64Der = null,
+    string? approvedRootCrlNumberFloor = null,
+    string? approvedIntermediateCrlNumberFloor = null) : ITimestampProvider
 {
     private const int MaxResponseBytes = 1024 * 1024;
 
@@ -60,6 +62,26 @@ public sealed class ExternalRfc3161TimestampProvider(
                 ? Array.Empty<byte>()
                 : ExternalRfc3161IssuerCrlPolicy.ParseRequiredCrlBase64Der(
                     approvedIntermediateIssuerCrlBase64Der);
+
+        // CRLNumber is a signed monotonic sequence per issuer/scope.
+        // The operator must independently advance both approved minimum
+        // values; these deployment values are NOT rollback-resistant
+        // monotonic storage or qualified revocation evidence.
+        var rootCrlFloor = ExternalRfc3161IssuerCrlPolicy.ParseRequiredCrlNumberFloor(
+            approvedRootCrlNumberFloor);
+        var intermediateCrlFloor = System.Numerics.BigInteger.Zero;
+        if (reviewedIntermediateIssuerCrl.Length == 0)
+        {
+            if (!string.IsNullOrEmpty(approvedIntermediateCrlNumberFloor))
+                throw new TimestampProviderUnavailableException(
+                    "An intermediate CRL floor cannot be configured without an intermediate CRL.");
+        }
+        else
+        {
+            intermediateCrlFloor =
+                ExternalRfc3161IssuerCrlPolicy.ParseRequiredCrlNumberFloor(
+                    approvedIntermediateCrlNumberFloor);
+        }
 
         if (sha256Digest.Length != 32)
             throw new ArgumentException("RFC 3161 SHA-256 imprint must have 32 bytes.", nameof(sha256Digest));
@@ -142,7 +164,8 @@ public sealed class ExternalRfc3161TimestampProvider(
                 // the TSA leaf. Missing or untrusted coverage fails closed.
                 ExternalRfc3161IssuerCrlPolicy.ValidateSignerPathRevocation(
                     signerCertificate, approvedRoot, token.AsSignedCms().Certificates,
-                    reviewedIssuerCrl, reviewedIntermediateIssuerCrl, signedGenTime);
+                    reviewedIssuerCrl, reviewedIntermediateIssuerCrl, signedGenTime,
+                    rootCrlFloor, intermediateCrlFloor);
             }
             catch (CryptographicException)
             {
