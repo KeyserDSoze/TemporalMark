@@ -297,7 +297,8 @@ public sealed class ExternalRfc3161CertificateChainPolicyTests
             approvedSignerCertificateSha256: ExampleSha256Pin,
             approvedPolicyOid: ExamplePolicyOid,
             approvedTrustAnchorCertificateBase64Der: base64,
-            approvedIssuerCrlBase64Der: ExternalRfc3161TrustRootTestFixture.CrlBase64Der);
+            approvedIssuerCrlBase64Der: ExternalRfc3161TrustRootTestFixture.CrlBase64Der,
+            approvedRootCrlNumberFloor: "1");
 
         await Assert.ThrowsAsync<TimestampProviderUnavailableException>(() =>
             provider.RequestAsync(new byte[32], CancellationToken.None));
@@ -314,7 +315,8 @@ public sealed class ExternalRfc3161CertificateChainPolicyTests
             approvedSignerCertificateSha256: ExampleSha256Pin,
             approvedPolicyOid: ExamplePolicyOid,
             approvedTrustAnchorCertificateBase64Der: ExternalRfc3161TrustRootTestFixture.Base64Der,
-            approvedIssuerCrlBase64Der: ExternalRfc3161TrustRootTestFixture.CrlBase64Der);
+            approvedIssuerCrlBase64Der: ExternalRfc3161TrustRootTestFixture.CrlBase64Der,
+            approvedRootCrlNumberFloor: "1");
 
         await Assert.ThrowsAsync<TimestampProviderResponseException>(() =>
             provider.RequestAsync(new byte[32], CancellationToken.None));
