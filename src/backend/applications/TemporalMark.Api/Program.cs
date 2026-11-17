@@ -61,6 +61,11 @@ builder.Services.AddScoped<ITimestampProvider>(sp =>
     // a selected root -> intermediate CA -> TSA signer chain.
     var intermediateIssuerCrlBase64Der =
         builder.Configuration["TimestampProvider:IntermediateIssuerCrlBase64Der"];
+    // Separate deployment-approved minimum signed CRL sequence numbers.
+    // These are NOT an independent or rollback-resistant witnessed store.
+    var rootCrlNumberFloor = builder.Configuration["TimestampProvider:IssuerCrlNumberFloor"];
+    var intermediateCrlNumberFloor =
+        builder.Configuration["TimestampProvider:IntermediateIssuerCrlNumberFloor"];
     if (!string.IsNullOrWhiteSpace(url) && !Uri.TryCreate(url, UriKind.Absolute, out _))
         throw new InvalidOperationException("TimestampProvider:Url must be a valid absolute URL.");
     var uri = string.IsNullOrWhiteSpace(url) ? null : new Uri(url);
@@ -76,7 +81,9 @@ builder.Services.AddScoped<ITimestampProvider>(sp =>
         approvedPolicyOid: approvedPolicyOid,
         approvedTrustAnchorCertificateBase64Der: trustAnchorCertificateBase64Der,
         approvedIssuerCrlBase64Der: issuerCrlBase64Der,
-        approvedIntermediateIssuerCrlBase64Der: intermediateIssuerCrlBase64Der);
+        approvedIntermediateIssuerCrlBase64Der: intermediateIssuerCrlBase64Der,
+        approvedRootCrlNumberFloor: rootCrlNumberFloor,
+        approvedIntermediateCrlNumberFloor: intermediateCrlNumberFloor);
 });
 
 var origins = builder.Configuration.GetSection("Cors:Origins").Get<string[]>() ?? [];
