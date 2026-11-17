@@ -1,4 +1,5 @@
 using System.Formats.Asn1;
+using System.Globalization;
 using System.Numerics;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
@@ -19,8 +20,37 @@ public static class ExternalRfc3161IssuerCrlPolicy
     private const string AuthorityKeyIdentifierOid = "2.5.29.35";
     private const string ConfigurationError =
         "A valid operator-reviewed complete DER issuer CRL in canonical Base64 is required.";
+    private const string FloorConfigurationError =
+        "An operator-approved canonical positive CRLNumber minimum is required.";
     private const string ResponseError =
         "The RFC 3161 TSA signer does not have an acceptable issuer-signed CRL at issuance.";
+
+    /// <summary>
+    /// Parse a deployment-reviewed minimum signed CRLNumber. RFC5280
+    /// requires a monotonically increasing number per issuer/scope with
+    /// at most 20 unsigned octets; this floor is NOT a witnessed monotonic
+    /// store and MUST be maintained independently by the operator.
+    /// </summary>
+    public static BigInteger ParseRequiredCrlNumberFloor(string? raw)
+    {
+        if (string.IsNullOrEmpty(raw) || raw.Length > 49 ||
+            raw[0] == '0')
+            throw new TimestampProviderUnavailableException(FloorConfigurationError);
+
+        foreach (var c in raw)
+        {
+            if (c is < '0' or > '9')
+                throw new TimestampProviderUnavailableException(FloorConfigurationError);
+        }
+
+        if (!BigInteger.TryParse(raw, NumberStyles.None,
+                CultureInfo.InvariantCulture, out var minimum) ||
+            minimum <= BigInteger.Zero ||
+            minimum.ToByteArray(isUnsigned: true, isBigEndian: true).Length > 20)
+            throw new TimestampProviderUnavailableException(FloorConfigurationError);
+
+        return minimum;
+    }
 
     public static byte[] ParseRequiredCrlBase64Der(string? base64)
     {
@@ -81,8 +111,14 @@ public static class ExternalRfc3161IssuerCrlPolicy
         X509Certificate2Collection cmsCertificates,
         ReadOnlyMemory<byte> rootCrlDer,
         ReadOnlyMemory<byte> intermediateIssuerCrlDer,
-        DateTimeOffset signedGenTime)
+        DateTimeOffset signedGenTime,
+        BigInteger rootCrlNumberFloor = default,
+        BigInteger intermediateCrlNumberFloor = default)
     {
+        if (rootCrlNumberFloor < BigInteger.Zero ||
+            intermediateCrlNumberFloor < BigInteger.Zero)
+            throw new TimestampProviderResponseException(ResponseError);
+
         using var chain = ExternalRfc3161CertificateChainPolicy.BuildValidatedSignerChain(
             verifiedSigner, approvedRoot, cmsCertificates, signedGenTime);
         var elements = chain.ChainElements;
@@ -95,11 +131,12 @@ public static class ExternalRfc3161IssuerCrlPolicy
             // The directly root-issued signer has exactly one issuer.
             // Reject a supplied but unused second CRL to avoid a silent
             // misconfiguration, stale approval or ambiguity about topology.
-            if (!intermediateIssuerCrlDer.IsEmpty)
+            if (!intermediateIssuerCrlDer.IsEmpty ||
+                intermediateCrlNumberFloor != BigInteger.Zero)
                 throw new TimestampProviderResponseException(ResponseError);
             ValidateDirectIssuerLeaf(
                 elements[0].Certificate, elements[1].Certificate,
-                rootCrlDer, signedGenTime);
+                rootCrlDer, signedGenTime, rootCrlNumberFloor);
             return;
         }
 
@@ -112,18 +149,22 @@ public static class ExternalRfc3161IssuerCrlPolicy
 
         ValidateDirectIssuerLeaf(
             elements[1].Certificate, elements[2].Certificate,
-            rootCrlDer, signedGenTime);
+            rootCrlDer, signedGenTime, rootCrlNumberFloor);
         ValidateDirectIssuerLeaf(
             elements[0].Certificate, elements[1].Certificate,
-            intermediateIssuerCrlDer, signedGenTime);
+            intermediateIssuerCrlDer, signedGenTime, intermediateCrlNumberFloor);
     }
 
     public static void ValidateDirectIssuerLeaf(
         X509Certificate2? verifiedSigner,
         X509Certificate2 approvedRoot,
         ReadOnlyMemory<byte> approvedCrlDer,
-        DateTimeOffset signedGenTime)
+        DateTimeOffset signedGenTime,
+        BigInteger minimumCrlNumber = default)
     {
+        if (minimumCrlNumber < BigInteger.Zero)
+            throw new TimestampProviderResponseException(ResponseError);
+
         if (verifiedSigner is null || approvedRoot is null ||
             approvedCrlDer.IsEmpty || approvedCrlDer.Length > MaximumCrlBytes)
             throw new TimestampProviderResponseException(ResponseError);
@@ -144,7 +185,8 @@ public static class ExternalRfc3161IssuerCrlPolicy
             var info = ReadFullCrl(approvedCrlDer);
             if (!info.IssuerDer.AsSpan().SequenceEqual(approvedRoot.SubjectName.RawData) ||
                 signedGenTime < info.ThisUpdate ||
-                signedGenTime >= info.NextUpdate)
+                signedGenTime >= info.NextUpdate ||
+                info.CrlNumber < minimumCrlNumber)
                 throw new TimestampProviderResponseException(ResponseError);
 
             var ski = approvedRoot.Extensions
@@ -253,15 +295,19 @@ public static class ExternalRfc3161IssuerCrlPolicy
         var extensionWrapper = tbs.ReadSequence(explicitTag);
         var extensions = extensionWrapper.ReadSequence();
         bool hasAki = false, hasNumber = false;
+        BigInteger crlNumber = BigInteger.MinusOne;
         byte[]? aki = null;
         while (extensions.HasData)
         {
             var extension = extensions.ReadSequence();
             var oid = extension.ReadObjectIdentifier();
+            bool critical = false;
             if (extension.HasData && IsUniversalTag(extension, UniversalTagNumber.Boolean))
-                extension.ReadBoolean();
+                critical = extension.ReadBoolean();
             var encoded = extension.ReadOctetString();
-            if (extension.HasData)
+            // RFC5280 requires CRLNumber (and AKI) to be non-critical.
+            // Unknown extensions remain fail-closed below.
+            if (extension.HasData || critical)
                 throw new AsnContentException();
 
             if (oid == AuthorityKeyIdentifierOid && !hasAki)
@@ -278,7 +324,10 @@ public static class ExternalRfc3161IssuerCrlPolicy
             {
                 hasNumber = true;
                 var numberReader = new AsnReader(encoded, AsnEncodingRules.DER);
-                if (numberReader.ReadInteger().Sign < 0 || numberReader.HasData)
+                crlNumber = numberReader.ReadInteger();
+                if (crlNumber.Sign < 0 ||
+                    crlNumber.ToByteArray(isUnsigned: true, isBigEndian: true).Length > 20 ||
+                    numberReader.HasData)
                     throw new AsnContentException();
             }
             else
@@ -295,7 +344,7 @@ public static class ExternalRfc3161IssuerCrlPolicy
 
         return new ParsedFullCrl(
             tbsDer.ToArray(), signature, issuerDer,
-            thisUpdate, nextUpdate, aki, revoked);
+            thisUpdate, nextUpdate, aki, crlNumber, revoked);
     }
 
     private static DateTimeOffset ReadTime(AsnReader reader)
@@ -314,5 +363,6 @@ public static class ExternalRfc3161IssuerCrlPolicy
     private sealed record ParsedFullCrl(
         byte[] TbsDer, byte[] Signature, byte[] IssuerDer,
         DateTimeOffset ThisUpdate, DateTimeOffset NextUpdate,
-        byte[] AuthorityKeyIdentifier, HashSet<BigInteger> RevokedSerialNumbers);
+        byte[] AuthorityKeyIdentifier, BigInteger CrlNumber,
+        HashSet<BigInteger> RevokedSerialNumbers);
 }
