@@ -55,7 +55,7 @@ cd ../../tests/frontend && npm install && npx playwright install chromium && npm
 - `GET /api/v1/me` — current authorized tenant; OIDC required.
 - `GET /api/v1/stamps/summary?fromUtc=...&toUtcExclusive=...`
 - `GET /api/v1/stamps/daily?fromUtc=...&toUtcExclusive=...` — tenant-admin-only UTC daily totals for **1–31 complete UTC days** (midnight bounds required), zero days included; returns 400 on invalid periods. Same PostgreSQL tenant filter as summary, **counts stored pilot records, not qualified stamps** ([ADR 0079](adr/0079-tenant-utc-daily-dashboard-counts.md), [operator guide](docs/DAILY_DASHBOARD_UTC_COUNTS.md)). The IT/EN dashboard displays the daily chart for valid windows and retains existing total/list/audit/export for longer ranges.
-- `GET /api/v1/stamps?fromUtc=...&toUtcExclusive=...&offset=0&limit=50`
+- `GET /api/v1/stamps?fromUtc=...&toUtcExclusive=...&offset=0&limit=50` — tenant-scoped read-only pagination: `offset >= 0`, `1 <= limit <= 200`, order UTC issuance/ID; React IT/EN portal now supports **Previous/Next** through 50-row pages and resets on period/session changes ([ADR 0080](adr/0080-admin-tenant-registry-pagination-and-stale-request-gate.md), [guide](docs/REGISTRY_PAGINATION_UI.md)). Offset pagination is **not** an immutable snapshot or signed evidence-completeness witness.
 - `GET /api/v1/audit?fromUtc=...&toUtcExclusive=...&offset=0&limit=25` — recent tenant-scoped access audit (maximum 200/page), **not legally tamper-proof**.
 - `GET /api/v1/stamps/{id}/receipt` — authenticated, tenant-protected raw RFC 3161 DER `.tsr` download.
 - `GET /api/v1/stamps/export?fromUtc=...&toUtcExclusive=...`
