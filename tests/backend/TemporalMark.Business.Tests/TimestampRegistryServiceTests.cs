@@ -35,6 +35,110 @@ public sealed class TimestampRegistryServiceTests
     }
 
     [Fact]
+    public async Task SearchByDocumentSha256IsTenantBoundPagedAndCanonicalizesHex()
+    {
+        // The document imprint is distinct from SHA256(ResponseDer).
+        var documentDigest = Enumerable.Range(0, 32).Select(i => (byte)(i * 7)).ToArray();
+        var canonicalHex = Convert.ToHexString(documentDigest);
+        var canonicalBase64 = Convert.ToBase64String(documentDigest);
+        var own = MakeRecord(TenantA) with { DigestBase64 = canonicalBase64 };
+        var data = new[]
+        {
+            own,
+            own with { Id = Guid.NewGuid(), IssuedUtc = own.IssuedUtc.AddMinutes(1) },
+            own with { Id = Guid.NewGuid(), IssuedUtc = own.IssuedUtc.AddMinutes(2) },
+            MakeRecord(TenantB) with { DigestBase64 = canonicalBase64 },
+            MakeRecord(TenantA) with { DigestBase64 = Convert.ToBase64String(new byte[32]) },
+            own with { Id = Guid.NewGuid(), IssuedUtc = Period.ToUtcExclusive }
+        };
+        var repo = new FakeRegistry(data);
+        var service = new TimestampRegistryService(repo);
+        var page0 = await service.SearchByDocumentSha256Async(
+            TenantA, Period, canonicalHex.ToLowerInvariant(), 0, 2, default);
+        Assert.Equal(2, page0.Items.Count);
+        Assert.True(page0.HasMore);
+        Assert.All(page0.Items, item => Assert.Equal(TenantA, item.OrganizationId));
+        Assert.All(page0.Items, item => Assert.Equal(canonicalBase64, item.DigestBase64));
+        Assert.Equal(canonicalBase64, repo.LastSearchDigestBase64);
+        var page2 = await service.SearchByDocumentSha256Async(
+            TenantA, Period, canonicalHex, 2, 2, default);
+        Assert.Single(page2.Items);
+        Assert.False(page2.HasMore);
+        Assert.Equal(2, repo.SearchQueries);
+    }
+
+    [Fact]
+    public async Task SearchByDocumentSha256ReturnsEmptyWhenNoMatch()
+    {
+        var repo = new FakeRegistry([MakeRecord(TenantA)]);
+        var missing = Convert.ToHexString(Enumerable.Repeat((byte)0xF1, 32).ToArray());
+        var result = await new TimestampRegistryService(repo)
+            .SearchByDocumentSha256Async(TenantA, Period, missing, 0, 50, default);
+        Assert.Empty(result.Items);
+        Assert.False(result.HasMore);
+        Assert.Equal(1, repo.SearchQueries);
+    }
+
+    [Fact]
+    public async Task SearchByDocumentSha256RejectsBadImprintsAndPagingBeforeRepository()
+    {
+        const string good = "0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF";
+        var bad = new[]
+        {
+            "", " ", "0x" + good, good + "0", good[..63],
+            " " + good[1..], good[..20] + "!" + good[21..],
+            good[..32] + "\n" + good[33..], new string('A', 100000)
+        };
+        foreach (var value in bad)
+        {
+            var repo = new FakeRegistry([]);
+            await Assert.ThrowsAsync<ArgumentException>(() =>
+                new TimestampRegistryService(repo).SearchByDocumentSha256Async(
+                    TenantA, Period, value, 0, 50, default));
+            Assert.Equal(0, repo.SearchQueries);
+        }
+        foreach (var (org, offset, limit) in new[]
+        {
+            (Guid.Empty, 0, 50), (TenantA, -1, 50),
+            (TenantA, 0, 0), (TenantA, 0, 51)
+        })
+        {
+            var repo = new FakeRegistry([]);
+            await Assert.ThrowsAnyAsync<ArgumentException>(() =>
+                new TimestampRegistryService(repo).SearchByDocumentSha256Async(
+                    org, Period, good, offset, limit, default));
+            Assert.Equal(0, repo.SearchQueries);
+        }
+    }
+
+    [Fact]
+    public async Task SearchByDocumentSha256RejectsUntrustedRepositoryRowsBeforeReply()
+    {
+        var owned = MakeRecord(TenantA);
+        var hex = new string('0', 64);
+        var rows = new IReadOnlyList<TimestampRecord>[]
+        {
+            [MakeRecord(TenantB)],
+            [owned with { DigestBase64 = Convert.ToBase64String(Enumerable.Repeat((byte)0xFF, 32).ToArray()) }],
+            [owned with { HashAlgorithmOid = "1.3.14.3.2.26" }],
+            [owned with { IssuedUtc = Period.ToUtcExclusive }],
+            [owned, owned]
+        };
+        foreach (var data in rows)
+        {
+            var repo = new FakeRegistry([], overrideSearch: data);
+            await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                new TimestampRegistryService(repo).SearchByDocumentSha256Async(
+                    TenantA, Period, hex, 0, 50, default));
+            Assert.Equal(1, repo.SearchQueries);
+        }
+        var corrupt = owned with { TokenSha256Hex = "DEADBEEF" };
+        await Assert.ThrowsAsync<DomainRuleException>(() =>
+            new TimestampRegistryService(new FakeRegistry([], overrideSearch: [corrupt]))
+                .SearchByDocumentSha256Async(TenantA, Period, hex, 0, 50, default));
+    }
+
+    [Fact]
     public async Task PageRejectsRepositoryCrossTenantLeak()
     {
         var repository = new MaliciousRegistry(MakeRecord(TenantB));
@@ -282,9 +386,26 @@ public sealed class TimestampRegistryServiceTests
     }
 
     private sealed class FakeRegistry(
-        IReadOnlyList<TimestampRecord> data, IReadOnlyList<RegistryDayCount>? overrideDays = null) : ITimestampRegistry
+        IReadOnlyList<TimestampRecord> data,
+        IReadOnlyList<RegistryDayCount>? overrideDays = null,
+        IReadOnlyList<TimestampRecord>? overrideSearch = null) : ITimestampRegistry
     {
         public int DailyQueries { get; private set; }
+        public int SearchQueries { get; private set; }
+        public string? LastSearchDigestBase64 { get; private set; }
+        public Task<IReadOnlyList<TimestampRecord>> SearchByDigestAsync(
+            Guid org, UtcPeriod period, string digestBase64, int offset, int maxResults,
+            CancellationToken ct)
+        {
+            SearchQueries++;
+            LastSearchDigestBase64 = digestBase64;
+            return Task.FromResult(overrideSearch ?? (IReadOnlyList<TimestampRecord>)
+                Filter(org, period)
+                    .Where(x => x.HashAlgorithmOid == "2.16.840.1.101.3.4.2.1" &&
+                                x.DigestBase64 == digestBase64)
+                    .OrderBy(x => x.IssuedUtc).ThenBy(x => x.Id)
+                    .Skip(offset).Take(maxResults).ToArray());
+        }
         public Task<IReadOnlyList<RegistryDayCount>> CountByUtcDayAsync(
             Guid org, UtcPeriod period, CancellationToken ct)
         {
@@ -311,6 +432,9 @@ public sealed class TimestampRegistryServiceTests
 
     private sealed class MaliciousRegistry(TimestampRecord record) : ITimestampRegistry
     {
+        public Task<IReadOnlyList<TimestampRecord>> SearchByDigestAsync(
+            Guid org, UtcPeriod period, string digestBase64, int offset, int maxResults,
+            CancellationToken ct) => Task.FromResult<IReadOnlyList<TimestampRecord>>([record]);
         public Task<TimestampRecord?> FindByIdAsync(Guid org, Guid id, CancellationToken ct) => Task.FromResult<TimestampRecord?>(record);
         public Task<long> CountAsync(Guid org, UtcPeriod period, CancellationToken ct) => Task.FromResult(1L);
         public Task<IReadOnlyList<RegistryDayCount>> CountByUtcDayAsync(Guid org, UtcPeriod period, CancellationToken ct) =>
