@@ -107,3 +107,42 @@ event. The long-range fallback and standard chart assertions are
 preserved. No API audit query, OIDC rule, SQL scope, WORM or legal
 qualifying assertion was changed. Final exact HEAD 4/4 CI must be
 independently verified before closing focused issue #110.
+
+## Exact document SHA-256 imprint search over genuine tenant HTTP/SQL (#112)
+
+The disposable signed-Keycloak + PostgreSQL two-tenant CI harness now
+exercises **read-only `POST /api/v1/stamps/search`** with the
+document-imprint SHA-256 hex in a **JSON body**, never in the URL.
+The existing synthetic A/B registry canaries have distinct 32-byte
+imprints and current UTC issuance time, with `Unverified` evidence.
+For each **independently Keycloak-signed active tenant admin**,
+the test requires:
+- own hex imprint (both cases) -> one own receipt's **metadata only**
+  and `hasMore=false`; no `ResponseDer` JSON;
+- other tenant's imprint -> **zero** results, despite the other
+  tenant's real database row;
+- `offset=1,limit=1` -> no unexpected foreign result;
+- attempts to forge `organizationId/tenantId` in both JSON
+  payload and HTTP headers -> still **own** tenant's result;
+- malformed/missing/overlong/nonhex imprints, `limit=51`,
+  negative offset -> 400; anonymous -> 401, disabled tenant-admin
+  membership -> 403. Existing signed issuer/audience/expiry
+  and real member-role restrictions are unchanged.
+
+This is not a mocked API or JWT: the container tests run a real
+.NET 10 endpoint, live Keycloak signature validation and an actual
+PostgreSQL tenant-filtered query using the API's restricted DB role.
+The separate Playwright fixture first completes genuine OIDC
+authentication/export checks, then **mocks only search response
+metadata** for 51 synthetic results to verify browser input validity,
+Next/Previous and reset on period changes. These mocks provide
+**UI behavior evidence only**, not SQL isolation.
+
+The search POST is **not** a new TSA issuance operation or a
+legal/eIDAS timestamp validator. It does not independently log
+each search in tenant audit; receipt downloads continue to be
+audited. Refer to [ADR 0081](../adr/0081-tenant-document-sha256-imprint-exact-lookup.md)
+and [operator guide](DOCUMENT_IMPRINT_SEARCH.md). Any CI claim of
+completion must be checked on the **exact final docs-inclusive
+`main` SHA** using all four core jobs; older successful test runs
+must not be reused for later source commits.
