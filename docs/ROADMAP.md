@@ -465,3 +465,11 @@ The previous [#69](https://github.com/KeyserDSoze/TemporalMark/issues/69) four-j
 - [x] Minimal `catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)` implementation SHA `75f07fc`: normalize only non-caller abort to a generic provider-unavailable error; caller-aborted requests remain cancelled. No unsafe retry, no new tenant/SQL/WebAuthn settings, no qualified status.
 - [x] Updated TSA operator runbook and threat model with the upstream may have issued anyway caveat; on-prem/Azure parity. Existing parent #15/#17/#13 and earlier #97/#98/#100 remain OPEN.
 - [ ] Verify exact final **documentation-inclusive** `main` SHA all four backend/frontend/docker-smoke/terraform jobs SUCCESS, record test counts, then close #99 only after independently observed success.
+
+### RFC3161 premature upstream response-stream disposal (#99 ADR 0068 amendment)
+
+- [x] Reviewed HTTP response reader, accepted ADR 0068, stream/cancellation regression fixture and Microsoft `ObjectDisposedException` type hierarchy. A disposed content stream may throw `ObjectDisposedException`, which is **not** caught by the existing `IOException` or non-caller `OperationCanceledException` branches. ADR amendment **first** on `main`: `ed2ef57`.
+- [x] RED-first `FaultContent` tests `a765864`: body stream acquisition immediately throws `ObjectDisposedException`; after an ASN.1 DER prefix the next read throws `ObjectDisposedException`. Both require sanitized provider unavailable (not raw API 500) and no partial evidence. Actual RED runner result **not independently observed**.
+- [x] Minimal `catch(ObjectDisposedException) when (!cancellationToken.IsCancellationRequested)` on the existing outbound + content body boundary: `f503806`. The original user cancellation remains unmodified; no broad InvalidOperationException/Exception swallow, no automatic retry and no change to CMS/PKIX/time/CRL/accuracy/extensions trust logic.
+- [x] TSA operator guide and threat model updated; no new settings, no Azure/on-prem divergence, no registrar/WebAuthn changes, all evidence Unverified.
+- [ ] **CI gate remains open**: require 4/4 SUCCESS backend/frontend/docker-smoke/terraform with actual counts on exact final docs-inclusive `main` commit before closing issue #99. #97/#98/#100 and parent #15/#17/#13 remain OPEN until their own acceptance criteria have proof.
