@@ -23,6 +23,85 @@ public sealed class TimestampIssueServiceTests
         Assert.Null(writer.Record);
     }
 
+    [Theory]
+    [InlineData("leading-whitespace")]
+    [InlineData("trailing-whitespace")]
+    [InlineData("embedded-space")]
+    [InlineData("embedded-tab")]
+    [InlineData("embedded-crlf")]
+    [InlineData("no-padding")]
+    [InlineData("extra-padding")]
+    [InlineData("nonzero-pad-bits")]
+    [InlineData("urlsafe-alphabet")]
+    [InlineData("invalid-char")]
+    public async Task NonCanonicalSha256TextIsDeniedWithoutTsaOrPersistence(string mutation)
+    {
+        // RED-first: .NET Convert.FromBase64String tolerates whitespace and
+        // some text aliases of the same digest. The API accepts ONE encoding.
+        var canonical = Convert.ToBase64String(new byte[32]);
+        var untrusted = mutation switch
+        {
+            "leading-whitespace" => " " + canonical,
+            "trailing-whitespace" => canonical + "\n",
+            "embedded-space" => canonical.Insert(4, " "),
+            "embedded-tab" => canonical.Insert(12, "\t"),
+            "embedded-crlf" => canonical.Insert(16, "\r\n"),
+            "no-padding" => canonical.TrimEnd('='),
+            "extra-padding" => canonical + "=",
+            // A 32-byte digest ends with 2 real bits in its last Base64
+            // character. Changing its unused low bits is not canonical.
+            "nonzero-pad-bits" => canonical[..42] + "B=",
+            "urlsafe-alphabet" => Convert.ToBase64String(
+                Enumerable.Repeat((byte)255, 32).ToArray()).Replace('/', '_'),
+            "invalid-char" => canonical[..7] + "!" + canonical[8..],
+            _ => throw new InvalidOperationException("Unrecognized test mutation.")
+        };
+        var provider = new FakeProvider();
+        var writer = new FakeWriter();
+
+        var error = await Assert.ThrowsAsync<ArgumentException>(() =>
+            new TimestampIssueService(provider, writer).IssueAsync(
+                Organization, untrusted, CancellationToken.None));
+
+        Assert.Equal(0, provider.Requests);
+        Assert.Null(writer.Record);
+        Assert.DoesNotContain(untrusted, error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task OversizedImprintTextIsDeniedBeforeProviderOrStorage()
+    {
+        // Deliberately much larger than 44 characters: no unbounded
+        // Convert.FromBase64String allocation should ever be attempted.
+        var oversized = new string('A', 1_000_000);
+        var provider = new FakeProvider();
+        var writer = new FakeWriter();
+
+        var error = await Assert.ThrowsAsync<ArgumentException>(() =>
+            new TimestampIssueService(provider, writer).IssueAsync(
+                Organization, oversized, CancellationToken.None));
+
+        Assert.Equal(0, provider.Requests);
+        Assert.Null(writer.Record);
+        Assert.True(error.Message.Length < 256);
+    }
+
+    [Fact]
+    public async Task CanonicalAllZeroSha256IsStillForwardedExactlyOnce()
+    {
+        var provider = new FakeProvider();
+        var writer = new FakeWriter();
+        var digest = new byte[32];
+
+        var record = await new TimestampIssueService(provider, writer).IssueAsync(
+            Organization, Convert.ToBase64String(digest), CancellationToken.None);
+
+        Assert.Equal(1, provider.Requests);
+        Assert.Equal(digest, provider.LastDigest);
+        Assert.Equal(Convert.ToBase64String(digest), record.DigestBase64);
+        Assert.Equal(TimestampValidationState.Unverified, writer.Record!.ValidationState);
+    }
+
     [Fact]
     public async Task ValidImprintPersistsOriginalResponseButNeverClaimsQualification()
     {
@@ -52,10 +131,12 @@ public sealed class TimestampIssueServiceTests
     private sealed class FakeProvider : ITimestampProvider
     {
         public int Requests { get; private set; }
+        public byte[]? LastDigest { get; private set; }
         public byte[] RawResponse { get; } = [0x30, 0x02, 0x01, 0x00];
         public Task<ProviderTimestamp> RequestAsync(byte[] sha256Digest, CancellationToken ct)
         {
             Requests++;
+            LastDigest = sha256Digest.ToArray();
             return Task.FromResult(new ProviderTimestamp(RawResponse, new DateTimeOffset(2026, 11, 15, 10, 0, 0, TimeSpan.Zero),
                 "1.2.3.4", "configured-test-provider"));
         }
