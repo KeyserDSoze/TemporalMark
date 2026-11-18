@@ -17,7 +17,7 @@ public sealed class ExternalRfc3161TstInfoExtensionPolicyTests
     [Fact]
     public void GenuineDerTstInfoWithNoExtensionsPassesPilotProfile()
     {
-        var info = EncodeAndDecode(CreateExtensions());
+        var info = EncodeAndDecode(null); // RFC3161 optional extensions ABSENT
         Assert.False(info.HasExtensions);
         Assert.Empty(info.GetExtensions());
         ExternalRfc3161TstInfoExtensionPolicy.ValidateVerifiedTokenInfo(info);
@@ -69,7 +69,7 @@ public sealed class ExternalRfc3161TstInfoExtensionPolicyTests
         return result;
     }
 
-    private static Rfc3161TimestampTokenInfo EncodeAndDecode(X509ExtensionCollection extensions)
+    private static Rfc3161TimestampTokenInfo EncodeAndDecode(X509ExtensionCollection? extensions)
     {
         var unsigned = new Rfc3161TimestampTokenInfo(
             new Oid("1.3.6.1.4.1.4146.2.2"),
