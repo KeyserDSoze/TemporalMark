@@ -181,7 +181,7 @@ def verify_archive(source: object) -> int:
                 require(isinstance(expected_hash, str) and HEX_SHA256.fullmatch(expected_hash) is not None)
                 member_info = zipped.getinfo(row["responseFile"])
                 size = member_info.file_size
-                require(size <= MAX_DER and size <= MAX_TOTAL_DER - total)
+                require(0 < size <= MAX_DER and size <= MAX_TOTAL_DER - total)
                 total += size
                 token = read_bounded(zipped, member_info, MAX_DER)
                 require(hashlib.sha256(token).hexdigest() == expected_hash.lower())
