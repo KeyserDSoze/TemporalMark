@@ -7,6 +7,8 @@ import { Card, CardContent, CardHeader } from "./components/ui/card";
 
 interface TenantInfo { organizationId: string; role: string; qualificationState: string }
 interface Summary { count: number; organizationId: string }
+interface DailyCount { dateUtc: string; count: number }
+interface DailySummary { organizationId: string; days: DailyCount[] }
 interface RegistryItem {
   id: string; issuedUtc: string; digestBase64: string; providerId: string;
   validationState: string;
@@ -37,6 +39,8 @@ export default function Dashboard({ accessToken }: { accessToken: string }) {
   const [to, setTo] = useState(() => utcDateDaysAgo(0));
   const [tenant, setTenant] = useState<TenantInfo | null>(null);
   const [summary, setSummary] = useState<Summary | null>(null);
+  const [daily, setDaily] = useState<DailySummary | null>(null);
+  const [dailyRangeTooWide, setDailyRangeTooWide] = useState(false);
   const [records, setRecords] = useState<RegistryItem[]>([]);
   const [auditEvents, setAuditEvents] = useState<AuditItem[]>([]);
   const [auditHasMore, setAuditHasMore] = useState(false);
@@ -61,17 +65,27 @@ export default function Dashboard({ accessToken }: { accessToken: string }) {
     setError("");
     try {
       const period = bounds(from, to);
-      const [me, count, list, audit] = await Promise.all([
+      // The daily query deliberately accepts only 1..31 complete UTC days.
+      // Longer periods keep the existing full summary/list/audit functional.
+      const daySpan = Math.round(
+        (Date.parse(to + "T00:00:00.000Z") - Date.parse(from + "T00:00:00.000Z")) / 86_400_000) + 1;
+      const showDaily = daySpan >= 1 && daySpan <= 31;
+      const [me, count, list, audit, dailyResult] = await Promise.all([
         get("me"), get("stamps/summary?" + period), get("stamps?" + period + "&limit=50"),
-        get("audit?" + period + "&limit=20")
+        get("audit?" + period + "&limit=20"),
+        showDaily ? get("stamps/daily?" + period) : Promise.resolve(null)
       ]);
       setTenant(await me.json() as TenantInfo);
       setSummary(await count.json() as Summary);
+      setDaily(dailyResult ? await dailyResult.json() as DailySummary : null);
+      setDailyRangeTooWide(!showDaily);
       setRecords(await list.json() as RegistryItem[]);
       const auditPage = await audit.json() as AuditItem[];
       setAuditEvents(auditPage);
       setAuditHasMore(auditPage.length === 20);
     } catch (exception) {
+      setDaily(null);
+      setDailyRangeTooWide(false);
       setError(exception instanceof Error && exception.message === "date" ? t("dateError") :
         exception instanceof Error ? exception.message : t("error"));
     } finally {
@@ -192,6 +206,34 @@ export default function Dashboard({ accessToken }: { accessToken: string }) {
           <Button variant="outline" disabled={busy} onClick={() => void load()}><RefreshCw size={16} />{t("apply")}</Button>
           <Button disabled={exporting || busy} onClick={() => void download()}><Download size={16} />{exporting ? t("exportBusy") : t("export")}</Button>
         </div>
+      </CardContent>
+    </Card>
+
+    <Card>
+      <CardHeader>
+        <h2 className="text-lg font-semibold">{t("dailyTrend")}</h2>
+        <p className="text-xs text-muted-foreground">{t("dailyNotQualified")}</p>
+      </CardHeader>
+      <CardContent>
+        {dailyRangeTooWide ?
+          <p className="text-sm text-muted-foreground">{t("dailyRangeLimit")}</p> :
+          daily ? <div className="flex gap-2 overflow-x-auto pb-2" role="group" aria-label={t("dailyTrend")}>
+            {daily.days.map(day => {
+              const highest = Math.max(1, ...daily.days.map(entry => entry.count));
+              const barHeight = day.count === 0 ? "2px" :
+                Math.max(3, Math.round(day.count / highest * 100)) + "%";
+              return <div key={day.dateUtc} className="flex min-w-[32px] flex-1 flex-col items-center gap-1"
+                title={day.dateUtc + ": " + day.count}>
+                <span className="text-xs tabular-nums">{day.count}</span>
+                <div className="relative h-28 w-full rounded-sm bg-muted/40"
+                  role="img" aria-label={day.dateUtc + ": " + day.count + " " + t("dailyCountUnit")}>
+                  <div className="absolute bottom-0 left-0 right-0 rounded-sm bg-primary"
+                    style={{ height: barHeight }} />
+                </div>
+                <span className="text-[10px] tabular-nums text-muted-foreground">{day.dateUtc.slice(5)}</span>
+              </div>;
+            })}
+          </div> : <p className="text-sm text-muted-foreground">{t("loading")}</p>}
       </CardContent>
     </Card>
 
