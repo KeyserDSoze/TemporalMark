@@ -49,6 +49,29 @@ public sealed class PostgresTimestampRegistry(NpgsqlDataSource database) : ITime
         return (long)(await command.ExecuteScalarAsync(cancellationToken) ?? 0L);
     }
 
+    public async Task<IReadOnlyList<RegistryDayCount>> CountByUtcDayAsync(
+        Guid organizationId, UtcPeriod period, CancellationToken cancellationToken)
+    {
+        // PostgreSQL session timezone must NOT change a tenant's UTC-day
+        // buckets. Convert timestamptz to UTC wall-clock before casting date;
+        // retain both tenant and half-open UTC timestamp range predicates.
+        await using var connection = await database.OpenConnectionAsync(cancellationToken);
+        await using var command = new NpgsqlCommand("""
+            SELECT (issued_utc AT TIME ZONE 'UTC')::date AS utc_day,
+                   count(*)::bigint AS day_count
+              FROM timestamp_registry
+             WHERE organization_id = @org AND issued_utc >= @start AND issued_utc < @end
+             GROUP BY utc_day
+             ORDER BY utc_day
+            """, connection);
+        SetCommonParameters(command, organizationId, period);
+        var groups = new List<RegistryDayCount>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+            groups.Add(new RegistryDayCount(reader.GetFieldValue<DateOnly>(0), reader.GetInt64(1)));
+        return groups;
+    }
+
     public Task<IReadOnlyList<TimestampRecord>> PageAsync(
         Guid organizationId, UtcPeriod period, int offset, int limit, CancellationToken cancellationToken) =>
         ReadAsync(organizationId, period, offset, limit, cancellationToken);
