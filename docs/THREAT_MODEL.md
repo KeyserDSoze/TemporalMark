@@ -579,3 +579,40 @@ values; unsigned status fields cannot authorize privileged actions.
 See [ADR 0076](../adr/0076-offline-zip-structure-sha256-self-consistency.md),
 [operator guide](OFFLINE_PERIOD_EXPORT_VERIFIER.md) and child #107.
 No on-prem/Azure differences or registrar V015/V016 bypass are added.
+
+## Ambiguous offline ZIP member compression and Unix special-file metadata (#108, ADR 0077)
+
+The pilot's offline archive checker (#107) already validates expected
+member paths and SHA-256 bytes, but untrusted ZIP central-directory
+metadata can request alternative compression codecs or represent a
+member as a Unix FIFO/device/socket/directory despite a normal
+`tokens/{uuid}.tsr` name. Python `zipfile` can decode BZIP2/LZMA;
+these are **not supported in the current TemporalMark .NET v1 export
+profile** and should not be accepted merely because the library
+supports them. Unknown methods are already handled generically by
+the old `RuntimeError` catch (including `NotImplementedError`);
+the new policy rejects unsupported compression **before reading**.
+For Unix-origin ZIP members only unset file type or regular-file
+metadata is permitted; FIFO, device, socket, directory and symlink
+types fail closed without filesystem extraction.
+
+The control leaves strict ZIP member naming, duplicate entries and
+JSON keys, bounded decompression (80MiB outer ZIP, 8MiB manifest,
+1MiB per DER, 64MiB total), UTC 100ns and internal SHA-256 checks
+unchanged. New adversarial tests mutate both ZIP header method fields
+and use crafted Unix external attributes; valid ordinary STORE/DEFLATE
+files remain supported. Test-only source RED and implementation were
+committed separately under [ADR 0077](../adr/0077-zip-compression-unix-special-file-gates.md)
+and [#108](https://github.com/KeyserDSoze/TemporalMark/issues/108).
+Early [Actions 44290472692](https://github.com/KeyserDSoze/TemporalMark/actions/runs/44290472692/attempts/1)
+ran **19/20** offline tests and failed the unsupported-method
+*fixture* before invoking the parser due to incorrectly escaped PK
+signatures; this was corrected without weakening the validator.
+A real exact-final-HEAD GREEN is needed before closure.
+
+**Residual risks:** coherent replacement of a manifest and matching
+DER cannot be detected without independent authentication. None of
+these ZIP metadata gates establish timestamp signature validation,
+historical QTSP status, WORM/legal hold, export completeness, audit
+custody or qualified trust. Parents #17/#15/#13 remain OPEN and pilot
+receipts are `Unverified`; V015/V016 registrar remains blocked.
