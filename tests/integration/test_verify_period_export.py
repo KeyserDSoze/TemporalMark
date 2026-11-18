@@ -5,6 +5,7 @@ import hashlib
 import io
 import json
 import stat
+import struct
 import tempfile
 import sys
 import unittest
@@ -137,6 +138,83 @@ class OfflinePeriodExportTests(unittest.TestCase):
             with self.subTest(raw_size=len(raw)):
                 with self.assertRaises(verifier.ExportVerificationError):
                     check(raw)
+
+    @staticmethod
+    def _replace_zip_compression_method(raw: bytes, name: str, method: int) -> bytes:
+        """Mutate both local and central method IDs; keep file bytes/CRC intact.
+
+        This creates a realistic unsupported-method ZIP, not merely a local
+        vs central header mismatch that zipfile would already reject.
+        """
+        modified = bytearray(raw)
+        with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+            member = archive.getinfo(name)
+            loc = member.header_offset
+            assert modified[loc:loc+4] == b"PK\\x03\\x04"
+            struct.pack_into("<H", modified, loc + 8, method)
+        position = 0
+        found = False
+        while True:
+            position = modified.find(b"PK\\x01\\x02", position)
+            if position == -1:
+                break
+            name_len, extra_len, comment_len = struct.unpack_from("<HHH", modified, position + 28)
+            central_name = bytes(modified[position + 46:position + 46 + name_len]).decode("utf-8")
+            if central_name == name:
+                struct.pack_into("<H", modified, position + 10, method)
+                found = True
+                break
+            position += 46 + name_len + extra_len + comment_len
+        assert found, "Fixture could not locate target central ZIP header"
+        return bytes(modified)
+
+    def test_unknown_compression_in_both_headers_fails_closed_without_traceback(self):
+        member = record()["responseFile"]
+        modified = self._replace_zip_compression_method(build_zip(), member, 99)
+        # RED-first #108: currently ZipFile.open raises NotImplementedError
+        # with a raw traceback, not a controlled ExportVerificationError.
+        with self.assertRaises(verifier.ExportVerificationError):
+            check(modified)
+
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "private-export.zip"
+            path.write_bytes(modified)
+            output, errors = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+                code = verifier.main([str(path)])
+            self.assertEqual(1, code)
+            self.assertEqual("", output.getvalue())
+            self.assertIn("FAILED", errors.getvalue())
+            self.assertNotIn(str(path), errors.getvalue())
+
+    def test_known_but_not_v1_bzip2_member_is_rejected(self):
+        member = zipfile.ZipInfo(record()["responseFile"])
+        member.compress_type = zipfile.ZIP_BZIP2
+        # Even a supported compression algorithm is not authorized by the
+        # current .NET v1 export profile.
+        with self.assertRaises(verifier.ExportVerificationError):
+            check(build_zip(files=[(member, DER)]))
+
+    def test_unix_special_files_are_not_ordinary_tsrs(self):
+        for file_type in (
+            stat.S_IFIFO, stat.S_IFSOCK, stat.S_IFCHR,
+            stat.S_IFBLK, stat.S_IFDIR, stat.S_IFLNK
+        ):
+            member = zipfile.ZipInfo(record()["responseFile"])
+            member.create_system = 3
+            member.external_attr = (file_type | 0o600) << 16
+            with self.subTest(file_type=file_type):
+                with self.assertRaises(verifier.ExportVerificationError):
+                    check(build_zip(files=[(member, DER)]))
+
+    def test_regular_stored_and_deflated_zip_members_still_pass(self):
+        for method in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED):
+            member = zipfile.ZipInfo(record()["responseFile"])
+            member.create_system = 3
+            member.compress_type = method
+            member.external_attr = (stat.S_IFREG | 0o600) << 16
+            with self.subTest(method=method):
+                self.assertEqual(1, check(build_zip(files=[(member, DER)])))
 
     def test_symlink_zip_entry_is_rejected_even_without_extraction(self):
         info = zipfile.ZipInfo("tokens/symlink.tsr")
