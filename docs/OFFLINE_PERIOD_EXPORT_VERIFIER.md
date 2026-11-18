@@ -35,6 +35,15 @@ messages. Do not relay private archive contents to third-party validators.
   no duplicate/extra/missing ZIP names, symlink/directory/encrypted members,
   filesystem traversal or extraction. Manifest JSON duplicate keys and
   unknown schemas are refused, not silently overwritten.
+- ZIP member compression is limited to **STORE (method 0)** and
+  **DEFLATE (method 8)**, the v1 export-compatible methods. BZIP2,
+  LZMA, unknown and other methods are rejected **before** reading a
+  member, even if the local Python installation could decompress it.
+  On Unix-origin entries, external file-type bits must identify an
+  ordinary file or omit the type; FIFO, socket, character/block device,
+  symbolic link and directory metadata are all rejected. No member
+  is extracted or executed. See [ADR 0077](../adr/0077-zip-compression-unix-special-file-gates.md)
+  and focused [#108](https://github.com/KeyserDSoze/TemporalMark/issues/108).
 - Organization identifier is a canonical nonempty UUID. Manifest count
   matches entries and the ZIP. Each record ID is canonical and unique,
   with a correctly mapped member path. Issuance times are explicit UTC
@@ -88,6 +97,16 @@ or sub-microsecond UTC timestamps, noncanonical Base64,
 unsupported qualified-status claims, empty DER members, oversized compressed members and generic/no-secret CLI success/failure output. Actual TDD RED: [Actions 44287937173](https://github.com/KeyserDSoze/TemporalMark/actions/runs/44287937173/attempts/1) ran 15 offline tests and failed only the new empty-DER guard before the fix.
 The pipeline invokes them before the .NET build using the existing
 read-only `backend` job.
+
+Focused #108 adversarial unit tests additionally mutate **both local and
+central ZIP compression method headers** to an unknown value, test
+supported-by-Python but disallowed-by-v1 BZIP2, fake Unix FIFO/socket/
+device/directory modes and the valid STORE/DEFLATE ordinary-file paths.
+A malformed test fixture previously failed before invoking the verifier
+([CI 44290472692](https://github.com/KeyserDSoze/TemporalMark/actions/runs/44290472692/attempts/1),
+19/20 tests), so the fixture was corrected before treating this
+new coverage as valid. Do not report the final #108 tests GREEN until
+its own exact documentation-inclusive main HEAD and four core CI jobs pass.
 
 Sources: [Python `zipfile`](https://docs.python.org/3/library/zipfile.html),
 [Python `json` duplicate-key hook](https://docs.python.org/3/library/json.html),
