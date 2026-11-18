@@ -295,3 +295,19 @@ dotnet test tests/backend/TemporalMark.Provisioner.Tests/TemporalMark.Provisione
 ```
 
 Sources: [RFC 3161 §2.3](https://www.rfc-editor.org/rfc/rfc3161#section-2.3), [RFC 5280 §4.2.1.3](https://www.rfc-editor.org/rfc/rfc5280#section-4.2.1.3) and [§4.2.1.9](https://www.rfc-editor.org/rfc/rfc5280#section-4.2.1.9), [ADR 0066](../adr/0066-rfc3161-tsa-signer-end-entity-key-usage.md).
+
+## Strict bounded CMS-signed TSTInfo accuracy (#98; ADR 0067)
+
+**Deliberately restrictive delegated pilot; NOT a UTC(k) or qualification proof.** [RFC 3161 §2.4.2](https://www.rfc-editor.org/rfc/rfc3161#section-2.4.2) makes `TSTInfo.accuracy` **optional**: when it is absent, the stated accuracy may instead be obtained from other means such as the authenticated `TSAPolicyId`. TemporalMark does **not** implement that policy-to-accuracy interpretation. For now the delegated TSA path requires the **otherwise signature-, nonce-, imprint-, signer-, path- and issuer-CRL-verified** token to explicitly include `TSTInfo.accuracy` and declare **0 through 1,000,000 microseconds** (one second maximum, inclusive). A missing value, negative/oversized value, overflow or claim above one second causes a generic TSA response error; the application stores no receipt from it.
+
+The .NET 10 `Rfc3161TimestampTokenInfo.AccuracyInMicroseconds` nullable property reads the actual TSTInfo field from the signed token; TemporalMark does not read a TSA HTTP header or tenant-provided number. This local one-second **claim filter is not a legal qualified-accuracy threshold** and is not an authenticated measurement of the issuer's UTC clock, HSM, UTC(k) topology, network timing, audit, or incident response. A compromised TSA can sign a false accuracy statement, and a properly qualified provider may legitimately leave this optional field out under an approved policy. Incompatible QTSP receipts **fail closed** pending operator-reviewed interoperability tests, documentation and a new ADR — do not remove the guard ad hoc.
+
+The same code applies to on-prem/Azure; no new deployment setting, database migration, external dependency or tenant override is introduced. Parent #15, preservation #17, legal/CAB/AgID #13 and full historical service qualification remain OPEN, all stored pilot records stay `Unverified`. See [ADR 0067](../adr/0067-rfc3161-strict-signed-tstinfo-accuracy.md).
+
+New focused regression: `tests/backend/TemporalMark.Provisioner.Tests/ExternalRfc3161SignedAccuracyPolicyTests.cs` includes direct boundary tests and genuine .NET DER-encoded/decoded `TSTInfo` fixtures; **these are not CMS-signed or real QTSP test tokens**. RED-first main commit `e5c4fda`, wrapper RED `5bc88a4`, implementation `615a121`, actual provider hook `dfdeea9`. **No GitHub CI RED/GREEN outcome has yet been independently verified**: #98 must not close until all four workflow jobs pass on the exact final docs-inclusive main HEAD.
+
+```sh
+dotnet test tests/backend/TemporalMark.Provisioner.Tests/TemporalMark.Provisioner.Tests.csproj --configuration Release --filter FullyQualifiedName~ExternalRfc3161SignedAccuracyPolicyTests
+```
+
+Sources: [RFC 3161 §2.4.2](https://www.rfc-editor.org/rfc/rfc3161#section-2.4.2) and [.NET Rfc3161TimestampTokenInfo](https://learn.microsoft.com/en-us/dotnet/api/system.security.cryptography.pkcs.rfc3161timestamptokeninfo?view=net-10.0).
