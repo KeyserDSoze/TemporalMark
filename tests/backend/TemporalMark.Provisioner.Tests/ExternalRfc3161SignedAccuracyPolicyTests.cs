@@ -50,8 +50,7 @@ public sealed class ExternalRfc3161SignedAccuracyPolicyTests
         Assert.Equal(encoded.Length, consumed);
         Assert.NotNull(decoded);
         Assert.Equal(500_000L, decoded.AccuracyInMicroseconds);
-        ExternalRfc3161SignedAccuracyPolicy.ValidateSignedAccuracy(
-            decoded.AccuracyInMicroseconds);
+        ExternalRfc3161SignedAccuracyPolicy.ValidateVerifiedTokenInfo(decoded);
     }
 
     [Fact]
@@ -65,8 +64,7 @@ public sealed class ExternalRfc3161SignedAccuracyPolicyTests
         Assert.NotNull(decoded);
         Assert.Null(decoded.AccuracyInMicroseconds);
         Assert.Throws<TimestampProviderResponseException>(() =>
-            ExternalRfc3161SignedAccuracyPolicy.ValidateSignedAccuracy(
-                decoded.AccuracyInMicroseconds));
+            ExternalRfc3161SignedAccuracyPolicy.ValidateVerifiedTokenInfo(decoded));
     }
 
     private static Rfc3161TimestampTokenInfo CreateInfo(long? accuracy) => new(
