@@ -47,3 +47,39 @@ Do **not** weaken the original empty-dashboard browser test or delete append-onl
 [CI 43897042542](https://github.com/KeyserDSoze/TemporalMark/actions/runs/43897042542) on SHA `dfbbe87fdc2506afc5763ecce95cad398e4a147a` completed with **all four jobs SUCCESS**. In Docker smoke the preexisting authenticated browser empty-dashboard test, real PostgreSQL migration and full `pg_dump` / `pg_restore` sealed-witness rollback, Keycloak registrar + reviewer real browser TOTP/PKCE live role test, and the new full real HTTP A/B signed-JWT `401/403`, cross-receipt `404`, no-store ZIP/TSR and canary audit isolation test ALL report SUCCESS. The restricted API remained fail closed with no external TSA. This is a real integration success, not a claim of all-product RLS or legally qualified timestamps.
 
 After this documentation update, GitHub Actions must run once more on the *new exact final `main` SHA* before closing the child; the issue records that exact final run. Parent #20/#14 and independent FIDO, reviewer/registrar, evidence/WORM and legal qualification blockers remain OPEN.
+
+## Bounded UTC daily dashboard stats — #110 (child #14)
+
+The same disposable signed-Keycloak + real PostgreSQL/ASP.NET Core
+two-tenant isolation test now also covers authenticated
+`GET /api/v1/stamps/daily`, **not a mock endpoint**. The existing
+`seed_ci_canaries()` writes one synthetic `Unverified` timestamp
+for each tenant with `issued_utc=now()`. The test chooses a three-day
+explicit **UTC midnight** interval around the test UTC date and
+requires a zero-filled three-row series whose **sum is exactly 1
+for each independently signed tenant administrator**, regardless of
+another tenant's canary. It spoofs organization IDs in both query
+parameters and HTTP headers and requires the result to remain
+scoped to the signed JWT and active PostgreSQL membership.
+
+The same script asserts anonymous API requests return 401, disabled
+signed tenant-admin membership returns 403, and nonmidnight or more
+than 31-day inputs return 400. The existing receipt/ZIP/audit and
+negative identity checks are retained; no additional bootstrap
+credentials, third-party HTTP destinations, sensitive token logging,
+production data, DB owner rights for the API, or fake signed-token
+helper is introduced. The underlying query groups by PostgreSQL
+`(issued_utc AT TIME ZONE 'UTC')::date` with
+`organization_id=@org` and a bounded half-open period; the UI
+never estimates the trend from its first 50 records.
+
+The real browser test `tests/frontend/authenticated.spec.ts`
+additionally checks that the authorized **empty pilot** dashboard
+renders exactly 30 accessible zero-day bars by default, and that
+selecting a longer range hides only the graph while retaining
+registry, export and audit controls. The CI docker-smoke workflow
+must actually pass with compiled API and real signed Keycloak for
+these assertions to constitute evidence. Older successful runs
+do not prove the new #110 route or frontend logic. This remains
+**unqualified registry counts**, not legal issuance/retention proof
+(ADR [0079](../adr/0079-tenant-utc-daily-dashboard-counts.md)).
