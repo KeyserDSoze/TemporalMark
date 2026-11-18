@@ -205,8 +205,12 @@ public sealed class ExternalRfc3161TimestampProvider(
             throw new TimestampProviderUnavailableException(
                 "Unable to read the configured external TSA response.");
         }
-        catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
+            // A TSA handler or response stream may abort with the *base*
+            // OperationCanceledException without canceling the caller token.
+            // Treat only non-caller aborts as unavailable; preserve genuine
+            // caller cancellation and never leak low-level details.
             throw new TimestampProviderUnavailableException("External TSA request timed out.");
         }
     }
