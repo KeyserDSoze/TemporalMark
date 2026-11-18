@@ -213,6 +213,30 @@ def check_authorized(token, own_org, own_id, other_id, own_audit, own_der, other
     actual_ids = {row["id"] for row in page(role + " /stamps", token)}
     if actual_ids != expected_ids:
         raise AssertionError(f"{role}: list leaked a foreign tenant or lost own canary")
+    # RED-first #111 integration boundary (backend already supports paging):
+    # one real SQL canary per tenant means authenticated offset=1 is empty.
+    # Invalid offsets/limits are 400 and cannot select a foreign tenant.
+    paging_path = "/stamps?" + urllib.parse.urlencode({
+        "fromUtc": FROM, "toUtcExclusive": TO, "offset": 1, "limit": 1
+    })
+    one_past = json.loads(must_status(
+        role + " page offset beyond tenant rows", api(paging_path, token=token), 200)[1])
+    if one_past != []:
+        raise AssertionError(f"{role}: authenticated offset page included foreign tenant rows")
+    for bad in ({"offset": -1, "limit": 50}, {"offset": 0, "limit": 201}):
+        path = "/stamps?" + urllib.parse.urlencode({
+            "fromUtc": FROM, "toUtcExclusive": TO, **bad
+        })
+        must_status(role + " invalid page bounds", api(path, token=token), 400)
+    spoofed_page_path = paging_path + "&" + urllib.parse.urlencode({
+        "organizationId": other_org, "tenantId": other_org
+    })
+    spoofed_page = json.loads(must_status(role + " page offset spoofed",
+        api(spoofed_page_path, token=token, headers={
+            "X-Organization-Id": other_org, "X-Tenant-Id": other_org
+        }), 200)[1])
+    if spoofed_page != []:
+        raise AssertionError(f"{role}: page offset headers/query leaked foreign tenant data")
     listed = summary(token)
     if listed.get("organizationId") != own_org or listed.get("count") != 1:
         raise AssertionError(f"{role}: count/organization does not match isolated canary")
