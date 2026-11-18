@@ -16,15 +16,25 @@ public sealed class TimestampIssueService(ITimestampProvider provider, ITimestam
     {
         if (organizationId == Guid.Empty)
             throw new ArgumentException("An authorized organization is required.", nameof(organizationId));
-        if (string.IsNullOrWhiteSpace(digestBase64))
-            throw new ArgumentException("The SHA-256 digest is required.", nameof(digestBase64));
+        // A 32-byte SHA-256 hash has precisely 44 characters in standard
+        // padded Base64 (one '='). Refuse oversized/alias text BEFORE any
+        // decoder allocation; this is an API profile, not RFC3161 policy.
+        if (digestBase64 is null || digestBase64.Length != 44)
+            throw new ArgumentException("A canonical SHA-256 Base64 digest is required.", nameof(digestBase64));
 
         byte[] digest;
         try { digest = Convert.FromBase64String(digestBase64); }
-        catch (FormatException) { throw new ArgumentException("Digest must be Base64.", nameof(digestBase64)); }
+        catch (FormatException)
+        {
+            throw new ArgumentException("A canonical SHA-256 Base64 digest is required.", nameof(digestBase64));
+        }
 
-        if (digest.Length != 32)
-            throw new ArgumentException("Only SHA-256 (32 bytes) is accepted.", nameof(digestBase64));
+        // .NET's decoder permits ignorable whitespace and is not a
+        // canonical spelling check. Re-encode and compare ordinally to
+        // reject nonzero unused pad bits and alternate representations.
+        if (digest.Length != 32 ||
+            !string.Equals(Convert.ToBase64String(digest), digestBase64, StringComparison.Ordinal))
+            throw new ArgumentException("A canonical SHA-256 Base64 digest is required.", nameof(digestBase64));
 
         var receipt = await provider.RequestAsync(digest, cancellationToken);
         var record = new TimestampRecord(
