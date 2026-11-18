@@ -65,7 +65,7 @@ public sealed class ExternalRfc3161TstInfoExtensionPolicyTests
         var result = new X509ExtensionCollection();
         foreach (var item in specifications)
             result.Add(new X509Extension(
-                new Oid(item.Oid), [0x05, 0x00], item.Critical));
+                new Oid(item.Oid), new byte[] { 0x05, 0x00 }, item.Critical));
         return result;
     }
 
