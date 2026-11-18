@@ -26,6 +26,46 @@ public sealed class ExternalRfc3161ResponseEnvelopeTests
     }
 
     [Theory]
+    [InlineData(HttpStatusCode.RequestTimeout)]
+    [InlineData(HttpStatusCode.TooManyRequests)]
+    [InlineData(HttpStatusCode.ServiceUnavailable)]
+    [InlineData(HttpStatusCode.GatewayTimeout)]
+    public async Task UpstreamOverloadAndTimeoutAreSanitizedUnavailableBeforeBody(
+        HttpStatusCode status)
+    {
+        // RED-first #104: upstream capacity/timeout headers are not malformed
+        // RFC3161 tokens. No reading an untrusted body or automatic replay.
+        using var content = new ReadDeniedContent("application/json");
+        using var http = new HttpClient(new ReplyHandler(status, content,
+            includeRetryAfter: true));
+        var tsa = CreateProvider(http);
+
+        var error = await Assert.ThrowsAsync<TimestampProviderUnavailableException>(() =>
+            tsa.RequestAsync(new byte[32], CancellationToken.None));
+
+        Assert.Equal("External TSA is temporarily unavailable.", error.Message);
+        Assert.DoesNotContain("99999", error.Message, StringComparison.Ordinal);
+        Assert.False(content.ReadAttempted);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.MovedPermanently)]
+    [InlineData(HttpStatusCode.BadRequest)]
+    [InlineData(HttpStatusCode.Unauthorized)]
+    [InlineData(HttpStatusCode.Forbidden)]
+    [InlineData(HttpStatusCode.NotFound)]
+    [InlineData(HttpStatusCode.InternalServerError)]
+    [InlineData(HttpStatusCode.BadGateway)]
+    public async Task OtherNonOkHttpStatusesRemainInvalidResponseBeforeBody(
+        HttpStatusCode status)
+    {
+        using var content = new ReadDeniedContent("application/json");
+        var error = await InvokeAsync(status, content);
+        Assert.Contains("HTTP status", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.False(content.ReadAttempted);
+    }
+
+    [Theory]
     [InlineData(null)]
     [InlineData("application/json")]
     [InlineData("application/octet-stream")]
@@ -58,22 +98,32 @@ public sealed class ExternalRfc3161ResponseEnvelopeTests
         HttpStatusCode status, HttpContent content)
     {
         using var http = new HttpClient(new ReplyHandler(status, content));
-        var provider = new ExternalRfc3161TimestampProvider(
+        var provider = CreateProvider(http);
+        return await Assert.ThrowsAsync<TimestampProviderResponseException>(() =>
+            provider.RequestAsync(new byte[32], CancellationToken.None));
+    }
+
+    private static ExternalRfc3161TimestampProvider CreateProvider(HttpClient http) =>
+        new ExternalRfc3161TimestampProvider(
             http, new Uri("https://tsa.example.invalid/issue"), "configured-test-tsa",
             approvedSignerCertificateSha256: new string('A', 64),
             approvedPolicyOid: "1.3.6.1.4.1.4146.2.2",
             approvedTrustAnchorCertificateBase64Der: ExternalRfc3161TrustRootTestFixture.Base64Der,
             approvedIssuerCrlBase64Der: ExternalRfc3161TrustRootTestFixture.CrlBase64Der,
             approvedRootCrlNumberFloor: "1");
-        return await Assert.ThrowsAsync<TimestampProviderResponseException>(() =>
-            provider.RequestAsync(new byte[32], CancellationToken.None));
-    }
 
-    private sealed class ReplyHandler(HttpStatusCode status, HttpContent content) : HttpMessageHandler
+    private sealed class ReplyHandler(
+        HttpStatusCode status, HttpContent content, bool includeRetryAfter = false)
+        : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(
-            HttpRequestMessage request, CancellationToken cancellationToken) =>
-            Task.FromResult(new HttpResponseMessage(status) { Content = content });
+            HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var response = new HttpResponseMessage(status) { Content = content };
+            if (includeRetryAfter)
+                response.Headers.TryAddWithoutValidation("Retry-After", "999999");
+            return Task.FromResult(response);
+        }
     }
 
     /// <summary>
