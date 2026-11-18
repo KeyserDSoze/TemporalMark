@@ -213,3 +213,21 @@ jobs:
         run: terraform -chdir=infra/azure init -backend=false
       - name: Terraform validate
         run: terraform -chdir=infra/azure validate
+
+  # A fifth reporting-only job. The four core test jobs stay unmodified.
+  # GitHub REST Commit Status becomes readable through the connected
+  # GitHub integration even when push-triggered Actions runs are not.
+  ci-verdict:
+    if: ${{ always() && github.ref == 'refs/heads/main' }}
+    needs: [backend, frontend, docker-smoke, terraform]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      statuses: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Publish exact-SHA four-core-job commit status
+        env:
+          CORE_JOB_NEEDS: ${{ toJSON(needs) }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 tests/integration/publish_ci_verdict.py
