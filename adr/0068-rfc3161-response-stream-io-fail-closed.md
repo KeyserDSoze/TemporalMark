@@ -53,3 +53,32 @@ The prior I/O tests and all legal, tenant, and WebAuthn gates remain intact.
 
 References: [.NET OperationCanceledException](https://learn.microsoft.com/en-us/dotnet/api/system.operationcanceledexception?view=net-10.0);
 [.NET TaskCanceledException](https://learn.microsoft.com/en-us/dotnet/api/system.threading.tasks.taskcanceledexception?view=net-10.0).
+
+## Amendment — premature disposal by the response stream (2026-11-18)
+
+A broken or prematurely disposed `HttpContent` body stream may throw
+`ObjectDisposedException` from `Stream.ReadAsync`, and even from
+`HttpContent.ReadAsStreamAsync`. `ObjectDisposedException` derives from
+`InvalidOperationException`, **not** `IOException`; neither the accepted
+`catch(IOException)` nor the non-caller `OperationCanceledException` handler
+normalizes it. An externally supplied HTTP stream cannot be allowed to turn
+an unknown, incomplete RFC3161 response into a raw unhandled API 500.
+
+Narrowly normalize only **`ObjectDisposedException`**, within the same
+existing `RequestAsync` transport/body boundary, to the existing generic
+`TimestampProviderUnavailableException("Unable to read the configured external TSA response.")`.
+No broad `InvalidOperationException` or general `Exception` catch, no retry,
+no partial DER persistence, no change to semantic/PKIX/signature error paths.
+Keep genuine cancellation separate: the catch filter must apply **only when
+the original caller cancellation token has not been signalled**; otherwise
+preserve the original exception rather than incorrectly claiming a TSA outage.
+
+TDD order: ADR amendment first; RED-first in-memory `HttpContent` tests
+for stream acquisition `ObjectDisposedException` and partial response then
+`ObjectDisposedException`, with raw diagnostic sentinel assertions and
+the existing caller-cancellation/IO/malformed-DER checks intact; minimal
+provider `catch(ObjectDisposedException) when (!cancellationToken.IsCancellationRequested)`;
+update TSA operator runbook, threat model, roadmap and issue #99. Close only
+after exact final documentation-inclusive main SHA 4/4 CI. No qualified trust.
+
+Reference: [ObjectDisposedException hierarchy](https://learn.microsoft.com/en-us/dotnet/api/system.objectdisposedexception?view=net-10.0).
