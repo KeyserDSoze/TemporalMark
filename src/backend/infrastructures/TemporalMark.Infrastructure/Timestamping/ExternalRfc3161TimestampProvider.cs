@@ -188,6 +188,15 @@ public sealed class ExternalRfc3161TimestampProvider(
         {
             throw new TimestampProviderUnavailableException("Unable to reach the configured external TSA.");
         }
+        catch (IOException)
+        {
+            // ResponseHeadersRead defers socket/body I/O until the explicit
+            // ReadAsStreamAsync/ReadAsync loop. A broken/truncated stream
+            // is an unavailable TSA, never a validated RFC3161 token.
+            // Do not disclose raw socket errors or retain partial bytes.
+            throw new TimestampProviderUnavailableException(
+                "Unable to read the configured external TSA response.");
+        }
         catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
             throw new TimestampProviderUnavailableException("External TSA request timed out.");
