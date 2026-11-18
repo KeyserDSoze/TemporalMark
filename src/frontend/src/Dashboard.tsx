@@ -26,7 +26,7 @@ interface RegistryItem {
 }
 interface AuditItem {
   id: string; organizationId: string; actorSubjectId: string;
-  action: "PeriodExportPrepared" | "ReceiptDownloadPrepared";
+  action: "PeriodExportPrepared" | "ReceiptDownloadPrepared" | "DocumentImprintSearchPerformed";
   occurredUtc: string; receiptId: string | null;
   periodFromUtc: string | null; periodToUtcExclusive: string | null;
 }
@@ -297,7 +297,9 @@ export default function Dashboard({ accessToken }: { accessToken: string }) {
   };
 
   const auditActionLabel = (action: AuditItem["action"]) =>
-    action === "PeriodExportPrepared" ? t("auditExportPrepared") : t("auditReceiptPrepared");
+    action === "PeriodExportPrepared" ? t("auditExportPrepared")
+      : action === "ReceiptDownloadPrepared" ? t("auditReceiptPrepared")
+      : t("auditImprintSearchPerformed");
 
   const labelFor = (state: string) => ({
     Unverified: t("unverified"),
