@@ -114,6 +114,19 @@ def summary(token: str, extra: str = "", headers=None):
     return json.loads(must_status("registry summary", api(url, token=token, headers=headers), 200)[1])
 
 
+def search_imprint(token: str, digest_hex: str, offset: int = 0,
+                   limit: int = 50, headers=None, extra_body=None):
+    # Authenticated read-only POST: the document imprint never appears
+    # in API URL, proxy query string or a log-worthy assertion label.
+    payload = {
+        "fromUtc": FROM, "toUtcExclusive": TO,
+        "digestSha256Hex": digest_hex, "offset": offset, "limit": limit
+    }
+    payload.update(extra_body or {})
+    return api("/stamps/search", token=token, method="POST",
+               payload=payload, headers=headers)
+
+
 def daily(token: str, start: str, end: str, extra: str = "", headers=None):
     url = "/stamps/daily?" + urllib.parse.urlencode({
         "fromUtc": start, "toUtcExclusive": end
@@ -196,6 +209,10 @@ def check_unauthed():
         ("GET", "/stamps/summary", None), ("GET", "/stamps/daily", None), ("GET", "/audit", None),
         ("GET", "/stamps/export", None),
         ("GET", f"/stamps/{STAMP_B}/receipt", None),
+        ("POST", "/stamps/search", {
+            "fromUtc": FROM, "toUtcExclusive": TO,
+            "digestSha256Hex": DIGEST_A.hex(), "offset": 0, "limit": 50
+        }),
         ("POST", "/stamps/issue", {"digestBase64": base64.b64encode(DIGEST_A).decode()})
     ]
     for method, path, body in endpoints:
@@ -237,6 +254,37 @@ def check_authorized(token, own_org, own_id, other_id, own_audit, own_der, other
         }), 200)[1])
     if spoofed_page != []:
         raise AssertionError(f"{role}: page offset headers/query leaked foreign tenant data")
+    # RED-first #112: real signed-Keycloak token, disposable canary rows
+    # and actual tenant-filtered PostgreSQL exact document-imprint lookup.
+    own_digest = DIGEST_A if own_org == ORG_A else DIGEST_B
+    foreign_digest = DIGEST_B if own_org == ORG_A else DIGEST_A
+    found_meta = json.loads(must_status(role + " own SHA256 lookup",
+        search_imprint(token, own_digest.hex().upper()), 200)[1])
+    if (found_meta.get("hasMore") is not False or
+        {item.get("id") for item in found_meta.get("items", [])} != {own_id} or
+        any("responseDer" in item for item in found_meta["items"])):
+        raise AssertionError(f"{role}: document-imprint lookup did not isolate own metadata")
+    foreign_meta = json.loads(must_status(role + " foreign SHA256 absent",
+        search_imprint(token, foreign_digest.hex()), 200)[1])
+    if foreign_meta.get("items") != [] or foreign_meta.get("hasMore") is not False:
+        raise AssertionError(f"{role}: lookup leaked foreign tenant's document imprint")
+    beyond = json.loads(must_status(role + " imprint search second page",
+        search_imprint(token, own_digest.hex(), offset=1, limit=1), 200)[1])
+    if beyond.get("items") != [] or beyond.get("hasMore") is not False:
+        raise AssertionError(f"{role}: lookup offset leaked foreign tenant")
+    spoofed = json.loads(must_status(role + " imprint lookup spoofed org",
+        search_imprint(token, own_digest.hex(), headers={
+            "X-Organization-Id": other_org, "X-Tenant-Id": other_org
+        }, extra_body={"organizationId": other_org, "tenantId": other_org}), 200)[1])
+    if {item.get("id") for item in spoofed.get("items", [])} != {own_id}:
+        raise AssertionError(f"{role}: forged lookup tenant selector changed scope")
+    for invalid in ("", "0x" + own_digest.hex(), own_digest.hex() + "0", "Z" * 64):
+        must_status(role + " bad document-imprint input",
+                    search_imprint(token, invalid), 400)
+    must_status(role + " bad document-imprint limit",
+                search_imprint(token, own_digest.hex(), limit=51), 400)
+    must_status(role + " bad document-imprint offset",
+                search_imprint(token, own_digest.hex(), offset=-1), 400)
     listed = summary(token)
     if listed.get("organizationId") != own_org or listed.get("count") != 1:
         raise AssertionError(f"{role}: count/organization does not match isolated canary")
@@ -383,6 +431,8 @@ def main():
                "organizationId": ORG_B, "tenantId": ORG_B}
     must_status("authorized A no external TSA => NO issuance", api(
         "/stamps/issue", token=a_token, method="POST", payload=payload), 503)
+    must_status("inactive member cannot search document imprint",
+                search_imprint(disabled_token, DIGEST_B.hex()), 403)
     must_status("inactive member cannot access daily counts", api(
         "/stamps/daily?fromUtc=2026-11-01T00%3A00%3A00Z&toUtcExclusive=2026-11-02T00%3A00%3A00Z",
         token=disabled_token), 403)
@@ -391,7 +441,7 @@ def main():
     if summary(a_token)["count"] != 1 or summary(b_token)["count"] != 1:
         raise AssertionError("Disabled external TSA accidentally minted an evidence record")
     print("PASS: real Keycloak-signed JWT 401/403; two isolated PostgreSQL tenants; "
-          "real API list/summary/UTC daily/TSR/ZIP/audit; header/query/body spoofing; "
+          "real API list/summary/UTC daily/document-SHA256-search/TSR/ZIP/audit; header/query/body spoofing; "
           "inactive membership; no qualified issuance")
 
 
