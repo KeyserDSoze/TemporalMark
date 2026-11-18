@@ -372,3 +372,31 @@ RED-first stream acquisition and partial-body disposal regressions
 plus original caller cancellation test are tracked under ADR 0068/#99.
 All records stay Unverified; #15/#17/#13 and the V015 registrar
 interlock remain unchanged.
+
+## Exact-commit CI status publication trust boundary (#101, ADR 0070)
+
+GitHub Actions `CI` has four core jobs, but the connected GitHub API can
+expose no push-triggered workflow runs for recent `main` SHAs. Without
+another verifiable signal, an operator might incorrectly close issues based
+on unobserved supposed GREEN runs. The reporting-only fifth `ci-verdict`
+job uses `needs` to read **GitHub's four actual job results** and creates a
+GitHub commit status `temporalmark/ci-4-core-jobs` on exactly `GITHUB_SHA`.
+It publishes `success` **only** when all four explicit results are
+`success`; failure, skipped, cancelled, missing and malformed dependencies
+all fail closed. Its token is restricted to job-scoped `statuses: write`
+plus read-only contents, with the pinned checkout not persisting credentials.
+Other jobs remain `contents: read`. No issue/PR edit, remote execution,
+Docker privileged credentials, new third-party action or release signing
+capability is granted.
+
+**Residual risks:** GitHub commit statuses are mutable, not signed CAB
+attestations. Compromised GitHub runners/branch administrators or an actor
+with commit-status write rights could forge a status. A canceled reporter,
+network/GitHub API failure or inability to read a status means **UNKNOWN**,
+not GREEN. A valid status for an *older* SHA, or a rerun on an old attempt,
+does not verify the latest documentation-inclusive `main`. Operators must
+match exact SHA/context/linked Actions run and independently inspect tests
+when possible before closing child issues. This adds no qualified
+timestamping, UTC(k), historical Trusted List, WORM or FIDO trust, and
+does not alter the V015/V016 registrar interlock. See ADR 0070,
+[operator guide](CI_VERDICT_COMMIT_STATUS.md) and issue #101 under #20.
