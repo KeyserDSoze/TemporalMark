@@ -39,6 +39,37 @@ public sealed class PostgresTimestampRegistry(NpgsqlDataSource database) : ITime
                 reader.IsDBNull(10) ? null : reader.GetString(10)
         );
 
+    public async Task<IReadOnlyList<TimestampRecord>> SearchByDigestAsync(
+        Guid organizationId, UtcPeriod period, string digestBase64,
+        int offset, int maxResults, CancellationToken cancellationToken)
+    {
+        // Always constrain BOTH server-selected organization and period.
+        // Digest matching is exact canonical Base64 for SHA-256 document
+        // imprint, not a search on the token's own token_sha256_hex.
+        await using var connection = await database.OpenConnectionAsync(cancellationToken);
+        await using var command = new NpgsqlCommand("""
+            SELECT id, organization_id, issued_utc, hash_algorithm_oid, digest_base64,
+                   policy_oid, provider_id, token_sha256_hex, validation_state,
+                   response_der, evidence_reference
+              FROM timestamp_registry
+             WHERE organization_id = @org
+               AND issued_utc >= @start AND issued_utc < @end
+               AND hash_algorithm_oid = @algorithm AND digest_base64 = @digest
+             ORDER BY issued_utc, id
+             LIMIT @limit OFFSET @offset
+            """, connection);
+        SetCommonParameters(command, organizationId, period);
+        command.Parameters.AddWithValue("algorithm", "2.16.840.1.101.3.4.2.1");
+        command.Parameters.AddWithValue("digest", digestBase64);
+        command.Parameters.AddWithValue("limit", maxResults);
+        command.Parameters.AddWithValue("offset", offset);
+        var records = new List<TimestampRecord>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+            records.Add(MapRecord(reader));
+        return records;
+    }
+
     public async Task<long> CountAsync(Guid organizationId, UtcPeriod period, CancellationToken cancellationToken)
     {
         await using var connection = await database.OpenConnectionAsync(cancellationToken);
