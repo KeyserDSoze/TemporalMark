@@ -400,3 +400,27 @@ when possible before closing child issues. This adds no qualified
 timestamping, UTC(k), historical Trusted List, WORM or FIDO trust, and
 does not alter the V015/V016 registrar interlock. See ADR 0070,
 [operator guide](CI_VERDICT_COMMIT_STATUS.md) and issue #101 under #20.
+
+## CI test-only signing certificate expiry vs actual identity-key validation (#102, ADR 0071)
+
+An isolated FIDO MDS cryptographic **candidate** test had its disposable
+`x5c[0]` signer leaf generated for a frozen 2026-11-16 fixture clock,
+with NotAfter 2026-11-18 00:00 UTC. The maintained IdentityModel JWS key
+validator then denied the real signed *positive* at 09:07 UTC on Nov 18,
+despite the fixture's separately pinned X509Chain checking its synthetic
+old `VerificationTime`. This was observed as **1 failing of 489**
+Provisioner tests in [CI 44272815080](https://github.com/KeyserDSoze/TemporalMark/actions/runs/44272815080/attempts/1).
+A future attempt to make such tests pass by disabling issuer-signing-key
+validation, permitting expired leaf certs or trusting host roots would
+turn a legitimate negative security behavior into a false GREEN.
+
+The fix is confined to the **test-only** disposable signing fixture:
+derive its reference clock from current UTC at fixture initialization,
+and add a test asserting the actual DER `x5c[0]` leaf remains valid
+at the current runner time. Retain all negative expiration, wrong-root,
+wrong-key and tamper cases. **Do not** connect this candidate to a real
+registrar, API, SQL, FIDO root allowlist or grant. It still returns only
+`UNAPPROVED / JWS_CHAIN_ONLY_REVOCATION_UNVERIFIED`; revocation of
+the authenticated FIDO R46 signing chain remains #57/#55, V015/V016
+registration stays blocked, and this is unrelated to legal QTSP/UTC(k)
+qualification. See ADR 0071/#102.
