@@ -100,11 +100,14 @@ ZIP export continue independently.
   independent WORM/custody, immutable snapshots or completeness.
   Offset pages can shift if records change during navigation.
   #17 remains OPEN for signed manifests and long-term custody.
-- Search itself currently does **not** create a tenant audit record;
-  only the subsequent **receipt download** is explicitly audited.
-  Per-search query logging/audit, abuse throttling, privacy and GDPR
-  review remain operational gaps. Do not label this a fully audited
-  evidence-discovery service.
+- From #114 / V018 onward, each successful authorized search writes a
+  separate tenant-and-actor-scoped `DocumentImprintSearchPerformed` event
+  before matching metadata is returned. No queried imprint, match signal
+  or count, receipt ID or search period is stored. Invalid or unauthorized
+  searches do not append an event; audit write failure denies the search
+  (HTTP 500, without match metadata). Receipt downloads remain separately
+  audited. Distributed search throttling, reverse-proxy/body log review,
+  GDPR retention/DPIA and independently sealed custody remain open in #113/#17.
 - Tests exercise signed-Keycloak and real PostgreSQL tenant A/B
   canaries with distinct imprints, invalid inputs (400), anonymous
   (401), inactive admin (403), cross-tenant body/header spoofing,
@@ -112,8 +115,9 @@ ZIP export continue independently.
   **Browser mocks do not prove SQL isolation**; the genuine
   Keycloak/Pg tests do.
 
-On-prem and Azure use the **same .NET and React code**. No SQL
-migration, external dependency, secret, tenant override, QTSP
-qualification claim or WebAuthn V015/V016 registrar unblock was added.
+On-prem and Azure use the **same .NET and React code**. #114 introduces
+a forward-only V018 search-audit constraint migration; all prior V001–V017
+scripts are unchanged. No external dependency, secret, tenant override,
+QTSP qualification claim or WebAuthn V015/V016 registrar unblock was added.
 The exact final main SHA's 4/4 CI and test evidence are the
 acceptance gate before closing focused [#112](https://github.com/KeyserDSoze/TemporalMark/issues/112).
