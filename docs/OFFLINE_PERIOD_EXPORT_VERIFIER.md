@@ -41,6 +41,7 @@ messages. Do not relay private archive contents to third-party validators.
   and within the inclusive-from/exclusive-to manifest period.
   DateTimeOffset fractional seconds are compared at full **100ns
   (seven-digit)** precision.
+- Empty TSR/DER members are refused even if their declared SHA-256 matches the empty byte string; the producer's `TimestampRecord.Validate()` already enforces this.
 - Every record declares the SHA-256 OID and a canonical 32-byte SHA-256
   message imprint Base64, with nonempty provider/policy strings. The
   **actual raw DER member bytes** match the manifest's full hexadecimal
@@ -84,7 +85,7 @@ TSA tokens**. Tests cover genuine current v1 shape, empty export,
 DER/hash tampering, duplicate ZIP names and JSON keys, missing/extra
 members, path-traversal/symlink, duplicate IDs and bad count, out-of-range
 or sub-microsecond UTC timestamps, noncanonical Base64,
-unsupported qualified-status claims, and oversized compressed members.
+unsupported qualified-status claims, empty DER members, oversized compressed members and generic/no-secret CLI success/failure output. Actual TDD RED: [Actions 44287937173](https://github.com/KeyserDSoze/TemporalMark/actions/runs/44287937173/attempts/1) ran 15 offline tests and failed only the new empty-DER guard before the fix.
 The pipeline invokes them before the .NET build using the existing
 read-only `backend` job.
 
