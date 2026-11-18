@@ -542,3 +542,40 @@ signed manifests remain parent #17; QTSP trust and compliance remain
 #15/#13. Pilot records stay `Unverified`. See
 [ADR 0075](../adr/0075-synchronous-evidence-zip-byte-budget.md)
 and the [registry operator runbook](REGISTRY_INTEGRITY_READ_GATES.md).
+
+## Untrusted downloaded ZIP: offline structure and hash check without provenance (#107; ADR 0076)
+
+A tenant administrator may copy a `temporalmark-period-export-v1` ZIP
+outside TemporalMark. The original DB authentication, API checks and
+export-prepare audit cannot prove the ZIP was not altered in transit
+or afterward. Standard ZIP tools can silently accept duplicate
+member paths, traversal names, renamed token files and ambiguous
+duplicate JSON keys. A downstream importer could misassociate raw
+TSR files and their declared hashes. The new **Python standard-library
+offline checker** `tests/integration/verify_period_export.py`
+never extracts files or contacts the network. It rejects extra/missing/
+duplicate/unsafe/symlink ZIP members, duplicate manifest keys and
+record IDs, bad count or path mappings, noncanonical 32-byte SHA-256
+imprints, wrong token SHA-256, non-UTC/out-of-period timestamps
+(compared at seven-digit 100ns precision), and pilot records claiming
+a qualified or otherwise non-`Unverified` state. It bounds manifest
+decompression to 8MiB, each DER member to 1MiB, aggregate DER to
+64MiB, rows to 10000 and ZIP file size to 80MiB, checking announced
+and actual lengths. Success reports **only local internal consistency**,
+without exposing imprint/provider/tenant/token contents.
+
+**This is not cryptographic archive authentication.** An attacker able
+to change both the manifest and the DER bytes can produce another
+self-consistent fake archive. ZIP CRC plus SHA-256 under an *unsigned*
+manifest is not a signature, immutable high-water witness, audited
+chain of custody, RFC3161/CMS signature verification, historical EUTL
+service assessment or qualified timestamp validation. An exported
+subset may omit legitimately issued marks while still passing
+per-file validation. Source DB snapshot consistency, WORM/object-lock
+retention and GDPR-approved legal hold are still missing under #17;
+QTSP/provenance and CAB/AgID qualification remain #15/#13. The
+tool's error path is generic to avoid leaking raw evidence paths and
+values; unsigned status fields cannot authorize privileged actions.
+See [ADR 0076](../adr/0076-offline-zip-structure-sha256-self-consistency.md),
+[operator guide](OFFLINE_PERIOD_EXPORT_VERIFIER.md) and child #107.
+No on-prem/Azure differences or registrar V015/V016 bypass are added.
