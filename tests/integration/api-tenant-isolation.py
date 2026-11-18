@@ -7,6 +7,7 @@ This script is forbidden against live tenants and requires a disposable Compose 
 from __future__ import annotations
 
 import base64
+from datetime import datetime, timedelta, timezone
 import hashlib
 import io
 import json
@@ -113,6 +114,14 @@ def summary(token: str, extra: str = "", headers=None):
     return json.loads(must_status("registry summary", api(url, token=token, headers=headers), 200)[1])
 
 
+def daily(token: str, start: str, end: str, extra: str = "", headers=None):
+    url = "/stamps/daily?" + urllib.parse.urlencode({
+        "fromUtc": start, "toUtcExclusive": end
+    }) + extra
+    raw = must_status("tenant-bound daily counts", api(url, token=token, headers=headers), 200)[1]
+    return json.loads(raw)
+
+
 def audit(token: str, extra: str = "", headers=None):
     url = "/audit?" + urllib.parse.urlencode({
         "fromUtc": FROM, "toUtcExclusive": TO
@@ -184,7 +193,7 @@ def seed_ci_canaries():
 def check_unauthed():
     endpoints = [
         ("GET", "/me", None), ("GET", "/stamps", None),
-        ("GET", "/stamps/summary", None), ("GET", "/audit", None),
+        ("GET", "/stamps/summary", None), ("GET", "/stamps/daily", None), ("GET", "/audit", None),
         ("GET", "/stamps/export", None),
         ("GET", f"/stamps/{STAMP_B}/receipt", None),
         ("POST", "/stamps/issue", {"digestBase64": base64.b64encode(DIGEST_A).decode()})
@@ -207,6 +216,41 @@ def check_authorized(token, own_org, own_id, other_id, own_audit, own_der, other
     listed = summary(token)
     if listed.get("organizationId") != own_org or listed.get("count") != 1:
         raise AssertionError(f"{role}: count/organization does not match isolated canary")
+
+    # RED-first #110: one authenticated, tenant-filtered SQL group-by, not
+    # a graph derived from the first 50 registry rows or local timezone.
+    # Use a 3-day UTC window around disposable canary 'now()', robust even
+    # if the signed-Keycloak integration spans a UTC midnight rollover.
+    today = datetime.now(timezone.utc).date()
+    start_day = today - timedelta(days=1)
+    end_day = today + timedelta(days=2)
+    start_utc = start_day.isoformat() + "T00:00:00Z"
+    end_utc = end_day.isoformat() + "T00:00:00Z"
+    daily_result = daily(token, start_utc, end_utc)
+    days = daily_result.get("days")
+    if (daily_result.get("organizationId") != own_org or
+        not isinstance(days, list) or
+        [row.get("dateUtc") for row in days] !=
+        [(start_day + timedelta(days=i)).isoformat() for i in range(3)] or
+        sum(row.get("count", -1) for row in days) != 1 or
+        any(row.get("count", 0) < 0 for row in days)):
+        raise AssertionError(f"{role}: UTC daily counts not tenant-bound or zero-filled")
+    # No query/header tenant selector can change the authenticated principal.
+    spoof = "&" + urllib.parse.urlencode({"organizationId": other_org, "tenantId": other_org})
+    headers = {"X-Organization-Id": other_org, "X-Tenant-Id": other_org}
+    spoof_result = daily(token, start_utc, end_utc, spoof, headers)
+    if spoof_result.get("organizationId") != own_org or spoof_result.get("days") != days:
+        raise AssertionError(f"{role}: daily counts leaked another organization on spoofed selector")
+    must_status("daily rejects nonmidnight bounds",
+                api("/stamps/daily?" + urllib.parse.urlencode({
+                    "fromUtc": start_utc.replace("00:00:00Z", "00:01:00Z"),
+                    "toUtcExclusive": end_utc
+                }), token=token), 400)
+    must_status("daily rejects unbounded dates",
+                api("/stamps/daily?" + urllib.parse.urlencode({
+                    "fromUtc": "2026-01-01T00:00:00Z",
+                    "toUtcExclusive": "2026-02-03T00:00:00Z"
+                }), token=token), 400)
 
     found = audit(token)
     ids = {record["id"] for record in found}
@@ -315,12 +359,15 @@ def main():
                "organizationId": ORG_B, "tenantId": ORG_B}
     must_status("authorized A no external TSA => NO issuance", api(
         "/stamps/issue", token=a_token, method="POST", payload=payload), 503)
+    must_status("inactive member cannot access daily counts", api(
+        "/stamps/daily?fromUtc=2026-11-01T00%3A00%3A00Z&toUtcExclusive=2026-11-02T00%3A00%3A00Z",
+        token=disabled_token), 403)
     must_status("inactive member may never issue", api(
         "/stamps/issue", token=disabled_token, method="POST", payload=payload), 403)
     if summary(a_token)["count"] != 1 or summary(b_token)["count"] != 1:
         raise AssertionError("Disabled external TSA accidentally minted an evidence record")
     print("PASS: real Keycloak-signed JWT 401/403; two isolated PostgreSQL tenants; "
-          "real API list/summary/TSR/ZIP/audit; header/query/body spoofing; "
+          "real API list/summary/UTC daily/TSR/ZIP/audit; header/query/body spoofing; "
           "inactive membership; no qualified issuance")
 
 
