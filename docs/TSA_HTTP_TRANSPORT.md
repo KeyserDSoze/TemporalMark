@@ -281,3 +281,17 @@ dotnet test tests/backend/TemporalMark.Provisioner.Tests/TemporalMark.Provisione
 TDD RED: [Actions CI 44009723455](https://github.com/KeyserDSoze/TemporalMark/actions/runs/44009723455) tests-only SHA `c11665a654a7eaeb1ffa13c60f353080680108f9` failed on missing floor parser/issuer validation/provider named args after [ADR 0065](../adr/0065-rfc3161-operator-crl-number-minimum-floors.md) was committed first.
 
 See [RFC5280 §5.2.3](https://www.rfc-editor.org/rfc/rfc5280#section-5.2.3), [ADR 0065](../adr/0065-rfc3161-operator-crl-number-minimum-floors.md), [threat model](THREAT_MODEL.md).
+
+## Strict TSA signer end-entity and signing-only Key Usage (#97; ADR 0066)
+
+The delegated pilot verifies the cryptographic RFC 3161 CMS signer, enforces the *sole critical* timeStamping EKU, the deployment-approved signer SHA-256 fingerprint, signed policy, pinned-root issuance-time PKIX chain and issuer-signed full CRLs. **Separately**, it now rejects a CMS signer certificate unless it has **exactly one valid non-CA Basic Constraints extension** (no path length) and exactly one parseable Key Usage containing **only** digitalSignature and/or nonRepudiation (contentCommitment), with at least one of those signing flags present. CA=true, missing/duplicated/malformed extensions, signing as a CA or CRL issuer, encipherment and key agreement are denied. Critical and noncritical end-entity Basic Constraints/Key Usage are accepted; the existing RFC3161 **EKU must still be critical**.
+
+Requiring Basic Constraints even on an end entity, and requiring a restricted signing-only Key Usage, is an intentionally **strict TemporalMark pilot interoperability policy**. Do **not** claim RFC3161 unconditionally mandates every part of this local profile. Operators evaluating an authentic QTSP should compare its published certificate profile before enabling the connector; incompatible certificates fail closed and require independently reviewed ADR/code/tests, not a bypass or disabled verifier. This checks certificate metadata, **not real private-key exclusivity**, historic Trusted List qualified service status, authenticated CRL source or independently witnessed CRL rollback protection. All records remain **Unverified**, #15/#17/#13 are open. The same provider code is used for Azure and on-prem, with no new settings or tenant overrides.
+
+TDD regression: `tests/backend/TemporalMark.Provisioner.Tests/ExternalRfc3161TsaLeafProfilePolicyTests.cs` uses ephemeral X.509 keys for positive signing-only and negative CA/missing/malformed/duplicate KU+BC scenarios. ADR first on main, then test-first RED commit `9a51ccbd8e2bc57c230084e15f4703a6fb56bdae`, policy implementation `8670fd39c6f473d158ca154ad60b0adfe5b55a28` and actual provider call `ec3b4e773799e27ad3c85663b7d664f2d4acf660`. Full green CI on the final documentation-inclusive SHA **remains to be verified** before #97 can close.
+
+```sh
+dotnet test tests/backend/TemporalMark.Provisioner.Tests/TemporalMark.Provisioner.Tests.csproj --configuration Release --filter FullyQualifiedName~ExternalRfc3161TsaLeafProfilePolicyTests
+```
+
+Sources: [RFC 3161 §2.3](https://www.rfc-editor.org/rfc/rfc3161#section-2.3), [RFC 5280 §4.2.1.3](https://www.rfc-editor.org/rfc/rfc5280#section-4.2.1.3) and [§4.2.1.9](https://www.rfc-editor.org/rfc/rfc5280#section-4.2.1.9), [ADR 0066](../adr/0066-rfc3161-tsa-signer-end-entity-key-usage.md).
