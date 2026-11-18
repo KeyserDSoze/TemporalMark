@@ -447,3 +447,29 @@ status. A separate server-side idempotency/quota ledger and ingress
 body-size limits remain needed under open #15/#20. Same on-prem/Azure
 business logic, no tenant bypass, WebAuthn V015/V016 stop-line unchanged.
 See [ADR 0072](../adr/0072-canonical-sha256-base64-issuance-ingress.md).
+
+## Confusing external TSA unavailability with malformed timestamp replies (#104)
+
+A configured TSA or intermediate gateway can respond with HTTP
+`408 Request Timeout`, `429 Too Many Requests`, `503 Service
+Unavailable` or `504 Gateway Timeout` after receiving an RFC3161
+imprint. Previously every non-200 response was treated like an invalid
+response token and the API surfaced 502. The pilot now recognizes only
+these four upstream **transport unavailability** statuses before MIME
+or body processing and maps them to the existing generic API 503.
+Other statuses remain untrusted/invalid and API 502; 200 still requires
+strict RFC3161 DER/CMS and reviewed signer trust gates. The error body,
+reason phrase and untrusted `Retry-After` header are never included
+in returned error text or used to retry. This reduces operational
+ambiguity and prevents upstream header/body disclosure.
+
+**Outstanding security/operational risk:** an external failure response
+does not prove the TSA did *not* issue or charge for the timestamp;
+HTTP statuses themselves are not signed timestamp evidence, and an
+attacker controlling the TSA could lie. No automatic retry, quota
+inference, upstream reconciliation or idempotency protection is provided.
+Those require independent reviewed issuance identifiers and accounting
+under parent #15. On-prem/Azure share the identical code; SQL
+registrar V015/V016 stays blocked, and the pilot remains `Unverified`,
+not a QTSP-qualified service. See [ADR 0073](../adr/0073-rfc3161-upstream-http-unavailable-vs-bad-response.md)
+and [#104](https://github.com/KeyserDSoze/TemporalMark/issues/104).
