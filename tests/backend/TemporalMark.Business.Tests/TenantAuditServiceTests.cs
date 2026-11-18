@@ -41,6 +41,40 @@ public sealed class TenantAuditServiceTests
         Assert.Null(saved.PeriodToUtcExclusive);
     }
 
+    [Fact]
+    public async Task ImprintSearchAuditRecordsOnlyAuthenticatedScopeNeverQueryOrMatchMetadata()
+    {
+        var repository = new FakeAuditRepository();
+        await new TenantAuditService(repository).PrepareImprintSearchAsync(
+            Tenant, "signed-oidc-sub", default);
+
+        var entry = Assert.Single(repository.Written);
+        Assert.Equal(Tenant, entry.OrganizationId);
+        Assert.Equal("signed-oidc-sub", entry.ActorSubjectId);
+        Assert.Equal(TenantAuditAction.DocumentImprintSearchPerformed, entry.Action);
+        Assert.Null(entry.ReceiptId);
+        Assert.Null(entry.PeriodFromUtc);
+        Assert.Null(entry.PeriodToUtcExclusive);
+        Assert.Equal(TimeSpan.Zero, entry.OccurredUtc.Offset);
+    }
+
+    [Fact]
+    public async Task ImprintSearchAuditRejectsInvalidScopeBeforeAppendAndFailsClosedOnWriteOutage()
+    {
+        var repository = new FakeAuditRepository();
+        var service = new TenantAuditService(repository);
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            service.PrepareImprintSearchAsync(Guid.Empty, "signed-oidc-sub", default));
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            service.PrepareImprintSearchAsync(Tenant, "bad\nactor", default));
+        Assert.Empty(repository.Written);
+
+        repository.RejectWrites = true;
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.PrepareImprintSearchAsync(Tenant, "signed-oidc-sub", default));
+        Assert.Empty(repository.Written);
+    }
+
     [Theory]
     [InlineData("")]
     [InlineData(" ")]
