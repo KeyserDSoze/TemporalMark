@@ -109,6 +109,17 @@ public sealed class ExternalRfc3161TimestampProvider(
             // non-200 success. Reject mismatched MIME *before reading any body*.
             // RFC 3161 §3.4's verified erratum 1879 confirms timestamp-reply,
             // not the mistyped timestamp-response alternative.
+            // An upstream rate-limit, timeout or maintenance status means
+            // the configured TSA could not supply a usable response. Map it
+            // to our existing generic 503 boundary WITHOUT trusting or
+            // relaying Retry-After, reading the body, or retrying the POST.
+            // We cannot infer whether the TSA already issued or billed it.
+            if (response.StatusCode is HttpStatusCode.RequestTimeout or
+                HttpStatusCode.TooManyRequests or
+                HttpStatusCode.ServiceUnavailable or
+                HttpStatusCode.GatewayTimeout)
+                throw new TimestampProviderUnavailableException(
+                    "External TSA is temporarily unavailable.");
             if (response.StatusCode != HttpStatusCode.OK)
                 throw new TimestampProviderResponseException("TSA returned an unexpected HTTP status.");
             if (!string.Equals(response.Content.Headers.ContentType?.MediaType,
