@@ -8,6 +8,10 @@ public sealed class ExportTooLargeException() : Exception("The period exceeds sy
 
 public sealed record RegistrySummary(Guid OrganizationId, long Count, DateTimeOffset FromUtc, DateTimeOffset ToUtcExclusive);
 
+public sealed record RegistryDailySummary(
+    Guid OrganizationId, DateTimeOffset FromUtc, DateTimeOffset ToUtcExclusive,
+    IReadOnlyList<RegistryDayCount> Days);
+
 /// <summary>Tenant-bound queries and an integrity-checked export of DER receipts.</summary>
 public sealed class TimestampRegistryService(ITimestampRegistry registry)
 {
@@ -34,6 +38,39 @@ public sealed class TimestampRegistryService(ITimestampRegistry registry)
         RequireTenant(organizationId);
         var count = await registry.CountAsync(organizationId, period, cancellationToken);
         return new RegistrySummary(organizationId, count, period.FromUtc, period.ToUtcExclusive);
+    }
+
+    /// <summary>One query, zero-filled per UTC day, max 31 days. Never infer
+    /// full counts from a truncated registry page or client-selected tenant.</summary>
+    public async Task<RegistryDailySummary> DailyAsync(
+        Guid organizationId, UtcPeriod period, CancellationToken cancellationToken)
+    {
+        RequireTenant(organizationId);
+        var duration = period.ToUtcExclusive - period.FromUtc;
+        if (period.FromUtc.TimeOfDay != TimeSpan.Zero ||
+            period.ToUtcExclusive.TimeOfDay != TimeSpan.Zero ||
+            duration < TimeSpan.FromDays(1) || duration > TimeSpan.FromDays(31))
+            throw new ArgumentException("Daily statistics require 1 to 31 complete UTC days.", nameof(period));
+
+        var first = DateOnly.FromDateTime(period.FromUtc.UtcDateTime);
+        var last = DateOnly.FromDateTime(period.ToUtcExclusive.UtcDateTime);
+        var groups = await registry.CountByUtcDayAsync(organizationId, period, cancellationToken);
+        // A repository or SQL scoping bug must never silently create
+        // misleading dashboard statistics outside the authorized range.
+        var counts = new Dictionary<DateOnly, long>();
+        foreach (var item in groups)
+        {
+            if (item.DateUtc < first || item.DateUtc >= last ||
+                item.Count <= 0 || !counts.TryAdd(item.DateUtc, item.Count))
+                throw new InvalidOperationException("Repository returned invalid UTC daily statistics.");
+        }
+
+        var series = new List<RegistryDayCount>((int)duration.TotalDays);
+        for (var date = first; date < last; date = date.AddDays(1))
+            series.Add(new RegistryDayCount(date, counts.GetValueOrDefault(date)));
+
+        return new RegistryDailySummary(
+            organizationId, period.FromUtc, period.ToUtcExclusive, series);
     }
 
     public async Task<IReadOnlyList<TimestampRecord>> PageAsync(
