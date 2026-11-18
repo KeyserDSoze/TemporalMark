@@ -171,8 +171,9 @@ class OfflinePeriodExportTests(unittest.TestCase):
     def test_unknown_compression_in_both_headers_fails_closed_without_traceback(self):
         member = record()["responseFile"]
         modified = self._replace_zip_compression_method(build_zip(), member, 99)
-        # RED-first #108: currently ZipFile.open raises NotImplementedError
-        # with a raw traceback, not a controlled ExportVerificationError.
+        # The old RuntimeError catch already includes NotImplementedError.
+        # The guard should still reject unknown methods via metadata before
+        # entering the decompressor, with the same generic CLI error.
         with self.assertRaises(verifier.ExportVerificationError):
             check(modified)
 
