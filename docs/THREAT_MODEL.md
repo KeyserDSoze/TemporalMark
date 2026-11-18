@@ -473,3 +473,39 @@ under parent #15. On-prem/Azure share the identical code; SQL
 registrar V015/V016 stays blocked, and the pilot remains `Unverified`,
 not a QTSP-qualified service. See [ADR 0073](../adr/0073-rfc3161-upstream-http-unavailable-vs-bad-response.md)
 and [#104](https://github.com/KeyserDSoze/TemporalMark/issues/104).
+
+## Corrupt retained TSR digest or repeated receipt IDs in registry pages/ZIP (#105, ADR 0074)
+
+The authenticated tenant admin listing endpoint previously accepted records
+whose stored DER and SHA-256 did not match, because only the receipt download
+and ZIP-writing code called `TimestampRecord.Validate()`. A compromised or
+buggy repository could therefore surface corrupt token metadata in an
+ordinary page. ZIP export also did not explicitly reject two records
+with the same ID (manifest ambiguity and duplicate `tokens/{id}.tsr`
+paths). Normal PostgreSQL primary keys prevent duplicates in an
+uncompromised table, but the application must still distrust unexpected
+repository results.
+
+`TimestampRegistryService.PageAsync` and `ExportZipAsync` now both
+prevalidate **tenant + requested UTC period**, each record's local
+`TimestampRecord.Validate()` consistency check (including SHA-256 of
+retained DER), and unique IDs **within the returned collection**, before
+returning any page or assembling ZIP bytes. A mismatch fails closed.
+This reuses shared C# code for on-prem/Azure and preserves tenant
+authorization checks in OIDC/PostgreSQL. RED-first corruption and
+duplicate-ID Business tests were actually observed failing in
+[Actions 44281759576](https://github.com/KeyserDSoze/TemporalMark/actions/runs/44281759576/attempts/1)
+(232/236 Business passed, 4 expected failures) before the minimal fix.
+
+**Residual risk:** SHA-256 matching an attacker-controlled stored hash
+is self-consistency, **not authentic immutable storage**. A malicious
+writer able to rewrite both token and hash, omit entire records, replay
+complete DB backups, or forge an otherwise valid-looking archive still
+evades these local checks. The service does not assert global
+cross-page uniqueness, an atomic export snapshot, complete arbitrary
+period exports beyond 10,000 records, independently signed manifests,
+qualified QTSP trust, legal WORM/hold, or long-term verifier custody.
+Parent #17/#15/#13 remain open; pilot records remain `Unverified`;
+WebAuthn V015/V016 registrar stop line remains enforced. See
+[ADR 0074](../adr/0074-registry-page-export-integrity-and-unique-ids.md)
+and [runbook](REGISTRY_INTEGRITY_READ_GATES.md).
