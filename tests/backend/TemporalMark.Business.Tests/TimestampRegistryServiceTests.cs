@@ -43,6 +43,53 @@ public sealed class TimestampRegistryServiceTests
     }
 
     [Fact]
+    public async Task PageForOwnerStillReturnsOneIntegrityCheckedRecord()
+    {
+        var record = MakeRecord(TenantA);
+        var page = await new TimestampRegistryService(new FakeRegistry([record])).PageAsync(
+            TenantA, Period, 0, 25, CancellationToken.None);
+        Assert.Single(page);
+        Assert.Equal(record, page[0]);
+    }
+
+    [Fact]
+    public async Task PageRejectsCorruptedStoredReceiptDigest()
+    {
+        var record = MakeRecord(TenantA) with { TokenSha256Hex = "DEADBEEF" };
+        await Assert.ThrowsAsync<DomainRuleException>(() =>
+            new TimestampRegistryService(new FakeRegistry([record])).PageAsync(
+                TenantA, Period, 0, 25, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task PageRejectsTamperedDerEvenIfStoredDigestIsUnchanged()
+    {
+        var intact = MakeRecord(TenantA);
+        var corrupt = intact with { ResponseDer = [0x30, 0x02, 0x01, 0x01] };
+        await Assert.ThrowsAsync<DomainRuleException>(() =>
+            new TimestampRegistryService(new FakeRegistry([corrupt])).PageAsync(
+                TenantA, Period, 0, 25, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task PageRejectsDuplicateIdsBeforeReturningAnyMetadata()
+    {
+        var sameId = MakeRecord(TenantA);
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            new TimestampRegistryService(new FakeRegistry([sameId, sameId])).PageAsync(
+                TenantA, Period, 0, 25, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task ExportRejectsDuplicateReceiptIdsRatherThanProducingAmbiguousZipPaths()
+    {
+        var sameId = MakeRecord(TenantA);
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            new TimestampRegistryService(new FakeRegistry([sameId, sameId]))
+                .ExportZipAsync(TenantA, Period, CancellationToken.None));
+    }
+
+    [Fact]
     public async Task ExportContainsDerAndManifestForAuthorizedTenant()
     {
         var fake = new FakeRegistry(new[] { MakeRecord(TenantA), MakeRecord(TenantB) });
