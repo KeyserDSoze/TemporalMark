@@ -13,8 +13,10 @@ namespace TemporalMark.Provisioner.Tests;
 /// </summary>
 public sealed class ReviewerMdsJwsSignatureCandidateVerifierTests
 {
-    private static readonly DateTimeOffset Now =
-        new(2026, 11, 16, 0, 0, 0, TimeSpan.Zero);
+    // Both the explicit test-clock PKIX path and IdentityModel's maintained
+    // issuer-signing-key validation must see a live disposable certificate.
+    // Fixed historic dates made the x5c leaf expire on real CI runners.
+    private static readonly DateTimeOffset Now = DateTimeOffset.UtcNow;
 
     private static Task<ReviewerMdsJwsCryptographicCandidate> CheckAsync(
         SignedBlobFixture fixture, string? jwt = null,
