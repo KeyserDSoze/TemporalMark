@@ -169,6 +169,11 @@ public sealed class ExternalRfc3161TimestampProvider(
                     signerCertificate, approvedRoot, token.AsSignedCms().Certificates,
                     reviewedIssuerCrl, reviewedIntermediateIssuerCrl, signedGenTime,
                     rootCrlFloor, intermediateCrlFloor);
+                // The TSA's CMS-signed RFC3161 TSTInfo.accuracy is an
+                // asserted uncertainty, not an independently proved
+                // UTC(k) measurement. Strict pilot: present and <= 1s.
+                ExternalRfc3161SignedAccuracyPolicy.ValidateVerifiedTokenInfo(
+                    token.TokenInfo);
             }
             catch (CryptographicException)
             {
