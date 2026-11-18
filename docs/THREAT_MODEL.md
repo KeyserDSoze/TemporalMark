@@ -686,3 +686,43 @@ approved privileged enrollment and CAB/AgID qualification. See
 [ADR 0079](../adr/0079-tenant-utc-daily-dashboard-counts.md),
 [operator guide](DAILY_DASHBOARD_UTC_COUNTS.md), child #110 and open
 parents #14/#17/#13. No bypass to WebAuthn V015/V016.
+
+## Stale tenant/period data and first-50-only registry browsing (#111; ADR 0080)
+
+The authenticated admin dashboard used to render only the first 50
+timestamps even when `/stamps/summary` reported more records; later
+receipts could not be selected for individual download via the
+browser. The existing .NET/PostgreSQL endpoint already had bounded
+`offset,limit` and SQL predicates `organization_id=@org`,
+`issued_utc>=@start` and `issued_utc<@end`. The frontend now
+makes explicit 50-row offset requests with labelled Next/Previous
+buttons, resetting offset when dates or the active access token
+change. Page counting is based on the separately authorized total,
+never on a tenant-supplied selector.
+
+**Asynchronous response ordering:** overlapping React fetches for
+different UTC intervals, page offsets or bearer tokens can finish out
+of order. An old in-flight result could otherwise restore the wrong
+page or retain previous tenant metadata visually after a new
+authenticated session. A per-component monotonically increasing
+request generation commits complete list/summary/daily/audit payloads
+only when they belong to the latest load, and an access-token-linked
+presentation gate hides previous session data. Invalid or failed
+loads do not leave prior tenant records on screen. This does not
+replace signed OIDC verification, live DB membership enforcement,
+production RLS, MFA step-up or independent IdP role revocation.
+
+**Tests and residual risk:** a real signed-Keycloak/two-tenant
+PostgreSQL HTTP canary tests offset and limit bounds and tenant spoof
+rejection. A separate authenticated browser fixture **mocks only
+list/summary responses after real OIDC checks** to test 51 synthetic
+rows, forward/back paging and late old-page responses. Mocked UI
+paging does not establish SQL isolation or malicious-server
+resistance. Offset pagination is not a stable point-in-time snapshot:
+concurrent inserts/deletes can shift rows between pages. Full export
+coverage requires signed high-water manifests and immutable custody
+under still-open #17. Pilot stamps remain `Unverified` and
+legal QTSP qualification/CAB #15/#13, production RLS/tenant approval
+#14/#23 and WebAuthn V015/V016 interlocks remain unresolved.
+See [ADR 0080](../adr/0080-admin-tenant-registry-pagination-and-stale-request-gate.md),
+[runbook](REGISTRY_PAGINATION_UI.md), issue #111.
