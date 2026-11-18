@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Download, FileClock, LockKeyhole, RefreshCw, FileUp } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Badge } from "./components/ui/badge";
@@ -19,6 +19,8 @@ interface AuditItem {
   occurredUtc: string; receiptId: string | null;
   periodFromUtc: string | null; periodToUtcExclusive: string | null;
 }
+const REGISTRY_PAGE_SIZE = 50;
+
 function utcDateDaysAgo(days: number) {
   const value = new Date();
   value.setUTCDate(value.getUTCDate() - days);
@@ -42,6 +44,12 @@ export default function Dashboard({ accessToken }: { accessToken: string }) {
   const [daily, setDaily] = useState<DailySummary | null>(null);
   const [dailyRangeTooWide, setDailyRangeTooWide] = useState(false);
   const [records, setRecords] = useState<RegistryItem[]>([]);
+  const [registryOffset, setRegistryOffset] = useState(0);
+  // Results are only renderable under the access token which fetched them.
+  // The monotonically increasing generation prevents older async requests
+  // (old dates/page/token) from overwriting a later, authorized response.
+  const [loadedToken, setLoadedToken] = useState<string | null>(null);
+  const loadGeneration = useRef(0);
   const [auditEvents, setAuditEvents] = useState<AuditItem[]>([]);
   const [auditHasMore, setAuditHasMore] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -61,39 +69,72 @@ export default function Dashboard({ accessToken }: { accessToken: string }) {
   }, [accessToken, t]);
 
   const load = useCallback(async () => {
+    const generation = ++loadGeneration.current;
     setBusy(true);
+    setLoadedToken(null); // never display a previous period or session while loading
     setError("");
     try {
       const period = bounds(from, to);
-      // The daily query deliberately accepts only 1..31 complete UTC days.
-      // Longer periods keep the existing full summary/list/audit functional.
+      // Only 1..31 complete UTC days are allowed for the *optional* chart.
+      // The exact total, registry list, audit and ZIP remain available.
       const daySpan = Math.round(
         (Date.parse(to + "T00:00:00.000Z") - Date.parse(from + "T00:00:00.000Z")) / 86_400_000) + 1;
       const showDaily = daySpan >= 1 && daySpan <= 31;
       const [me, count, list, audit, dailyResult] = await Promise.all([
-        get("me"), get("stamps/summary?" + period), get("stamps?" + period + "&limit=50"),
+        get("me"), get("stamps/summary?" + period),
+        get("stamps?" + period + "&offset=" + registryOffset + "&limit=" + REGISTRY_PAGE_SIZE),
         get("audit?" + period + "&limit=20"),
         showDaily ? get("stamps/daily?" + period) : Promise.resolve(null)
       ]);
-      setTenant(await me.json() as TenantInfo);
-      setSummary(await count.json() as Summary);
-      setDaily(dailyResult ? await dailyResult.json() as DailySummary : null);
+      const [nextTenant, nextSummary, nextRecords, nextAudit, nextDaily] = await Promise.all([
+        me.json() as Promise<TenantInfo>, count.json() as Promise<Summary>,
+        list.json() as Promise<RegistryItem[]>, audit.json() as Promise<AuditItem[]>,
+        dailyResult ? dailyResult.json() as Promise<DailySummary> : Promise.resolve(null)
+      ]);
+      if (generation !== loadGeneration.current) return;
+      if (nextTenant.organizationId !== nextSummary.organizationId ||
+          (nextDaily && nextDaily.organizationId !== nextTenant.organizationId) ||
+          !Number.isSafeInteger(nextSummary.count) || nextSummary.count < 0 ||
+          !Array.isArray(nextRecords) || nextRecords.length > REGISTRY_PAGE_SIZE ||
+          !Array.isArray(nextAudit) || nextAudit.length > 20)
+        throw new Error(t("error"));
+      // Commit the whole batch at once. Never mix two date/token/page views.
+      setTenant(nextTenant);
+      setSummary(nextSummary);
+      setDaily(nextDaily);
       setDailyRangeTooWide(!showDaily);
-      setRecords(await list.json() as RegistryItem[]);
-      const auditPage = await audit.json() as AuditItem[];
-      setAuditEvents(auditPage);
-      setAuditHasMore(auditPage.length === 20);
+      setRecords(nextRecords);
+      setAuditEvents(nextAudit);
+      setAuditHasMore(nextAudit.length === 20);
+      setLoadedToken(accessToken);
     } catch (exception) {
+      if (generation !== loadGeneration.current) return;
+      setTenant(null);
+      setSummary(null);
       setDaily(null);
+      setRecords([]);
+      setAuditEvents([]);
+      setAuditHasMore(false);
       setDailyRangeTooWide(false);
+      setLoadedToken(null);
       setError(exception instanceof Error && exception.message === "date" ? t("dateError") :
         exception instanceof Error ? exception.message : t("error"));
     } finally {
-      setBusy(false);
+      if (generation === loadGeneration.current) setBusy(false);
     }
-  }, [from, to, get, t]);
+  }, [from, to, registryOffset, accessToken, get, t]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    // Invalidate requests on effect cleanup, including logout/unmount.
+    void load();
+    return () => { loadGeneration.current += 1; };
+  }, [load]);
+
+  useEffect(() => {
+    setRegistryOffset(0);
+    setSelectedFile(null);
+    setIssueMessage("");
+  }, [accessToken]);
 
   const download = async () => {
     setExporting(true);
@@ -165,17 +206,20 @@ export default function Dashboard({ accessToken }: { accessToken: string }) {
   };
 
   const loadMoreAudit = async () => {
+    const generation = loadGeneration.current;
     setBusy(true);
     setError("");
     try {
       const response = await get("audit?" + bounds(from, to) + "&offset=" + auditEvents.length + "&limit=20");
       const page = await response.json() as AuditItem[];
+      if (generation !== loadGeneration.current) return;
       setAuditEvents(previous => [...previous, ...page]);
       setAuditHasMore(page.length === 20);
     } catch (exception) {
-      setError(exception instanceof Error ? exception.message : t("error"));
+      if (generation === loadGeneration.current)
+        setError(exception instanceof Error ? exception.message : t("error"));
     } finally {
-      setBusy(false);
+      if (generation === loadGeneration.current) setBusy(false);
     }
   };
 
@@ -190,19 +234,28 @@ export default function Dashboard({ accessToken }: { accessToken: string }) {
     AffectedByIncident: t("affected")
   }[state] ?? t("unverified"));
 
+  const sessionReady = loadedToken === accessToken;
+  const currentTenant = sessionReady ? tenant : null;
+  const currentSummary = sessionReady ? summary : null;
+  const currentDaily = sessionReady ? daily : null;
+  const currentDailyRangeTooWide = sessionReady && dailyRangeTooWide;
+  const currentRecords = sessionReady ? records : [];
+  const currentAuditEvents = sessionReady ? auditEvents : [];
+  const currentAuditHasMore = sessionReady && auditHasMore;
+
   return <div className="space-y-6">
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-      <Card><CardHeader><div className="flex items-center gap-2 text-sm text-muted-foreground"><FileClock size={17} /> {t("totals")}</div></CardHeader><CardContent><div className="text-4xl font-bold tabular-nums">{busy ? "…" : (summary ? summary.count.toLocaleString(i18n.language) : "—")}</div></CardContent></Card>
-      <Card><CardHeader><div className="flex items-center gap-2 text-sm text-muted-foreground"><LockKeyhole size={17} /> {t("organization")}</div></CardHeader><CardContent><div className="break-all text-sm font-semibold">{tenant?.organizationId ?? "—"}</div><p className="mt-1 text-xs text-muted-foreground">{tenant?.role ?? "—"}</p></CardContent></Card>
-      <Card><CardHeader><div className="text-sm text-muted-foreground">{t("technicalStatus")}</div></CardHeader><CardContent><Badge className="text-amber-700 dark:text-amber-300">{t("servicePaused")}</Badge><p className="mt-2 text-xs text-muted-foreground">{tenant?.qualificationState ?? "NOT_QUALIFIED"}</p></CardContent></Card>
+      <Card><CardHeader><div className="flex items-center gap-2 text-sm text-muted-foreground"><FileClock size={17} /> {t("totals")}</div></CardHeader><CardContent><div className="text-4xl font-bold tabular-nums">{busy ? "…" : (currentSummary ? currentSummary.count.toLocaleString(i18n.language) : "—")}</div></CardContent></Card>
+      <Card><CardHeader><div className="flex items-center gap-2 text-sm text-muted-foreground"><LockKeyhole size={17} /> {t("organization")}</div></CardHeader><CardContent><div className="break-all text-sm font-semibold">{currentTenant?.organizationId ?? "—"}</div><p className="mt-1 text-xs text-muted-foreground">{currentTenant?.role ?? "—"}</p></CardContent></Card>
+      <Card><CardHeader><div className="text-sm text-muted-foreground">{t("technicalStatus")}</div></CardHeader><CardContent><Badge className="text-amber-700 dark:text-amber-300">{t("servicePaused")}</Badge><p className="mt-2 text-xs text-muted-foreground">{currentTenant?.qualificationState ?? "NOT_QUALIFIED"}</p></CardContent></Card>
     </div>
 
     <Card>
       <CardHeader><h2 className="text-lg font-semibold">{t("period")}</h2></CardHeader>
       <CardContent>
         <div className="flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-end">
-          <label className="flex flex-1 flex-col gap-1 text-sm sm:max-w-48"><span className="text-muted-foreground">{t("from")}</span><input className="h-10 rounded-lg border border-border bg-background px-3" type="date" value={from} onChange={event => setFrom(event.target.value)} /></label>
-          <label className="flex flex-1 flex-col gap-1 text-sm sm:max-w-48"><span className="text-muted-foreground">{t("until")}</span><input className="h-10 rounded-lg border border-border bg-background px-3" type="date" value={to} onChange={event => setTo(event.target.value)} /></label>
+          <label className="flex flex-1 flex-col gap-1 text-sm sm:max-w-48"><span className="text-muted-foreground">{t("from")}</span><input className="h-10 rounded-lg border border-border bg-background px-3" type="date" value={from} onChange={event => { setFrom(event.target.value); setRegistryOffset(0); setLoadedToken(null); }} /></label>
+          <label className="flex flex-1 flex-col gap-1 text-sm sm:max-w-48"><span className="text-muted-foreground">{t("until")}</span><input className="h-10 rounded-lg border border-border bg-background px-3" type="date" value={to} onChange={event => { setTo(event.target.value); setRegistryOffset(0); setLoadedToken(null); }} /></label>
           <Button variant="outline" disabled={busy} onClick={() => void load()}><RefreshCw size={16} />{t("apply")}</Button>
           <Button disabled={exporting || busy} onClick={() => void download()}><Download size={16} />{exporting ? t("exportBusy") : t("export")}</Button>
         </div>
@@ -215,11 +268,11 @@ export default function Dashboard({ accessToken }: { accessToken: string }) {
         <p className="text-xs text-muted-foreground">{t("dailyNotQualified")}</p>
       </CardHeader>
       <CardContent>
-        {dailyRangeTooWide ?
+        {currentDailyRangeTooWide ?
           <p className="text-sm text-muted-foreground">{t("dailyRangeLimit")}</p> :
-          daily ? <div className="flex gap-2 overflow-x-auto pb-2" role="group" aria-label={t("dailyTrend")}>
-            {daily.days.map(day => {
-              const highest = Math.max(1, ...daily.days.map(entry => entry.count));
+          currentDaily ? <div className="flex gap-2 overflow-x-auto pb-2" role="group" aria-label={t("dailyTrend")}>
+            {currentDaily.days.map(day => {
+              const highest = Math.max(1, ...currentDaily.days.map(entry => entry.count));
               const barHeight = day.count === 0 ? "2px" :
                 Math.max(3, Math.round(day.count / highest * 100)) + "%";
               return <div key={day.dateUtc} className="flex min-w-[32px] flex-1 flex-col items-center gap-1"
@@ -261,14 +314,35 @@ export default function Dashboard({ accessToken }: { accessToken: string }) {
     <Card>
       <CardHeader><h2 className="text-lg font-semibold">{t("records")}</h2></CardHeader>
       <CardContent>
-        {records.length === 0 ? <p className="py-10 text-center text-muted-foreground">{busy ? t("loading") : t("noResults")}</p> :
+        {currentRecords.length === 0 ? <p className="py-10 text-center text-muted-foreground">{busy ? t("loading") : t("noResults")}</p> :
           <div className="overflow-x-auto">
             <table className="w-full min-w-[640px] text-left text-sm">
               <thead><tr className="border-b border-border text-muted-foreground"><th className="pb-3 font-medium">{t("issued")}</th><th className="pb-3 font-medium">{t("provider")}</th><th className="pb-3 font-medium">{t("digest")}</th><th className="pb-3 font-medium">{t("status")}</th><th className="pb-3 font-medium">{t("actions")}</th></tr></thead>
-              <tbody>{records.map(record => <tr className="border-b border-border/50" key={record.id}><td className="py-4 pr-4 whitespace-nowrap">{new Date(record.issuedUtc).toLocaleString(i18n.language, { timeZone: "UTC" })}</td><td className="py-4 pr-4">{record.providerId}</td><td className="max-w-[220px] truncate py-4 pr-4 font-mono text-xs" title={record.digestBase64}>{record.digestBase64}</td><td className="py-4"><Badge>{labelFor(record.validationState)}</Badge></td><td className="py-4"><Button size="sm" variant="outline" aria-label={t("downloadReceipt")} onClick={() => void downloadReceipt(record.id)}><Download size={15} />{t("downloadReceipt")}</Button></td></tr>)}</tbody>
+              <tbody>{currentRecords.map(record => <tr className="border-b border-border/50" key={record.id}><td className="py-4 pr-4 whitespace-nowrap">{new Date(record.issuedUtc).toLocaleString(i18n.language, { timeZone: "UTC" })}</td><td className="py-4 pr-4">{record.providerId}</td><td className="max-w-[220px] truncate py-4 pr-4 font-mono text-xs" title={record.digestBase64}>{record.digestBase64}</td><td className="py-4"><Badge>{labelFor(record.validationState)}</Badge></td><td className="py-4"><Button size="sm" variant="outline" aria-label={t("downloadReceipt")} onClick={() => void downloadReceipt(record.id)}><Download size={15} />{t("downloadReceipt")}</Button></td></tr>)}</tbody>
             </table>
           </div>}
-        {summary && summary.count > 50 && <p className="mt-4 text-xs text-muted-foreground">50 / {summary.count}</p>}
+        {currentSummary && (currentSummary.count > REGISTRY_PAGE_SIZE || registryOffset > 0) &&
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+            <p role="status" className="text-xs tabular-nums text-muted-foreground">
+              {t("registryPageStatus", {
+                start: currentRecords.length > 0 ? registryOffset + 1 : 0,
+                end: registryOffset + currentRecords.length,
+                total: currentSummary.count
+              })}
+            </p>
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" disabled={busy || registryOffset === 0}
+                onClick={() => setRegistryOffset(value => Math.max(0, value - REGISTRY_PAGE_SIZE))}>
+                {t("registryPrevious")}
+              </Button>
+              <Button variant="outline" size="sm"
+                disabled={busy || currentRecords.length < REGISTRY_PAGE_SIZE ||
+                  registryOffset + currentRecords.length >= currentSummary.count}
+                onClick={() => setRegistryOffset(value => value + REGISTRY_PAGE_SIZE)}>
+                {t("registryNext")}
+              </Button>
+            </div>
+          </div>}
       </CardContent>
     </Card>
     <Card>
@@ -277,7 +351,7 @@ export default function Dashboard({ accessToken }: { accessToken: string }) {
         <p className="text-xs text-muted-foreground">{t("auditDisclaimer")}</p>
       </CardHeader>
       <CardContent>
-        {auditEvents.length === 0 ?
+        {currentAuditEvents.length === 0 ?
           <p className="py-6 text-center text-sm text-muted-foreground">{busy ? t("loading") : t("auditEmpty")}</p> :
           <div className="overflow-x-auto">
             <table className="w-full min-w-[620px] text-left text-sm" aria-label={t("auditHistory")}>
@@ -287,7 +361,7 @@ export default function Dashboard({ accessToken }: { accessToken: string }) {
                 <th className="pb-3 font-medium">{t("auditActor")}</th>
                 <th className="pb-3 font-medium">{t("auditTarget")}</th>
               </tr></thead>
-              <tbody>{auditEvents.map(entry =>
+              <tbody>{currentAuditEvents.map(entry =>
                 <tr key={entry.id} className="border-b border-border/50">
                   <td className="whitespace-nowrap py-3 pr-4">{new Date(entry.occurredUtc).toLocaleString(i18n.language, { timeZone: "UTC" })}</td>
                   <td className="py-3 pr-4">{auditActionLabel(entry.action)}</td>
@@ -299,7 +373,7 @@ export default function Dashboard({ accessToken }: { accessToken: string }) {
                 </tr>)}</tbody>
             </table>
           </div>}
-        {auditHasMore && <Button className="mt-4" disabled={busy} variant="outline" onClick={() => void loadMoreAudit()}>{t("auditMore")}</Button>}
+        {currentAuditHasMore && <Button className="mt-4" disabled={busy} variant="outline" onClick={() => void loadMoreAudit()}>{t("auditMore")}</Button>}
       </CardContent>
     </Card>
   </div>;
