@@ -35,6 +35,20 @@ test("development tenant administrator authenticates and sees own registry", asy
   await page.getByRole("button", { name: "Applica filtri" }).click();
   await expect(page.getByText(/Il grafico giornaliero mostra fino a 31 giorni UTC/)).toBeVisible();
   await expect(page.getByText("Nessuna marca registrata nel periodo selezionato.")).toBeVisible();
+
+  // Restore a UTC window containing *now* before asserting the audit event
+  // produced by the next ZIP export. The long-range January/March filter
+  // deliberately excludes that event in a November runner; that is correct
+  // audit filtering, not a product bug. Do not weaken the audit predicate.
+  const utcToday = new Date();
+  const utcFrom = new Date(utcToday);
+  utcFrom.setUTCDate(utcFrom.getUTCDate() - 29);
+  await page.locator('input[type="date"]').nth(0).fill(utcFrom.toISOString().slice(0, 10));
+  await page.locator('input[type="date"]').nth(1).fill(utcToday.toISOString().slice(0, 10));
+  await page.getByRole("button", { name: "Applica filtri" }).click();
+  await expect(chart).toBeVisible();
+  await expect(chart.getByRole("img")).toHaveCount(30);
+
   // Exporting an empty registry is still a tenant-sensitive operation.
   const download = page.waitForEvent("download");
   await page.getByRole("button", { name: "Esporta ZIP del periodo" }).click();
