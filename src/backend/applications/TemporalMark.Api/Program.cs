@@ -178,7 +178,8 @@ api.MapGet("/stamps/daily", async Task<IResult> (
 // Read-only POST avoids leaking document imprints in URL access logs.
 api.MapPost("/stamps/search", async Task<IResult> (
     StampSearchRequest input, HttpContext http, ClaimsPrincipal user,
-    ITenantAuthorization access, TimestampRegistryService registry, CancellationToken ct) =>
+    ITenantAuthorization access, TimestampRegistryService registry, TenantAuditService audit,
+    CancellationToken ct) =>
 {
     var tenant = await TenantAdminAsync(user, access, ct);
     if (!tenant.HasValue) return Results.Forbid();
@@ -188,6 +189,9 @@ api.MapPost("/stamps/search", async Task<IResult> (
             tenant.Value,
             new UtcPeriod(input.FromUtc, input.ToUtcExclusive),
             input.DigestSha256Hex, input.Offset, input.Limit, ct);
+        // Persist lookup audit before returning any sensitive result. DB failure => no matches.
+        // Never copy the searched imprint, matched IDs or match counts into audit.
+        await audit.PrepareImprintSearchAsync(tenant.Value, user.FindFirstValue("sub")!, ct);
         http.Response.Headers.CacheControl = "no-store";
         return Results.Ok(new
         {
