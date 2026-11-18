@@ -43,6 +43,28 @@ public sealed class ReviewerMdsJwsSignatureCandidateVerifierTests
     }
 
     [Fact]
+    public void DisposablePositiveSignerX5cCertificateIsValidAtRealUtcRuntime()
+    {
+        // RED-first #102. The maintained JsonWebTokenHandler validates the
+        // real X509 signer at runner time as well as our explicit test-clock
+        // custom-root chain; a frozen 2026-11-16 positive fixture will expire.
+        // This is disposable test PKI only, NOT a trusted FIDO MDS root.
+        using var fixture = new SignedBlobFixture(Now);
+        var compact = fixture.Token();
+        using var protectedHeader = JsonDocument.Parse(
+            SignedBlobFixture.FromBase64Url(compact.Split('.')[0]));
+        var leafDer = Convert.FromBase64String(
+            protectedHeader.RootElement.GetProperty("x5c")[0].GetString()!);
+        using var leaf = X509CertificateLoader.LoadCertificate(leafDer);
+        var utcNow = DateTime.UtcNow;
+
+        Assert.True(leaf.NotBefore.ToUniversalTime() <= utcNow,
+            "Disposable positive JWS signer is not yet valid at runtime UTC.");
+        Assert.True(leaf.NotAfter.ToUniversalTime() >= utcNow.AddHours(1),
+            "Disposable positive JWS signer has expired or is about to expire at runtime UTC.");
+    }
+
+    [Fact]
     public async Task PayloadOrSignatureTamperingDeniesByRealJwtSignatureVerification()
     {
         using var fixture = new SignedBlobFixture(Now);
