@@ -6,7 +6,8 @@ namespace TemporalMark.Domain.Audit;
 public enum TenantAuditAction
 {
     PeriodExportPrepared = 1,
-    ReceiptDownloadPrepared = 2
+    ReceiptDownloadPrepared = 2,
+    DocumentImprintSearchPerformed = 3
 }
 
 /// <summary>No source documents, timestamps or token bytes in the audit metadata.</summary>
@@ -43,6 +44,10 @@ public sealed record TenantAuditEntry(
                 if (ReceiptId is null || ReceiptId == Guid.Empty ||
                     PeriodFromUtc is not null || PeriodToUtcExclusive is not null)
                     throw new DomainRuleException("Receipt download requires only a receipt ID.");
+                break;
+            case TenantAuditAction.DocumentImprintSearchPerformed:
+                if (ReceiptId is not null || PeriodFromUtc is not null || PeriodToUtcExclusive is not null)
+                    throw new DomainRuleException("Imprint search audit must not contain receipt, query, period or result metadata.");
                 break;
             default:
                 throw new DomainRuleException("Unrecognized audit action.");
