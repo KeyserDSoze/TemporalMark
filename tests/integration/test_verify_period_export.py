@@ -93,7 +93,7 @@ class OfflinePeriodExportTests(unittest.TestCase):
 
             # Corrupt the DER while retaining the original stored hash.
             path.write_bytes(build_zip(files=[
-                (record()["responseFile"], b"\\x30\\x02\\x01\\x01")]))
+                (record()["responseFile"], b"\x30\x02\x01\x01")]))
             output, errors = io.StringIO(), io.StringIO()
             with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
                 exit_code = verifier.main([str(path)])
@@ -150,12 +150,12 @@ class OfflinePeriodExportTests(unittest.TestCase):
         with zipfile.ZipFile(io.BytesIO(raw)) as archive:
             member = archive.getinfo(name)
             loc = member.header_offset
-            assert modified[loc:loc+4] == b"PK\\x03\\x04"
+            assert modified[loc:loc+4] == b"PK\x03\x04"
             struct.pack_into("<H", modified, loc + 8, method)
         position = 0
         found = False
         while True:
-            position = modified.find(b"PK\\x01\\x02", position)
+            position = modified.find(b"PK\x01\x02", position)
             if position == -1:
                 break
             name_len, extra_len, comment_len = struct.unpack_from("<HHH", modified, position + 28)
