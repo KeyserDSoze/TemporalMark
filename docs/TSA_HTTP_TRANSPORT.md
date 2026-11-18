@@ -432,3 +432,44 @@ four jobs SUCCESS and real test logs checked; parent #15 stays open.
 
 Sources: [Microsoft .NET Base64 decoder](https://learn.microsoft.com/en-us/dotnet/api/system.convert.frombase64string?view=net-10.0),
 [RFC 4648 §3.5](https://www.rfc-editor.org/rfc/rfc4648#section-3.5).
+
+## Upstream TSA HTTP overload/timeout status handling (#104; ADR 0073)
+
+The delegated **unqualified** RFC3161 provider still accepts a timestamp
+response **only** from `200 OK` with `application/timestamp-reply` and valid
+DER/CMS/signature, nonce/imprint, operator signer/policy/PKIX/CRL, signed
+time/accuracy and strict extension profile. The additional narrow
+**transport failure classification** is applied *before reading the
+HTTP content body*:
+
+| Upstream HTTP response | Pilot exception | Authenticated API HTTP |
+| --- | --- | --- |
+| 408 Request Timeout; 429 Too Many Requests; 503 Service Unavailable; 504 Gateway Timeout | `TimestampProviderUnavailableException` — fixed generic text | 503 |
+| All other non-200 codes, including 400/401/403/404/500/502, redirects and unexpected 2xx | `TimestampProviderResponseException` — generic unexpected-status text | 502 |
+| 200 with wrong/missing `application/timestamp-reply` | `TimestampProviderResponseException` | 502 |
+
+These classifications reflect [RFC 9110](https://www.rfc-editor.org/rfc/rfc9110)
+and [RFC 6585 §4](https://www.rfc-editor.org/rfc/rfc6585#section-4),
+but are **TemporalMark pilot API choices**, not a universal RFC3161
+HTTP response-to-error mapping. Never read, parse, log or forward the
+body, reason phrase or untrusted `Retry-After` when the status is rejected.
+
+**Do not retry automatically** on 429/503/504/408. An upstream TSA
+might already have processed or billed the POST before signalling
+unavailability; a blind retry can create duplicate issuance or charges.
+The response is an operator/client-facing error, **not** proof of
+non-issuance or a quota ledger. The downstream HTTP 503 does **not**
+mean the tenant exceeded a local TemporalMark rate limit. Implement
+independent authenticated idempotency, reconciliation and quotas
+separately under parent #15, with explicit operator-approved policy.
+All existing on-prem/Azure transport and WebAuthn V015/V016 interlocks
+remain unchanged; evidence `Unverified` and parent #15/#17/#13 open.
+
+ADR [0073](../adr/0073-rfc3161-upstream-http-unavailable-vs-bad-response.md)
+precedes RED-first tests
+`ExternalRfc3161ResponseEnvelopeTests` SHA `3c955a0` and minimal
+provider-only fix SHA `59c7d97`. The xUnit tests use real provider
+request validation plus throw-on-read content to verify overload and
+unexpected error statuses before consuming DER. **Only actual
+GitHub Actions logs may establish RED/GREEN.** Close [#104](https://github.com/KeyserDSoze/TemporalMark/issues/104)
+after the last documentation-inclusive `main` HEAD's 4/4 CI is observed.
