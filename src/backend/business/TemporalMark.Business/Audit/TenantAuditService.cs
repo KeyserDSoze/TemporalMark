@@ -33,6 +33,18 @@ public sealed class TenantAuditService(ITenantAuditRepository repository)
         return repository.AppendAsync(entry, cancellationToken);
     }
 
+    /// <summary>Records an authorized lookup, not whether a document matched or was downloaded.</summary>
+    public Task PrepareImprintSearchAsync(
+        Guid organizationId, string actorSubjectId, CancellationToken cancellationToken)
+    {
+        RequireInputs(organizationId, actorSubjectId);
+        var entry = new TenantAuditEntry(Guid.NewGuid(), organizationId, actorSubjectId,
+            TenantAuditAction.DocumentImprintSearchPerformed, DateTimeOffset.UtcNow,
+            null, null, null);
+        entry.Validate();
+        return repository.AppendAsync(entry, cancellationToken);
+    }
+
     public async Task<IReadOnlyList<TenantAuditEntry>> PageAsync(
         Guid organizationId, UtcPeriod period, int offset, int limit, CancellationToken cancellationToken)
     {
