@@ -9,6 +9,9 @@ public sealed record RegistryDayCount(DateOnly DateUtc, long Count);
 public interface ITimestampRegistry
 {
     Task<TimestampRecord?> FindByIdAsync(Guid organizationId, Guid recordId, CancellationToken cancellationToken);
+    Task<IReadOnlyList<TimestampRecord>> SearchByDigestAsync(
+        Guid organizationId, UtcPeriod period, string digestBase64,
+        int offset, int maxResults, CancellationToken cancellationToken);
     Task<long> CountAsync(Guid organizationId, UtcPeriod period, CancellationToken cancellationToken);
     Task<IReadOnlyList<RegistryDayCount>> CountByUtcDayAsync(
         Guid organizationId, UtcPeriod period, CancellationToken cancellationToken);
