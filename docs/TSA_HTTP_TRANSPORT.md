@@ -362,3 +362,33 @@ caller cancellation during a body read. These source changes are **not
 yet an independently observed test success**; #99 stays OPEN pending
 full four-job CI on the exact documentation-inclusive `main` SHA.
 Same Azure/on-prem behavior; no additional settings or qualified trust.
+
+### Prematurely closed TSA response streams (#99, ADR 0068 amendment)
+
+An upstream HTTP content body can be **disposed before the stream is acquired**
+or **after only a prefix of the DER response has been read**. In .NET this
+may throw `ObjectDisposedException`, which **does not derive from**
+`IOException`; the earlier socket I/O/cancellation catches alone do not
+normalize it. The delegated provider now maps only non-caller-cancelled
+`ObjectDisposedException` to the same fixed `TimestampProviderUnavailableException`
+used for interrupted streams. The API returns a generic 503 instead of
+propagating raw object/socket details. It neither stores a truncated
+timestamp nor claims the remote TSA did not issue one. The original
+caller-cancellation token is checked before this normalization so the
+provider never converts a caller-aborted request into a fabricated outage.
+
+The test-only `FaultContent` returns a disposed-stream exception during
+`ReadAsStreamAsync` and another after a valid two-byte ASN.1 prefix;
+both must fail closed without raw diagnostic text, alongside the existing
+IOException, upstream `OperationCanceledException` and explicit-caller-
+cancellation regressions. Source sequence: ADR 0068 amended
+[`ed2ef57`](https://github.com/KeyserDSoze/TemporalMark/commit/ed2ef57cdda3b4bb54a1eeea5d83fa743674f780)
+**before** RED-first tests
+[`a765864`](https://github.com/KeyserDSoze/TemporalMark/commit/a7658644c4f5171cc4dbd1964ea66c201d47cd69);
+minimal code
+[`f503806`](https://github.com/KeyserDSoze/TemporalMark/commit/f503806fc38b7eaf61cc2c1e659d6a4d72f8ae71).
+This is not independently confirmed by a .NET CI run yet;
+keep #99 OPEN pending exact final documentation-inclusive HEAD 4/4
+backend/frontend/docker-smoke/terraform GREEN. Do not retry blindly
+when upstream issuance outcome is unknown. No QTSP-qualified status,
+new on-prem/Azure divergence or tenant-controlled setting is introduced.
