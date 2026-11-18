@@ -67,6 +67,27 @@ public sealed class ExternalRfc3161SignedAccuracyPolicyTests
             ExternalRfc3161SignedAccuracyPolicy.ValidateVerifiedTokenInfo(decoded));
     }
 
+    [Fact]
+    public void NullTokenInfoFailsClosedBeforeAccessingUntrustedData()
+    {
+        Assert.Throws<TimestampProviderResponseException>(() =>
+            ExternalRfc3161SignedAccuracyPolicy.ValidateVerifiedTokenInfo(null));
+    }
+
+    [Fact]
+    public void ActualDerTstInfoWithClaimAboveOneSecondIsRejected()
+    {
+        var unsignedInfo = CreateInfo(1_000_001L);
+        var encoded = unsignedInfo.Encode();
+        Assert.True(Rfc3161TimestampTokenInfo.TryDecode(
+            encoded, out var decoded, out var consumed));
+        Assert.Equal(encoded.Length, consumed);
+        Assert.NotNull(decoded);
+        Assert.Equal(1_000_001L, decoded.AccuracyInMicroseconds);
+        Assert.Throws<TimestampProviderResponseException>(() =>
+            ExternalRfc3161SignedAccuracyPolicy.ValidateVerifiedTokenInfo(decoded));
+    }
+
     private static Rfc3161TimestampTokenInfo CreateInfo(long? accuracy) => new(
         new Oid("1.3.6.1.4.1.4146.2.2"),
         new Oid("2.16.840.1.101.3.4.2.1"),
