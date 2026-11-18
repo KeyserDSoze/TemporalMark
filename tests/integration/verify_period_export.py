@@ -12,6 +12,7 @@ import hashlib
 import json
 import re
 import stat
+import struct
 import sys
 import uuid
 import zipfile
@@ -108,6 +109,25 @@ def read_bounded(zipped: zipfile.ZipFile, info: zipfile.ZipInfo,
     return data
 
 
+def require_local_central_metadata_match(
+        zipped: zipfile.ZipFile, info: zipfile.ZipInfo) -> None:
+    """Check two ZIP views before any member is decompressed (ADR 0078).
+
+    Python ZipFile.open() binds local filename to central filename but does
+    not compare local compression/flags to the central ZipInfo. Deliberately
+    read only a 30-byte fixed header; never extract member paths.
+    """
+    offset = info.header_offset
+    require(isinstance(offset, int) and 0 <= offset <= MAX_ARCHIVE - 30)
+    require(zipped.fp is not None)
+    zipped.fp.seek(offset)
+    header = zipped.fp.read(30)
+    require(len(header) == 30 and header[:4] == b"PK\x03\x04")
+    local_flags, local_method = struct.unpack_from("<HH", header, 6)
+    require(local_flags == info.flag_bits and
+            local_method == info.compress_type)
+
+
 def archive_bytes(source: object) -> int:
     if isinstance(source, (str, Path)):
         return Path(source).stat().st_size
@@ -130,6 +150,7 @@ def verify_archive(source: object) -> int:
             require("manifest.json" in names)
             require(not zipped.comment)
             for info in infos:
+                require_local_central_metadata_match(zipped, info)
                 require(not info.is_dir())
                 require(not (info.flag_bits & 0x1))  # no encrypted members
                 # Current .NET v1 exports regular files using STORE/DEFLATE.
