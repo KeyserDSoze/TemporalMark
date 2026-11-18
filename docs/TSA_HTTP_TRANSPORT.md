@@ -339,3 +339,26 @@ dotnet test tests/backend/TemporalMark.Provisioner.Tests/TemporalMark.Provisione
 ```
 
 References: [ADR 0069](../adr/0069-rfc3161-signed-tstinfo-extension-interoperability.md), [RFC3161 §2.4.2](https://www.rfc-editor.org/rfc/rfc3161#section-2.4.2), [.NET 10 `Rfc3161TimestampTokenInfo`](https://learn.microsoft.com/en-us/dotnet/api/system.security.cryptography.pkcs.rfc3161timestamptokeninfo?view=net-10.0).
+
+### Distinguish upstream cancellation from caller cancellation (#99 amendment)
+
+The TSA connector now handles both `TaskCanceledException` **and its base type**
+`OperationCanceledException` when the original caller cancellation token has
+**not** been cancelled. A broken upstream response stream may throw the base
+class during HTTP send, stream acquisition or after sending only a DER prefix.
+Those cases are mapped to a **generic unavailable TSA response (HTTP 503)**,
+never a successful issuance or a raw internal exception. If the caller's
+token **is** cancelled, cancellation propagates normally; it is not reported
+as a fabricated provider outage. No automatic retry or issuance
+idempotency is implied, and an upstream TSA may already have processed
+the request before the response was interrupted.
+
+ADR 0068 amendment first [`a78a448`](https://github.com/KeyserDSoze/TemporalMark/commit/a78a448513cc48c4a3dbbf225e2c4c8293a61c9d),
+RED-first test extension [`249efcf`](https://github.com/KeyserDSoze/TemporalMark/commit/249efcfc67d242d9811edfc1ad78235bb532a270),
+minimal provider catch [`75f07fc`](https://github.com/KeyserDSoze/TemporalMark/commit/75f07fcdc9a1ab1e9babcaadd17a0be0c3cfba73).
+The adversarial test checks upstream `OperationCanceledException`
+during send, stream acquisition and after a partial DER body, and actual
+caller cancellation during a body read. These source changes are **not
+yet an independently observed test success**; #99 stays OPEN pending
+full four-job CI on the exact documentation-inclusive `main` SHA.
+Same Azure/on-prem behavior; no additional settings or qualified trust.
