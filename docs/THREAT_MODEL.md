@@ -652,3 +652,37 @@ WORM legal hold, independently witnessed custody, complete coverage
 of a requested period or CAB/AgID certification. Parent #17/#15/#13
 remain OPEN, all pilot receipts `Unverified`, and WebAuthn V015/V016
 registrar stop line is unchanged.
+
+## Tenant-foreign or unbounded UTC-day dashboard aggregation (#110, ADR 0079)
+
+The authenticated dashboard already showed total period counts via
+`/api/v1/stamps/summary`, but client-side grouping of the first 50
+`/stamps` rows would omit valid records beyond that page. A new
+`/api/v1/stamps/daily` path instead uses a **single PostgreSQL
+aggregate** which keeps both `organization_id=@org` and
+inclusive/exclusive UTC date bounds in its `WHERE` clause and groups
+by **`(issued_utc AT TIME ZONE 'UTC')::date`**, never a
+PostgreSQL session-local date. `TenantAdminAsync` derives the tenant
+from the verified bearer and live SQL membership, not an untrusted
+request query/header/body. HTTP 401/403 gates and real two-tenant
+Keycloak-signed/Pg CI canary probes cover this new route.
+
+Daily statistics accept **only 1–31 full UTC days**, exact midnight
+bounds, and reject invalid intervals before querying PostgreSQL.
+The business layer refuses duplicate, negative/zero non-aggregate,
+or out-of-window repository days; missing days are returned as zeros.
+The React IT/EN chart shows these as **registry records, NOT verified
+qualified timestamps**. For long periods it skips only the optional
+daily-chart query, preserving the existing exact total, audit, registry
+and export workflow. It neither reads raw document contents nor
+exposes another tenant's evidence.
+
+Residual risks: a compromised database owner can delete/create rows
+and generate plausible aggregates; no signed/WORM audit, complete
+historic period proof, independent high-water witness, quota/billing
+reconciliation or legal qualified QTSP validation exists. Ordinary
+tenant authorization still lacks production RLS, independently
+approved privileged enrollment and CAB/AgID qualification. See
+[ADR 0079](../adr/0079-tenant-utc-daily-dashboard-counts.md),
+[operator guide](DAILY_DASHBOARD_UTC_COUNTS.md), child #110 and open
+parents #14/#17/#13. No bypass to WebAuthn V015/V016.
