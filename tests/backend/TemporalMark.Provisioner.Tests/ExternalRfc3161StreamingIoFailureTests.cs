@@ -21,6 +21,8 @@ public sealed class ExternalRfc3161StreamingIoFailureTests
     [InlineData("cancel-send")]
     [InlineData("cancel-open")]
     [InlineData("cancel-partial")]
+    [InlineData("disposed-open")]
+    [InlineData("disposed-partial")]
     public async Task BrokenOutboundOrInboundTsaStreamIsSanitizedAsUnavailable(string fault)
     {
         using var handler = new FaultHandler(fault);
@@ -128,6 +130,9 @@ public sealed class ExternalRfc3161StreamingIoFailureTests
                 return Task.FromException<Stream>(
                     new OperationCanceledException(
                         "private raw stream acquisition aborted by upstream"));
+            if (fault == "disposed-open")
+                return Task.FromException<Stream>(
+                    new ObjectDisposedException("private raw upstream body disposed"));
             return Task.FromResult<Stream>(
                 new PrefixThenFaultStream(fault, callerCancellation));
         }
@@ -170,6 +175,8 @@ public sealed class ExternalRfc3161StreamingIoFailureTests
             if (fault == "cancel-partial")
                 throw new OperationCanceledException(
                     "private raw upstream canceled after partial DER");
+            if (fault == "disposed-partial")
+                throw new ObjectDisposedException("private raw upstream closed after partial DER");
             throw new IOException("private raw socket lost after partial DER");
         }
     }
