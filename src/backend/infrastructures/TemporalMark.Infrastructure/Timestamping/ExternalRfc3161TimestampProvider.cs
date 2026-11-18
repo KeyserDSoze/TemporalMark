@@ -205,6 +205,15 @@ public sealed class ExternalRfc3161TimestampProvider(
             throw new TimestampProviderUnavailableException(
                 "Unable to read the configured external TSA response.");
         }
+        catch (ObjectDisposedException) when (!cancellationToken.IsCancellationRequested)
+        {
+            // An upstream handler can dispose the content stream between
+            // receiving HTTP 200 and reading all DER bytes. This is not an
+            // IOException. Preserve caller cancellation and never persist
+            // a partially received timestamp or leak the disposed object.
+            throw new TimestampProviderUnavailableException(
+                "Unable to read the configured external TSA response.");
+        }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
             // A TSA handler or response stream may abort with the *base*
