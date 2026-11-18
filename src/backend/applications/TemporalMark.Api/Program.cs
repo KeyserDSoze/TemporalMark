@@ -155,6 +155,25 @@ api.MapGet("/stamps/summary", async Task<IResult> (
     }
 });
 
+// Same OIDC + active tenant-admin DB gate as the existing exact total.
+// Daily aggregate never accepts a tenant selector supplied by a browser.
+api.MapGet("/stamps/daily", async Task<IResult> (
+    ClaimsPrincipal user, ITenantAuthorization access, TimestampRegistryService registry,
+    DateTimeOffset fromUtc, DateTimeOffset toUtcExclusive, CancellationToken ct) =>
+{
+    var tenant = await TenantAdminAsync(user, access, ct);
+    if (!tenant.HasValue) return Results.Forbid();
+    try
+    {
+        return Results.Ok(await registry.DailyAsync(
+            tenant.Value, new UtcPeriod(fromUtc, toUtcExclusive), ct));
+    }
+    catch (ArgumentException error)
+    {
+        return Results.BadRequest(new { error = error.Message });
+    }
+});
+
 api.MapGet("/stamps", async Task<IResult> (
     ClaimsPrincipal user, ITenantAuthorization access, TimestampRegistryService registry,
     DateTimeOffset fromUtc, DateTimeOffset toUtcExclusive, int? offset, int? limit, CancellationToken ct) =>
