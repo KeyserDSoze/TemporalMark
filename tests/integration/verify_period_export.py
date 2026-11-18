@@ -132,7 +132,15 @@ def verify_archive(source: object) -> int:
             for info in infos:
                 require(not info.is_dir())
                 require(not (info.flag_bits & 0x1))  # no encrypted members
-                require(stat.S_IFMT(info.external_attr >> 16) != stat.S_IFLNK)
+                # Current .NET v1 exports regular files using STORE/DEFLATE.
+                # Reject unfamiliar compressors *before* decompression, even
+                # when Python supports them (BZIP2/LZMA), and never extract.
+                require(info.compress_type in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED))
+                if info.create_system == 3:  # Unix external file-type bits
+                    file_type = stat.S_IFMT(info.external_attr >> 16)
+                    # 0 = producer omitted Unix type; any other special
+                    # file (FIFO/device/socket/dir/symlink) is never a TSR.
+                    require(file_type in (0, stat.S_IFREG))
                 # An exact member allowlist is applied after parsing the
                 # bounded manifest. Never extract files to a filesystem.
                 require(info.filename == "manifest.json" or
