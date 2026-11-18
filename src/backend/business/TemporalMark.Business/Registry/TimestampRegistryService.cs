@@ -12,6 +12,9 @@ public sealed record RegistryDailySummary(
     Guid OrganizationId, DateTimeOffset FromUtc, DateTimeOffset ToUtcExclusive,
     IReadOnlyList<RegistryDayCount> Days);
 
+public sealed record RegistryImprintSearchResult(
+    IReadOnlyList<TimestampRecord> Items, bool HasMore);
+
 /// <summary>Tenant-bound queries and an integrity-checked export of DER receipts.</summary>
 public sealed class TimestampRegistryService(ITimestampRegistry registry)
 {
@@ -71,6 +74,45 @@ public sealed class TimestampRegistryService(ITimestampRegistry registry)
 
         return new RegistryDailySummary(
             organizationId, period.FromUtc, period.ToUtcExclusive, series);
+    }
+
+    /// <summary>
+    /// Exact SHA-256 *document imprint* search (not token DER hash).
+    /// The caller supplies hex only; the database stores canonical Base64.
+    /// No document bytes, issuer trust claim or qualified evidence is inferred.
+    /// </summary>
+    public async Task<RegistryImprintSearchResult> SearchByDocumentSha256Async(
+        Guid organizationId, UtcPeriod period, string digestSha256Hex,
+        int offset, int limit, CancellationToken cancellationToken)
+    {
+        RequireTenant(organizationId);
+        if (offset < 0 || limit < 1 || limit > 50)
+            throw new ArgumentOutOfRangeException(nameof(limit),
+                "Use 1..50 search results per page and offset >= 0.");
+        // Reject hostile encodings/oversize before allocating a decoder or
+        // calling SQL. A 32-byte SHA-256 hex imprint is exactly 64 ASCII chars.
+        if (digestSha256Hex is null || digestSha256Hex.Length != 64 ||
+            !digestSha256Hex.All(Uri.IsHexDigit))
+            throw new ArgumentException("A 64-character SHA-256 hexadecimal imprint is required.",
+                nameof(digestSha256Hex));
+
+        var canonicalBase64 = Convert.ToBase64String(Convert.FromHexString(digestSha256Hex));
+        const string sha256Oid = "2.16.840.1.101.3.4.2.1";
+        var results = await registry.SearchByDigestAsync(
+            organizationId, period, canonicalBase64, offset, limit + 1, cancellationToken);
+        if (results.Count > limit + 1)
+            throw new InvalidOperationException("Repository exceeded authorized search result bounds.");
+
+        // All *including* the lookahead entry must be integrity checked
+        // before any metadata or hasMore indicator is returned.
+        ValidateReturnedRecords(results, organizationId, period);
+        if (results.Any(row => row.HashAlgorithmOid != sha256Oid ||
+                               !string.Equals(row.DigestBase64, canonicalBase64,
+                                   StringComparison.Ordinal)))
+            throw new InvalidOperationException("Repository returned a mismatched document imprint.");
+
+        return new RegistryImprintSearchResult(
+            results.Take(limit).ToArray(), results.Count > limit);
     }
 
     public async Task<IReadOnlyList<TimestampRecord>> PageAsync(
