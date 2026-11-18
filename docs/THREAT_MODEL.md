@@ -616,3 +616,39 @@ these ZIP metadata gates establish timestamp signature validation,
 historical QTSP status, WORM/legal hold, export completeness, audit
 custody or qualified trust. Parents #17/#15/#13 remain OPEN and pilot
 receipts are `Unverified`; V015/V016 registrar remains blocked.
+
+## ZIP local-vs-central header ambiguity in offline export verification (#109; ADR 0078)
+
+A ZIP archive presents each member twice: in its *local header* and
+in the *central directory*. The pilot's offline validator (#107/#108)
+already checks central method/flags, member name and DER SHA-256, but
+Python `ZipFile.open` does not ensure the local compression-method
+field agrees with the central directory. This was reproduced with an
+in-memory otherwise-valid DEFLATE archive: changing only the 16-bit
+method at local offset +8 to unknown method 99 left `zipfile.read`
+able to retrieve unchanged contents and CRC. Thus an internally
+inconsistent file could pass a manifest/DER digest check despite
+contradictory metadata; consumers might disagree about its format.
+
+The verifier now reads **exactly 30 bytes** at every member's bounded
+local-header offset *before any decompression*, checks PK local
+header magic, and requires **local 16-bit compression method and
+general-purpose flag word to equal the central-directory values**.
+The existing central allowlist STORE/DEFLATE, encryption/symlink and
+special-file denials, bounded reads/aggregate volumes, duplicate
+member/JSON keys, UTC precision and SHA-256 checks remain in place.
+Source-first tests mutate only local 16-bit fields (both manifest and
+TSR), preserving central metadata, content and recorded digest, with
+positive ordinary archives. The CLI continues to fail generically,
+without echoing archive paths or imprint bytes. See
+[ADR 0078](../adr/0078-zip-local-central-header-method-flag-binding.md)
+and [#109](https://github.com/KeyserDSoze/TemporalMark/issues/109).
+
+**Residual limitation:** even a perfectly matched local+central ZIP
+header and SHA-256 manifest cannot authenticate a coherent malicious
+rewrite of both unsigned manifest and DER. This does not assert real
+RFC3161/CMS validation, historical EU Trusted List, qualified QTSP,
+WORM legal hold, independently witnessed custody, complete coverage
+of a requested period or CAB/AgID certification. Parent #17/#15/#13
+remain OPEN, all pilot receipts `Unverified`, and WebAuthn V015/V016
+registrar stop line is unchanged.
