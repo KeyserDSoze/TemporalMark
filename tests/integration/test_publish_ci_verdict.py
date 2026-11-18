@@ -3,6 +3,7 @@ import json
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -96,6 +97,60 @@ class CommitVerdictTests(unittest.TestCase):
         self.assertEqual("success", verdict.build_verdict(
             verdict.parse_needs(json.dumps(GOOD)))[0])
 
+    def test_publish_uses_only_scoped_github_status_api_and_sanitized_payload(self):
+        sha = "0123456789abcdef" * 2 + "01234567"
+        repo = "KeyserDSoze/TemporalMark"
+        target = verdict.validate_target(repo, sha, "42", "1", "refs/heads/main", "push")
+        payload = verdict.make_payload(GOOD, target)
+        captured = {}
+
+        class Created:
+            status = 201
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                return False
+
+        def fake_request(request, timeout):
+            captured["url"] = request.full_url
+            captured["body"] = json.loads(request.data.decode("utf-8"))
+            captured["authorization"] = request.get_header("Authorization")
+            captured["timeout"] = timeout
+            return Created()
+
+        with patch.object(verdict.urllib.request, "urlopen", side_effect=fake_request):
+            verdict.publish_status(repo, sha, "test-private-token", payload)
+
+        self.assertEqual(
+            f"https://api.github.com/repos/{repo}/statuses/{sha}", captured["url"])
+        self.assertEqual(payload, captured["body"])
+        self.assertEqual("Bearer test-private-token", captured["authorization"])
+        self.assertNotIn("test-private-token", json.dumps(captured["body"]))
+        self.assertEqual(20, captured["timeout"])
+
+    def test_missing_token_and_unexpected_success_http_status_fail(self):
+        with patch.object(verdict.urllib.request, "urlopen") as mock:
+            with self.assertRaises(ValueError):
+                verdict.publish_status("KeyserDSoze/TemporalMark", "a" * 40,
+                                       "", verdict.make_payload(GOOD, "https://example.invalid/"))
+            mock.assert_not_called()
+
+        class WrongResponse:
+            status = 200
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                return False
+
+        with patch.object(verdict.urllib.request, "urlopen", return_value=WrongResponse()):
+            with self.assertRaises(RuntimeError):
+                verdict.publish_status("KeyserDSoze/TemporalMark", "a" * 40,
+                                       "only-for-test", verdict.make_payload(GOOD, "https://example.invalid/"))
+
     def test_workflow_job_is_main_only_after_all_four_and_only_statuses_write(self):
         text = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
         self.assertIn("permissions:\n  contents: read", text)
@@ -110,6 +165,8 @@ class CommitVerdictTests(unittest.TestCase):
         self.assertIn("toJSON(needs)", job)
         self.assertIn("python3 tests/integration/publish_ci_verdict.py", job)
         self.assertIn("actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09", job)
+        self.assertIn("persist-credentials: false", job)
+        self.assertIn("timeout-minutes: 5", job)
         self.assertIn("test_publish_ci_verdict.py", text)
 
 
