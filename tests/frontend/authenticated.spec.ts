@@ -144,4 +144,47 @@ test("development tenant administrator authenticates and sees own registry", asy
   await expect(page.getByText("CI_PAGE_51")).toHaveCount(0);
   await expect(page.getByText("1–50 di 51")).toBeVisible();
   expect(offsets.at(-1)).toBe(0);
+
+  // RED-first #112: keep real Keycloak sign-in + earlier receipt/export
+  // checks genuine. Only now simulate read-only exact-digest search pages
+  // to exercise UI; this is NOT evidence of PostgreSQL tenant isolation.
+  const searched = registered.map((row, i) => ({
+    ...row, providerId: `CI_SEARCH_${String(i + 1).padStart(2, "0")}`
+  }));
+  const imprint = "A1".repeat(32);
+  const searchOffsets: number[] = [];
+  await page.route("**/api/v1/stamps/search", async route => {
+    expect(route.request().method()).toBe("POST");
+    const body = route.request().postDataJSON() as Record<string, unknown>;
+    expect(body.digestSha256Hex).toBe(imprint);
+    expect(typeof body.fromUtc).toBe("string");
+    expect(typeof body.toUtcExclusive).toBe("string");
+    expect(body).not.toHaveProperty("organizationId");
+    const offset = Number(body.offset);
+    searchOffsets.push(offset);
+    await route.fulfill({
+      status: 200, contentType: "application/json",
+      body: JSON.stringify({ items: searched.slice(offset, offset + 50),
+                             hasMore: offset === 0 })
+    });
+  });
+  await page.getByRole("textbox", { name: "Impronta SHA-256 del documento (64 caratteri hex)" }).fill("not-hex");
+  await expect(page.getByRole("button", { name: "Cerca impronta" })).toBeDisabled();
+  await page.getByRole("textbox", { name: "Impronta SHA-256 del documento (64 caratteri hex)" }).fill(imprint);
+  await page.getByRole("button", { name: "Cerca impronta" }).click();
+  await expect(page.getByText("CI_SEARCH_01")).toBeVisible();
+  await expect(page.getByText("CI_SEARCH_51")).toHaveCount(0);
+  await page.getByRole("button", { name: "Risultati successivi" }).click();
+  await expect(page.getByText("CI_SEARCH_51")).toBeVisible();
+  await expect(page.getByText("CI_SEARCH_01")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Risultati successivi" })).toBeDisabled();
+  await page.getByRole("button", { name: "Risultati precedenti" }).click();
+  await expect(page.getByText("CI_SEARCH_01")).toBeVisible();
+  expect(searchOffsets).toEqual([0, 50, 0]);
+
+  // A changed UTC filter invalidates old search results.
+  const newStart = new Date();
+  newStart.setUTCDate(newStart.getUTCDate() - 26);
+  await page.locator('input[type="date"]').nth(0).fill(newStart.toISOString().slice(0, 10));
+  await expect(page.getByText("CI_SEARCH_01")).toHaveCount(0);
 });
