@@ -97,7 +97,7 @@ restored_migrations="$(
   dc_pg psql -X -At -v ON_ERROR_STOP=1 -U temporalmark -d "$restore_db" \
     -c 'SELECT count(*) FROM public.schema_migrations'
 )"
-test "$restored_migrations" = "17"
+test "$restored_migrations" = "18"
 
 restored_serial="$(
   dc_pg psql -X -At -v ON_ERROR_STOP=1 -U temporalmark -d "$restore_db" \
