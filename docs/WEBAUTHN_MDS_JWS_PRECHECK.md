@@ -34,3 +34,41 @@ The [FIDO MDS changelog](https://fidoalliance.org/mds-changelog/) documents Augu
 ## Offline direct-issuer CRL check remains independent (#59)
 
 ADR 0030 and the [offline CRL runbook](WEBAUTHN_MDS_OFFLINE_CRL.md) add **real DER CRL signature/serial negative tests** for one explicitly supplied CA + direct leaf using BouncyCastle 2.7.0, without a network connection. This is **not wired** to the signed JWS candidate verifier above: no combined trusted FIDO MDS validation exists. Even if the test-only CRL is fresh and signed, a caller-supplied CA is not an approved FIDO R46 trust anchor and multi-hop revocation and CRL rollback remain open under #57/#55. Every output is `UNAPPROVED`; V015/V016 remain frozen.
+
+## Runtime-clock validity for disposable positive signer tests (#102; ADR 0071)
+
+The test-only RS256/x5c fixture originally froze `Now` at
+**2026-11-16 00:00 UTC** and generated a leaf certificate valid through
+**2026-11-18 00:00 UTC**. It therefore became invalid on real runners:
+[CI 44272815080](https://github.com/KeyserDSoze/TemporalMark/actions/runs/44272815080/attempts/1)
+on 2026-11-18 09:07 UTC reported **one failure out of 489 Provisioner
+tests**, `RealRsaSignedPinnedRootChainReturnsOnlyUnapprovedDigestAndSerial`,
+at `ReviewerMdsJwsSignatureCandidateVerifier.cs:134`. Domain **9/9**
+and Business **219/219** passed; frontend/terraform succeeded, Docker smoke
+was skipped after the backend failure. This was a *real* failed run,
+now directly observable through the new [#101 CI verdict](CI_VERDICT_COMMIT_STATUS.md).
+
+The isolated verifier's pinned test-only X.509 chain uses an explicit
+fixture-supplied `VerificationTime`, but the maintained IdentityModel
+signing-key checks are not guaranteed to ignore the actual UTC date for
+certificates. **Do not disable issuer-signing-key validation, remove the
+custom root or accept expired certs** to make a synthetic positive pass.
+The test fixture now initializes its disposable `Now` once from
+`DateTimeOffset.UtcNow` and keeps the same certificate validity lengths,
+protected signed `iat` and explicit expired/not-yet-valid/incorrect-root/
+wrong-signature negative cases. A new positive-fixture unit regression
+decodes the ephemeral protected `x5c[0]` and requires its certificate to
+remain valid for at least one more hour at runtime.
+
+TDD: [ADR 0071](../adr/0071-disposable-mds-jws-runtime-cert-validity.md)
+first `2cc4375`; RED-first regression `96c21f7`; test-only fixture
+fix `f6e3656`. The **GREEN full-suite outcome is pending verification
+on the final documentation-inclusive main SHA**: no production trust is
+claimed by merely patching a fixture.
+
+The detached candidate remains `UNAPPROVED`, with status
+`JWS_CHAIN_ONLY_REVOCATION_UNVERIFIED`, and is not wired to an API,
+registrar, SQL or WebAuthn enrollment. No FIDO R46/CRL/OCSP root trust,
+long-term monotonic signed evidence, UTC(k), WORM or legally qualified
+timestamping is established. Parent issues #57/#55/#53 and the V015/V016
+stop-line stay open. See [#102](https://github.com/KeyserDSoze/TemporalMark/issues/102).
