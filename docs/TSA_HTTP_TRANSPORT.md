@@ -392,3 +392,43 @@ keep #99 OPEN pending exact final documentation-inclusive HEAD 4/4
 backend/frontend/docker-smoke/terraform GREEN. Do not retry blindly
 when upstream issuance outcome is unknown. No QTSP-qualified status,
 new on-prem/Azure divergence or tenant-controlled setting is introduced.
+
+## Canonical SHA-256 Base64 ingress before outbound TSA I/O (#103; ADR 0072)
+
+The authenticated `POST /api/v1/stamps/issue` endpoint accepts a JSON
+`digestBase64` value representing **exactly 32 SHA-256 hash bytes**.
+The application service now enforces a strict **44-character standard
+padded Base64** profile with exactly one trailing `=`. It checks string
+length **before decoding**, then validates decoded length and verifies that
+`Convert.ToBase64String(decoded)` is **ordinally identical** to the
+submitted text. This rejects excessive-length strings before allocating
+a decoded buffer, embedded/leading/trailing whitespace (which .NET's
+`Convert.FromBase64String` otherwise ignores), nonzero unused padding
+bits, Base64URL alphabet, malformed padding and non-SHA256 sizes. Failure
+returns the existing **400 Bad Request** without echoing the submitted
+value, sending any imprint/nonce to the TSA, or persisting a receipt.
+Normal canonical Base64 still produces only an **Unverified** pilot
+receipt after the existing full TSA response validation.
+
+This is an intentional TemporalMark REST API **text-normalization profile**;
+RFC 3161 itself carries a binary message imprint and does not require
+JSON/Base64 transport. It is **not** a rate limit, request idempotency key,
+nonce replay cache, authenticated quota ledger, guarantee of exactly-once
+remote issuance, qualified QTSP status, or historical legal evidence.
+Repeated valid requests for the same hash can still consume multiple
+external TSA operations. No Azure-specific configuration or bypass is
+introduced: on-prem and Azure call the same business service, and the
+V015/V016 WebAuthn registrar stop-line stays in place.
+
+ADR [0072](../adr/0072-canonical-sha256-base64-issuance-ingress.md) was
+committed before RED-first xUnit in
+`tests/backend/TemporalMark.Business.Tests/TimestampIssueServiceTests.cs`;
+the test suite covers valid all-zero/canonical imprints, whitespace,
+padding variants and oversized input with zero provider/writer calls
+on rejection. **Actual RED/GREEN CI is not attested merely by code
+commits**. Close [#103](https://github.com/KeyserDSoze/TemporalMark/issues/103)
+only after the exact final documentation-inclusive main SHA has all
+four jobs SUCCESS and real test logs checked; parent #15 stays open.
+
+Sources: [Microsoft .NET Base64 decoder](https://learn.microsoft.com/en-us/dotnet/api/system.convert.frombase64string?view=net-10.0),
+[RFC 4648 §3.5](https://www.rfc-editor.org/rfc/rfc4648#section-3.5).
