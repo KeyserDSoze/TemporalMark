@@ -726,3 +726,53 @@ legal QTSP qualification/CAB #15/#13, production RLS/tenant approval
 #14/#23 and WebAuthn V015/V016 interlocks remain unresolved.
 See [ADR 0080](../adr/0080-admin-tenant-registry-pagination-and-stale-request-gate.md),
 [runbook](REGISTRY_PAGINATION_UI.md), issue #111.
+
+## Exact document-imprint search: sensitive fingerprint enumeration and tenant scope (#112, ADR 0081)
+
+The authenticated registry formerly permitted listing by UTC period and
+ID, but no exact **document SHA-256 message-imprint** lookup. Such
+fingerprints can reveal a tenant's possession of or interest in
+specific documents even though the original document is never sent
+to TemporalMark. A naïve cross-tenant hash search or URL query would
+enable hash-presence probing through the access logs, browser history,
+proxy telemetry or foreign tenant records.
+
+The new **read-only POST `/api/v1/stamps/search`** keeps
+`digestSha256Hex` in the JSON body (rather than a GET URL),
+requires the **same signed OIDC and active PostgreSQL tenant-admin
+membership** used by existing registry endpoints, and derives
+`organization_id` only from that verified principal/DB check.
+The Business layer requires exactly **64 ASCII hex characters**,
+canonicalizes to the stored 32-byte SHA256 Base64, and validates
+offset >= 0 and limit 1–50 **before any SQL**. PostgreSQL constrains
+`organization_id=@org`, half-open UTC period, SHA256 OID and
+`digest_base64=@digest`, ordered by issuedUtc/id and limited to
+51 fetched records for a 50-row page. The Business layer verifies
+**every row including lookahead** for tenant, period, document
+imprint/algorithm, uniqueness and stored DER SHA256 consistency
+before returning only non-DER metadata. Invalid results fail closed.
+No document content or raw token DER is returned by search.
+
+Browser IT/EN search/Next/Previous uses no tenant selector and
+invalidates old search results on new token, date or fingerprint.
+It maintains existing audited receipt download as a distinct
+authorized operation, not an implicit direct DER response from
+search. The real disposable signed-Keycloak/Pg two-tenant CI test
+checks own and foreign hashes, spoofed headers/body, signed/anonymous/
+inactive callers and malformed hashes/bounds; mock-only browser
+search UX tests do **not** substitute for these real SQL tests.
+See [ADR 0081](../adr/0081-tenant-document-sha256-imprint-exact-lookup.md)
+and [search operator guide](DOCUMENT_IMPRINT_SEARCH.md).
+
+**Outstanding:** a read-only search is **not separately recorded
+in tenant audit**; no per-search tamper-evident access log, rate
+limit or independently approved privacy process is delivered.
+A reverse-proxy configured to log request bodies may still leak
+hashes despite POST. Confidential document imprints, correlation
+between known document hashes and tenant results, overbroad admin
+roles and database owner tampering remain high-priority risks.
+Search is **not** independent RFC3161 CMS validation, qualified QTSP
+proof, historical EUTL trust, signed WORM manifest, complete
+all-time snapshot or eIDAS/CAB/AgID approval. Parent #14/#17/#15/#13
+remain OPEN and pilot evidence remains `Unverified`. No registrar
+V015/V016 or cloud-specific exemption.
