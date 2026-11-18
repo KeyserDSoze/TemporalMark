@@ -764,9 +764,18 @@ search UX tests do **not** substitute for these real SQL tests.
 See [ADR 0081](../adr/0081-tenant-document-sha256-imprint-exact-lookup.md)
 and [search operator guide](DOCUMENT_IMPRINT_SEARCH.md).
 
-**Outstanding:** a read-only search is **not separately recorded
-in tenant audit**; no per-search tamper-evident access log, rate
-limit or independently approved privacy process is delivered.
+**Scoped #114/V018 mitigation:** successful authenticated searches now
+append tenant, actor, action and UTC occurrence to the pilot audit
+before any matches are returned. No searched imprint, match flag/count,
+receipt ID or period is recorded; bad or unauthorized requests append
+no tenant search events. PostgreSQL audit-write failure denies search
+responses. Disposable signed-Keycloak/Pg A/B CI exercises the gate,
+including a temporary runtime-role INSERT denial that is reverted.
+
+**Outstanding under #113/#17:** this ordinary PostgreSQL pilot audit
+is not tamper-evident WORM; no distributed tenant/principal rate limit,
+independently approved privacy retention/DPIA, separate audit custody
+or production reverse-proxy request-body redaction has been delivered.
 A reverse-proxy configured to log request bodies may still leak
 hashes despite POST. Confidential document imprints, correlation
 between known document hashes and tenant results, overbroad admin
