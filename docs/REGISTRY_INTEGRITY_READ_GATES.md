@@ -78,3 +78,48 @@ Trusted List service status, authorized legal export completeness
 proof and CAB/AgID qualification remain **OPEN #17/#15/#13**. All
 unqualified pilot receipts remain `Unverified`. The WebAuthn
 registrar V015/V016 stop-line is unchanged.
+
+## Synchronous period ZIP memory budget (#106, ADR 0075)
+
+The authenticated `GET /api/v1/stamps/export` still creates one ZIP
+in memory, so row count alone does not limit its source DER size.
+Before any ZIP/manifest allocation, the shared business service now
+requires **each exported raw `ResponseDer` to be at most 1 MiB
+(1,048,576 bytes)** and **the cumulative raw DER across that export
+batch to be at most 64 MiB (67,108,864 bytes)**. The existing count
+cap of 10,000 remains in force. These are *synchronous resource budgets*,
+not legal DER size limits or certified long-term archive guarantees.
+They match the current RFC3161 pilot's individual 1 MiB response
+bound but also protect against legacy/oversized persisted database rows.
+
+A limit violation raises the existing `ExportTooLargeException`,
+translated by the API to **HTTP 413** with generic text asking the
+tenant administrator to select a smaller interval. No partial ZIP,
+manifest or valid receipt is returned. The byte-budget check runs
+**before** computing every stored DER's SHA-256 and before allocating
+the ZIP; the existing tenant, period, record hash and duplicate-ID
+checks still run before any file is returned. The size gate does not
+authenticate certificates, prove a timestamp qualified or implicitly
+retry a TSA POST.
+
+Test coverage in
+`tests/backend/TemporalMark.Business.Tests/TimestampRegistryServiceTests.cs`
+includes a **1 MiB +1** oversized stored receipt with matching SHA-256,
+65 distinct 1 MiB receipts (65 MiB total, matching SHA-256) with one
+reused test buffer, and a successful **exactly 1 MiB** receipt that
+round-trips through the ZIP. The TDD sequence was
+[ADR 0075](../adr/0075-synchronous-evidence-zip-byte-budget.md)
+first, RED-first tests SHA `69d3254`, minimal service fix SHA
+`ef36b34`. RED/GREEN runner outcomes must be checked on the actual
+respective GitHub commits; the commits alone are not proof.
+
+**Residual capacity risk:** `NpgsqlDataReader` and `ForExportAsync`
+already materialize the rows before the business guard; this change
+does **not** cap PostgreSQL response memory, concurrent exports,
+ZIP output size, compression ratios or client download volume. For
+arbitrarily large periods the still-open #17 requires reviewed,
+audited streaming/asynchronous exports, bounded paging and snapshot
+proof, signed manifests and immutable storage/object lock. The local
+hash is **not** a separately signed WORM witness; historical legal
+QTSP trust and CAB qualification remain #15/#13. All pilot evidence
+remains `Unverified`; V015/V016 registrar interlock unchanged.
