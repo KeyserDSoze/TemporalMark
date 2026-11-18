@@ -139,9 +139,13 @@ Next/Previous and reset on period changes. These mocks provide
 **UI behavior evidence only**, not SQL isolation.
 
 The search POST is **not** a new TSA issuance operation or a
-legal/eIDAS timestamp validator. It does not independently log
-each search in tenant audit; receipt downloads continue to be
-audited. Refer to [ADR 0081](../adr/0081-tenant-document-sha256-imprint-exact-lookup.md)
+legal/eIDAS timestamp validator. With #114 / V018 the same API also appends a separate minimized
+tenant/actor search event before returning any match metadata; receipt
+downloads remain separately audited. CI verifies exactly four valid
+search events for each signed-Keycloak tenant, zero for seven malformed
+requests, no raw imprints or match metadata in audit, and a reversible
+CI-only PostgreSQL runtime INSERT-revocation probe that must return
+HTTP 500 without match data. A finally block restores the SQL grant. Refer to [ADR 0081](../adr/0081-tenant-document-sha256-imprint-exact-lookup.md)
 and [operator guide](DOCUMENT_IMPRINT_SEARCH.md). Any CI claim of
 completion must be checked on the **exact final docs-inclusive
 `main` SHA** using all four core jobs; older successful test runs
