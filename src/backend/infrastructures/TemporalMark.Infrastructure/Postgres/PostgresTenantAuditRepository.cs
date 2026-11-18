@@ -68,6 +68,7 @@ public sealed class PostgresTenantAuditRepository(NpgsqlDataSource database) : I
     {
         TenantAuditAction.PeriodExportPrepared => "period_export_prepared",
         TenantAuditAction.ReceiptDownloadPrepared => "receipt_download_prepared",
+        TenantAuditAction.DocumentImprintSearchPerformed => "document_imprint_search_performed",
         _ => throw new ArgumentOutOfRangeException(nameof(action))
     };
 
@@ -75,6 +76,7 @@ public sealed class PostgresTenantAuditRepository(NpgsqlDataSource database) : I
     {
         "period_export_prepared" => TenantAuditAction.PeriodExportPrepared,
         "receipt_download_prepared" => TenantAuditAction.ReceiptDownloadPrepared,
+        "document_imprint_search_performed" => TenantAuditAction.DocumentImprintSearchPerformed,
         _ => throw new InvalidOperationException("Unrecognized persisted audit action.")
     };
 }
