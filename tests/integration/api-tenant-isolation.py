@@ -254,6 +254,10 @@ def check_authorized(token, own_org, own_id, other_id, own_audit, own_der, other
         }), 200)[1])
     if spoofed_page != []:
         raise AssertionError(f"{role}: page offset headers/query leaked foreign tenant data")
+    # RED-first #114: successful search events must be tenant-bound, with no
+    # imprint, match signal, receipt id or period in the event payload.
+    audit_prior_to_search = [row for row in audit(token)
+                             if row.get("action") == "DocumentImprintSearchPerformed"]
     # RED-first #112: real signed-Keycloak token, disposable canary rows
     # and actual tenant-filtered PostgreSQL exact document-imprint lookup.
     own_digest = DIGEST_A if own_org == ORG_A else DIGEST_B
@@ -285,6 +289,23 @@ def check_authorized(token, own_org, own_id, other_id, own_audit, own_der, other
                 search_imprint(token, own_digest.hex(), limit=51), 400)
     must_status(role + " bad document-imprint offset",
                 search_imprint(token, own_digest.hex(), offset=-1), 400)
+    search_events = [row for row in audit(token)
+                     if row.get("action") == "DocumentImprintSearchPerformed"]
+    # Four valid searches above: own, foreign, offset and spoofed body/headers.
+    # Seven malformed searches must not be recorded or access the registry.
+    if len(search_events) - len(audit_prior_to_search) != 4:
+        raise AssertionError(f"{role}: did not append exactly four successful search audit events")
+    for event in search_events:
+        if (event.get("organizationId") != own_org or
+            event.get("actorSubjectId") != jwt_claims_untrusted(token).get("sub") or
+            event.get("receiptId") is not None or
+            event.get("periodFromUtc") is not None or
+            event.get("periodToUtcExclusive") is not None):
+            raise AssertionError(f"{role}: search event leaked data or has wrong tenant/principal")
+    serialized_events = json.dumps(search_events).lower()
+    if own_digest.hex() in serialized_events or foreign_digest.hex() in serialized_events:
+        raise AssertionError(f"{role}: sensitive document imprint stored in tenant audit")
+
     listed = summary(token)
     if listed.get("organizationId") != own_org or listed.get("count") != 1:
         raise AssertionError(f"{role}: count/organization does not match isolated canary")
