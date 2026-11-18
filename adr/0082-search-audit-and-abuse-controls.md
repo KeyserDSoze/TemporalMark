@@ -36,3 +36,9 @@ Existing tenant audit persistence and authorization must be inspected before cho
 ## Consequences
 
 The pilot can improve detection and response to search enumeration without turning imprints into a new searchable telemetry dataset. Search availability becomes dependent on audit persistence; this is intentional for sensitive successful lookups. Audit integrity and independently signed custody remain tracked by #17, not delivered by this ADR.
+
+## Implementation checkpoint — scoped audit child #114 (2026-11-18)
+
+The zero-query-payload `DocumentImprintSearchPerformed` event is now implemented as an application-side **pilot** control on main: Domain payload validation, Business append, PostgreSQL mapping, forward-only V018 SQL action/payload constraints, API append after valid tenant-bound lookup and before returning match metadata, and React IT/EN audit label. Test-first Domain/Business and signed-Keycloak A/B real-HTTP fixture were committed before production source. CI red-stage backend failure on tests-only SHA `ead9c02` is observed, while exact final documentation-inclusive 4/4 CI validation remains required. See [child #114](https://github.com/KeyserDSoze/TemporalMark/issues/114).
+
+The earlier broader ADR remains **proposed** for distributed rate limiting and privacy/operations design; #113 stays OPEN. Search audit does not imply request-body/proxy log redaction, immutable WORM, historic trusted-list verification, evidence export completeness or WebAuthn registrar release. The event intentionally does not store even zero/nonzero match flags. Legal/DP privacy must approve retention and purpose separately from indefinite timestamp-evidence retention.
