@@ -143,6 +143,9 @@ public sealed class ExternalRfc3161TimestampProvider(
                 // the timeStamping EKU to be critical and its sole key purpose.
                 // This check does not establish chain/revocation/QTSP status.
                 ExternalRfc3161SignerCertificatePolicy.Validate(signerCertificate);
+                // Independent end-entity Basic Constraints and signing-only
+                // Key Usage pilot gate; neither check confers qualified trust.
+                ExternalRfc3161TsaLeafProfilePolicy.Validate(signerCertificate);
                 // Verify the operator-reviewed full DER SHA-256 fingerprint of
                 // exactly the same cryptographically verified CMS signer.
                 ExternalRfc3161SignerPinPolicy.ValidateVerifiedSigner(signerCertificate, signerPin);
