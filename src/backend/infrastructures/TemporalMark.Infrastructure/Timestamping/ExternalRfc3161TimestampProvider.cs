@@ -174,6 +174,11 @@ public sealed class ExternalRfc3161TimestampProvider(
                 // UTC(k) measurement. Strict pilot: present and <= 1s.
                 ExternalRfc3161SignedAccuracyPolicy.ValidateVerifiedTokenInfo(
                     token.TokenInfo);
+                // Signed TSTInfo extensions can carry unimplemented semantics
+                // regardless of their critical flag. This strictly limited
+                // pilot refuses every such extension until reviewed explicitly.
+                ExternalRfc3161TstInfoExtensionPolicy.ValidateVerifiedTokenInfo(
+                    token.TokenInfo);
             }
             catch (CryptographicException)
             {
