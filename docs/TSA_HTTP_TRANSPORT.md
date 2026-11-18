@@ -325,3 +325,17 @@ dotnet test tests/backend/TemporalMark.Provisioner.Tests/TemporalMark.Provisione
 ```
 
 Reference: [ADR 0068](../adr/0068-rfc3161-response-stream-io-fail-closed.md), [Microsoft NetworkStream.ReadAsync](https://learn.microsoft.com/en-us/dotnet/api/system.net.sockets.networkstream.readasync?view=net-10.0).
+
+## Signed TSTInfo extension profile: reject all unreviewed semantics (#100; ADR 0069)
+
+**Conservative unqualified pilot interoperability restriction, not a universal RFC3161/eIDAS rule.** RFC3161 §2.4.2 defines an **optional** `TSTInfo.extensions [1] IMPLICIT Extensions` set in the cryptographically signed token. The .NET 10 `Rfc3161TimestampTokenInfo.HasExtensions` and `GetExtensions()` APIs expose these fields, but their mere presence and a valid CMS signature do not mean TemporalMark understands what each OID requires. The pilot now **rejects any nonempty signed TSTInfo extension set**, even if every extension is marked noncritical. A token with no TSTInfo extension is accepted by this particular gate only after signature, nonce, imprint, signer KU/EKU/pin, approved policy, signed live `genTime`, custom-root PKIX, signed full issuer CRLs and the fixed claimed-accuracy bound pass. A rejected token is not stored.
+
+**Do not confuse** these *TSTInfo* extensions with required *X.509 certificate* extensions, such as EKU, Key Usage and Basic Constraints, which remain independently validated. RFC3161 §2.4.1's rule requiring a TSA to reject unknown **request** extensions is not a blanket requirement that an RFC3161 client always reject any unrecognized **response TSTInfo** extension. This is an explicit **TemporalMark restriction**; a real compliant QTSP with useful critical or noncritical token extensions will be rejected until the exact OID/DER and semantic trust implications are approved by operators, tested and recorded in a new ADR. Never add a catch-all allowlist without interpretation.
+
+TDD: ADR 0069 before code [`f00a77e`](https://github.com/KeyserDSoze/TemporalMark/commit/f00a77e80aafbce960e3da0807d7aa72f1b06e57), RED-first genuine .NET DER TSTInfo fixture [`75cc860`](https://github.com/KeyserDSoze/TemporalMark/commit/75cc860123e59800d14b313dcca7fb3a412cf2b7), standalone policy [`249e4e1`](https://github.com/KeyserDSoze/TemporalMark/commit/249e4e1ff5e3c46f200633cd4df93647a5326f75), provider invocation [`240c47e`](https://github.com/KeyserDSoze/TemporalMark/commit/240c47edceae6ae657ee5fd65e417e59c3f35463). These fixtures are unsigned DER TSTInfo and **not** cryptographically validated QTSP tokens; they exercise decoded semantics only. Actual RED/GREEN GitHub Actions outcome has **not been independently retrieved**; keep #100 OPEN pending exact final docs-inclusive 4/4 CI. Parent #15, WORM #17, legal #13, and other CI-pending #97–#99 remain OPEN; records `Unverified`. Identical on-prem/Azure runtime; no tenant-configurable bypass.
+
+```sh
+dotnet test tests/backend/TemporalMark.Provisioner.Tests/TemporalMark.Provisioner.Tests.csproj --configuration Release --filter FullyQualifiedName~ExternalRfc3161TstInfoExtensionPolicyTests
+```
+
+References: [ADR 0069](../adr/0069-rfc3161-signed-tstinfo-extension-interoperability.md), [RFC3161 §2.4.2](https://www.rfc-editor.org/rfc/rfc3161#section-2.4.2), [.NET 10 `Rfc3161TimestampTokenInfo`](https://learn.microsoft.com/en-us/dotnet/api/system.security.cryptography.pkcs.rfc3161timestamptokeninfo?view=net-10.0).
