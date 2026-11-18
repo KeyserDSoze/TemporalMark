@@ -509,3 +509,36 @@ Parent #17/#15/#13 remain open; pilot records remain `Unverified`;
 WebAuthn V015/V016 registrar stop line remains enforced. See
 [ADR 0074](../adr/0074-registry-page-export-integrity-and-unique-ids.md)
 and [runbook](REGISTRY_INTEGRITY_READ_GATES.md).
+
+## Unbounded source DER volume in synchronous timestamp ZIP export (#106; ADR 0075)
+
+The tenant-authenticated synchronous period export previously enforced
+**at most 10,000 records** but placed no bound on the length of one
+persisted `ResponseDer` or the **cumulative source DER bytes** being
+compressed into an in-memory ZIP. A legacy oversized receipt or many
+large, self-consistent records could amplify memory and CPU use,
+even though newly issued delegated TSA responses are capped at 1 MiB.
+
+Before allocating the ZIP or hashing retained DER, the application now
+rejects **any source receipt exceeding 1,048,576 DER bytes** or **any
+batch whose total source DER exceeds 67,108,864 bytes**, using a
+long accumulator and guarded subtraction. The API maps the shared
+`ExportTooLargeException` to a generic HTTP **413**, asking for a
+smaller UTC interval. This is in addition to the existing tenant,
+period, stored SHA-256, duplicate-ID and row-count checks, and returns
+**no partial ZIP** if a limit is exceeded. The same C# service runs on
+Azure and on-prem OSS. There is no new export bypass, SQL mutation,
+credential grant, or WebAuthn V015/V016 registrar change.
+
+**Not a complete resource defense:** the underlying Npgsql
+`ForExportAsync` already reads and materializes data before this
+guard; server concurrency, ZIP output size, decompression risks,
+network transfer, and unbounded count across an entire period are
+separate concerns. A local self-consistent hash, size bound and ZIP
+manifest do **not** amount to independently sealed evidence, legal
+WORM/object-lock, complete period export or QTSP-qualified timestamp
+verification. Streaming/paged asynchronous exports and independently
+signed manifests remain parent #17; QTSP trust and compliance remain
+#15/#13. Pilot records stay `Unverified`. See
+[ADR 0075](../adr/0075-synchronous-evidence-zip-byte-budget.md)
+and the [registry operator runbook](REGISTRY_INTEGRITY_READ_GATES.md).
