@@ -424,3 +424,26 @@ registrar, API, SQL, FIDO root allowlist or grant. It still returns only
 the authenticated FIDO R46 signing chain remains #57/#55, V015/V016
 registration stays blocked, and this is unrelated to legal QTSP/UTC(k)
 qualification. See ADR 0071/#102.
+
+## Ambiguous / oversized Base64 SHA-256 issue request (#103; ADR 0072)
+
+The authenticated tenant-admin issuance JSON contains an untrusted
+`digestBase64` string. The former `Convert.FromBase64String` call
+ran **before bounding the text length** and tolerated alternative
+spellings (including ignorable whitespace and potentially nonzero
+unused padding bits). Multiple texts could represent the same digest,
+risking inconsistent application-level comparisons and unnecessary
+decoder allocations on large requests, even though the real RFC3161
+message imprint is binary. The business service now rejects any input
+other than the **canonical 44-character padded Base64 encoding of
+32 bytes**, before any provider call or persistence, using a predecode
+length limit and an ordinal re-encoding equality check. Errors do not
+echo the submitted value. This *reduces input ambiguity and local
+resource exposure*, but it does **not** prevent malicious administrators
+from issuing repeated valid requests, guarantee upstream TSA idempotency,
+mitigate DDoS before HTTP request buffering, verify historical EU
+Trusted Lists, secure long-term WORM evidence or confer qualified
+status. A separate server-side idempotency/quota ledger and ingress
+body-size limits remain needed under open #15/#20. Same on-prem/Azure
+business logic, no tenant bypass, WebAuthn V015/V016 stop-line unchanged.
+See [ADR 0072](../adr/0072-canonical-sha256-base64-issuance-ingress.md).
