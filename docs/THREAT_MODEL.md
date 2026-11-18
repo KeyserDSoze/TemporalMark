@@ -354,3 +354,21 @@ as an upstream failure. This does not prove no timestamp was created
 upstream, prevent double billing or enable safe blind retries. Tests
 cover upstream abort at send/acquire/partial-body and caller cancellation
 mid-body. ADR 0068 amendment/#99; no legal qualified or WORM claim.
+
+### TSA response-body disposal without IOException (#99 amendment)
+
+A disrupted HTTP peer or handler can close an already acquired
+`HttpContent` stream before the body is complete. A subsequent
+`ReadAsStreamAsync` or `ReadAsync` can throw `ObjectDisposedException`,
+which is **not** an `IOException`; without a narrowly scoped handler,
+the API may surface an unhandled 500 or leak implementation details
+instead of its stable 503 provider-unavailable boundary. The
+`ExternalRfc3161TimestampProvider` now maps this exception to a
+fixed unavailable error **only if the original caller token was not
+cancelled**. No partial DER bytes are returned or persisted. This
+does not prove that the remote TSA failed to issue or bill for a
+timestamp, authorize blind retries or confer qualified legal status.
+RED-first stream acquisition and partial-body disposal regressions
+plus original caller cancellation test are tracked under ADR 0068/#99.
+All records stay Unverified; #15/#17/#13 and the V015 registrar
+interlock remain unchanged.
