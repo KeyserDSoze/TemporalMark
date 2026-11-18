@@ -75,6 +75,13 @@ test("development tenant administrator authenticates and sees own registry", asy
     validationState: "Unverified"
   }));
   const offsets: number[] = [];
+  let holdAnOldSecondPage = false;
+  let notifyOldPageRequested: () => void = () => {};
+  let releaseOldPage: () => void = () => {};
+  let notifyOldPageServed: () => void = () => {};
+  const oldPageRequested = new Promise<void>(resolve => { notifyOldPageRequested = resolve; });
+  const oldPageRelease = new Promise<void>(resolve => { releaseOldPage = resolve; });
+  const oldPageServed = new Promise<void>(resolve => { notifyOldPageServed = resolve; });
   await page.route("**/api/v1/stamps/summary?*", async route => {
     await route.fulfill({
       status: 200, contentType: "application/json",
@@ -84,10 +91,17 @@ test("development tenant administrator authenticates and sees own registry", asy
   await page.route("**/api/v1/stamps?*", async route => {
     const offset = Number(new URL(route.request().url()).searchParams.get("offset") ?? "0");
     offsets.push(offset);
+    const isDelayed = offset === 50 && holdAnOldSecondPage;
+    if (isDelayed) {
+      holdAnOldSecondPage = false;
+      notifyOldPageRequested();
+      await oldPageRelease;
+    }
     await route.fulfill({
       status: 200, contentType: "application/json",
       body: JSON.stringify(registered.slice(offset, offset + 50))
     });
+    if (isDelayed) notifyOldPageServed();
   });
   await page.getByRole("button", { name: "Applica filtri" }).click();
   await expect(page.getByText("CI_PAGE_01")).toBeVisible();
@@ -112,6 +126,22 @@ test("development tenant administrator authenticates and sees own registry", asy
   shiftedFrom.setUTCDate(shiftedFrom.getUTCDate() - 28);
   await page.locator('input[type="date"]').nth(0).fill(shiftedFrom.toISOString().slice(0, 10));
   await expect(page.getByText("CI_PAGE_01")).toBeVisible();
+  await expect(page.getByText("1–50 di 51")).toBeVisible();
+  expect(offsets.at(-1)).toBe(0);
+
+  // An old, slow second-page response must never replace the latest
+  // authorized filter's first page. Hold just one test-only response.
+  holdAnOldSecondPage = true;
+  await page.getByRole("button", { name: "Pagina successiva" }).click();
+  await oldPageRequested;
+  const newerFrom = new Date();
+  newerFrom.setUTCDate(newerFrom.getUTCDate() - 27);
+  await page.locator('input[type="date"]').nth(0).fill(newerFrom.toISOString().slice(0, 10));
+  await expect(page.getByText("CI_PAGE_01")).toBeVisible();
+  releaseOldPage();
+  await oldPageServed;
+  await page.waitForTimeout(150); // allow the deliberately stale response to settle
+  await expect(page.getByText("CI_PAGE_51")).toHaveCount(0);
   await expect(page.getByText("1–50 di 51")).toBeVisible();
   expect(offsets.at(-1)).toBe(0);
 });
