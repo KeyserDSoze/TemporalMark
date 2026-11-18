@@ -63,4 +63,55 @@ test("development tenant administrator authenticates and sees own registry", asy
   });
   await page.getByRole("button", { name: "Richiedi marca esterna" }).click();
   await expect(page.getByText(/Nessuna TSA esterna configurata/)).toBeVisible();
+
+  // RED-first #111, UI-only pagination fixture AFTER real OIDC, database
+  // authorization, receipt/export and disabled-TSA checks above. These
+  // test-only route mocks do NOT count as evidence of server tenant isolation.
+  const registered = Array.from({ length: 51 }, (_, i) => ({
+    id: `00000000-0000-4000-8000-${String(i + 1).padStart(12, "0")}`,
+    issuedUtc: new Date().toISOString(),
+    digestBase64: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+    providerId: `CI_PAGE_${String(i + 1).padStart(2, "0")}`,
+    validationState: "Unverified"
+  }));
+  const offsets: number[] = [];
+  await page.route("**/api/v1/stamps/summary?*", async route => {
+    await route.fulfill({
+      status: 200, contentType: "application/json",
+      body: JSON.stringify({ organizationId: "11111111-1111-1111-1111-111111111111", count: 51 })
+    });
+  });
+  await page.route("**/api/v1/stamps?*", async route => {
+    const offset = Number(new URL(route.request().url()).searchParams.get("offset") ?? "0");
+    offsets.push(offset);
+    await route.fulfill({
+      status: 200, contentType: "application/json",
+      body: JSON.stringify(registered.slice(offset, offset + 50))
+    });
+  });
+  await page.getByRole("button", { name: "Applica filtri" }).click();
+  await expect(page.getByText("CI_PAGE_01")).toBeVisible();
+  await expect(page.getByText("CI_PAGE_51")).toHaveCount(0);
+  await expect(page.getByText("1–50 di 51")).toBeVisible();
+  await page.getByRole("button", { name: "Pagina successiva" }).click();
+  await expect(page.getByText("CI_PAGE_51")).toBeVisible();
+  await expect(page.getByText("CI_PAGE_01")).toHaveCount(0);
+  await expect(page.getByText("51–51 di 51")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Pagina successiva" })).toBeDisabled();
+  await page.getByRole("button", { name: "Pagina precedente" }).click();
+  await expect(page.getByText("CI_PAGE_01")).toBeVisible();
+  await expect(page.getByText("CI_PAGE_51")).toHaveCount(0);
+  expect(offsets).toContain(0);
+  expect(offsets).toContain(50);
+  expect(offsets.at(-1)).toBe(0);
+
+  // Changing a period resets navigation to the first authorized page.
+  await page.getByRole("button", { name: "Pagina successiva" }).click();
+  await expect(page.getByText("CI_PAGE_51")).toBeVisible();
+  const shiftedFrom = new Date();
+  shiftedFrom.setUTCDate(shiftedFrom.getUTCDate() - 28);
+  await page.locator('input[type="date"]').nth(0).fill(shiftedFrom.toISOString().slice(0, 10));
+  await expect(page.getByText("CI_PAGE_01")).toBeVisible();
+  await expect(page.getByText("1–50 di 51")).toBeVisible();
+  expect(offsets.at(-1)).toBe(0);
 });
