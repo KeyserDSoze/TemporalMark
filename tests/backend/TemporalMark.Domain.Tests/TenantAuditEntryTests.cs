@@ -18,6 +18,19 @@ public sealed class TenantAuditEntryTests
     }
 
     [Fact]
+    public void ImprintSearchAuditMustNotCarryReceiptOrPeriodMetadata()
+    {
+        var valid = new TenantAuditEntry(Guid.NewGuid(), Tenant, "user",
+            TenantAuditAction.DocumentImprintSearchPerformed, Now, null, null, null);
+        valid.Validate();
+
+        Assert.Throws<DomainRuleException>(() =>
+            (valid with { ReceiptId = Guid.NewGuid() }).Validate());
+        Assert.Throws<DomainRuleException>(() =>
+            (valid with { PeriodFromUtc = Now.AddDays(-1), PeriodToUtcExclusive = Now }).Validate());
+    }
+
+    [Fact]
     public void RejectsNonUtcTimestampAndSubjectWithControlCharacters()
     {
         var nonUtc = new TenantAuditEntry(Guid.NewGuid(), Tenant, "user",
