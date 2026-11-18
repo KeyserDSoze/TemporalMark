@@ -1,9 +1,11 @@
 """RED-first #107: offline ZIP structural and hash checks, NOT QTSP trust."""
 import base64
+import contextlib
 import hashlib
 import io
 import json
 import stat
+import tempfile
 import sys
 import unittest
 import warnings
@@ -74,6 +76,32 @@ def check(raw):
 
 
 class OfflinePeriodExportTests(unittest.TestCase):
+    def test_cli_proves_only_local_consistency_without_leaking_manifest(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "private-export.zip"
+            output = io.StringIO()
+            errors = io.StringIO()
+            path.write_bytes(build_zip())
+            with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+                exit_code = verifier.main([str(path)])
+            self.assertEqual(0, exit_code)
+            self.assertIn("NOT signed, qualified", output.getvalue())
+            self.assertIn("1 receipts", output.getvalue())
+            self.assertNotIn(ORG, output.getvalue())
+            self.assertEqual("", errors.getvalue())
+
+            # Corrupt the DER while retaining the original stored hash.
+            path.write_bytes(build_zip(files=[
+                (record()["responseFile"], b"\\x30\\x02\\x01\\x01")]))
+            output, errors = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+                exit_code = verifier.main([str(path)])
+            self.assertEqual(1, exit_code)
+            self.assertEqual("", output.getvalue())
+            self.assertIn("FAILED", errors.getvalue())
+            self.assertNotIn(ORG, errors.getvalue())
+            self.assertNotIn(str(path), errors.getvalue())
+
     def test_current_v1_archive_passes_only_local_consistency(self):
         self.assertEqual(1, check(build_zip()))
 
