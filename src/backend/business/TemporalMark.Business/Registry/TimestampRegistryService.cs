@@ -4,7 +4,7 @@ using TemporalMark.Domain.Stamping;
 
 namespace TemporalMark.Business.Registry;
 
-public sealed class ExportTooLargeException() : Exception("The period contains too many records for a synchronous export. Split the time interval.");
+public sealed class ExportTooLargeException() : Exception("The period exceeds synchronous export limits. Split the time interval.");
 
 public sealed record RegistrySummary(Guid OrganizationId, long Count, DateTimeOffset FromUtc, DateTimeOffset ToUtcExclusive);
 
@@ -12,6 +12,8 @@ public sealed record RegistrySummary(Guid OrganizationId, long Count, DateTimeOf
 public sealed class TimestampRegistryService(ITimestampRegistry registry)
 {
     public const int ExportLimit = 10000;
+    public const int ExportReceiptDerLimitBytes = 1024 * 1024;
+    public const long ExportTotalDerLimitBytes = 64L * 1024 * 1024;
 
     public async Task<byte[]?> DownloadReceiptAsync(
         Guid organizationId, Guid recordId, CancellationToken cancellationToken)
@@ -54,6 +56,10 @@ public sealed class TimestampRegistryService(ITimestampRegistry registry)
         var records = await registry.ForExportAsync(organizationId, period, ExportLimit + 1, cancellationToken);
         if (records.Count > ExportLimit)
             throw new ExportTooLargeException();
+        // Bound raw DER BEFORE hashing every receipt or allocating the
+        // in-memory ZIP. Legacy persisted rows need this independent guard:
+        // the live TSA's 1 MiB response cap does not constrain database data.
+        ValidateSynchronousExportByteBudget(records);
         // Fail before creating any ZIP or manifest: a duplicate ID could
         // otherwise create ambiguous tokens/{id}.tsr archive paths.
         ValidateReturnedRecords(records, organizationId, period);
@@ -96,6 +102,21 @@ public sealed class TimestampRegistryService(ITimestampRegistry registry)
             }
         }
         return buffer.ToArray();
+    }
+
+    private static void ValidateSynchronousExportByteBudget(IReadOnlyList<TimestampRecord> records)
+    {
+        long totalBytes = 0;
+        foreach (var record in records)
+        {
+            var length = record.ResponseDer.Length;
+            // Subtraction avoids arithmetic overflow even if the repository
+            // returns unexpected/oversized legacy evidence.
+            if (length > ExportReceiptDerLimitBytes ||
+                length > ExportTotalDerLimitBytes - totalBytes)
+                throw new ExportTooLargeException();
+            totalBytes += length;
+        }
     }
 
     private static void ValidateReturnedRecords(
