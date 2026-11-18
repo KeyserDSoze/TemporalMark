@@ -118,6 +118,63 @@ public sealed class TimestampRegistryServiceTests
             new TimestampRegistryService(new MaliciousRegistry(damaged)).ExportZipAsync(TenantA, Period, default));
     }
 
+    [Fact]
+    public async Task ExportRejectsSingleOverOneMiBReceiptBeforeCreatingZip()
+    {
+        // RED-first #106. Even a self-consistent legacy stored receipt
+        // cannot bypass the synchronous API's per-receipt byte budget.
+        var oversizedDer = new byte[1024 * 1024 + 1];
+        var receipt = MakeRecord(TenantA) with
+        {
+            ResponseDer = oversizedDer,
+            TokenSha256Hex = Convert.ToHexString(SHA256.HashData(oversizedDer))
+        };
+
+        await Assert.ThrowsAsync<ExportTooLargeException>(() =>
+            new TimestampRegistryService(new FakeRegistry([receipt]))
+                .ExportZipAsync(TenantA, Period, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task ExportRejectsCumulativeOver64MiBDerForDistinctValidReceipts()
+    {
+        // Reuse a single 1 MiB buffer across 65 independently identified
+        // self-consistent receipts; avoids 65 MiB of fixture allocations.
+        var der = new byte[1024 * 1024];
+        var seed = MakeRecord(TenantA) with
+        {
+            ResponseDer = der,
+            TokenSha256Hex = Convert.ToHexString(SHA256.HashData(der))
+        };
+        var distinct = Enumerable.Range(0, 65)
+            .Select(_ => seed with { Id = Guid.NewGuid() }).ToArray();
+
+        await Assert.ThrowsAsync<ExportTooLargeException>(() =>
+            new TimestampRegistryService(new FakeRegistry(distinct))
+                .ExportZipAsync(TenantA, Period, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task ExportAcceptsOneMiBReceiptAtInclusivePerReceiptBoundary()
+    {
+        var der = new byte[1024 * 1024];
+        var valid = MakeRecord(TenantA) with
+        {
+            ResponseDer = der,
+            TokenSha256Hex = Convert.ToHexString(SHA256.HashData(der))
+        };
+
+        var bytes = await new TimestampRegistryService(new FakeRegistry([valid]))
+            .ExportZipAsync(TenantA, Period, CancellationToken.None);
+        using var archive = new ZipArchive(new MemoryStream(bytes), ZipArchiveMode.Read);
+        using var content = new MemoryStream();
+        await using (var entryStream = archive.GetEntry($"tokens/{valid.Id:N}.tsr")!.Open())
+            await entryStream.CopyToAsync(content);
+        Assert.Equal(der, content.ToArray());
+        using var manifest = JsonDocument.Parse(archive.GetEntry("manifest.json")!.Open());
+        Assert.Equal(1, manifest.RootElement.GetProperty("count").GetInt32());
+    }
+
     private static TimestampRecord MakeRecord(Guid tenant)
     {
         var der = new byte[] { 0x30, 0x02, 0x01, 0x00 };
