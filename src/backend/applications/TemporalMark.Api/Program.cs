@@ -174,6 +174,40 @@ api.MapGet("/stamps/daily", async Task<IResult> (
     }
 });
 
+// Lookup by SHA-256 of the ORIGINAL DOCUMENT, not the .tsr token.
+// Read-only POST avoids leaking document imprints in URL access logs.
+api.MapPost("/stamps/search", async Task<IResult> (
+    StampSearchRequest input, HttpContext http, ClaimsPrincipal user,
+    ITenantAuthorization access, TimestampRegistryService registry, CancellationToken ct) =>
+{
+    var tenant = await TenantAdminAsync(user, access, ct);
+    if (!tenant.HasValue) return Results.Forbid();
+    try
+    {
+        var result = await registry.SearchByDocumentSha256Async(
+            tenant.Value,
+            new UtcPeriod(input.FromUtc, input.ToUtcExclusive),
+            input.DigestSha256Hex, input.Offset, input.Limit, ct);
+        http.Response.Headers.CacheControl = "no-store";
+        return Results.Ok(new
+        {
+            items = result.Items.Select(record => new
+            {
+                record.Id, record.IssuedUtc, record.HashAlgorithmOid,
+                record.DigestBase64, record.ProviderId,
+                validationState = record.ValidationState.ToString(),
+                record.EvidenceReference
+            }).ToArray(),
+            result.HasMore
+        });
+    }
+    catch (ArgumentException error)
+    {
+        // Do not echo the caller's fingerprint or return raw evidence.
+        return Results.BadRequest(new { error = error.Message });
+    }
+});
+
 api.MapGet("/stamps", async Task<IResult> (
     ClaimsPrincipal user, ITenantAuthorization access, TimestampRegistryService registry,
     DateTimeOffset fromUtc, DateTimeOffset toUtcExclusive, int? offset, int? limit, CancellationToken ct) =>
@@ -315,3 +349,7 @@ static async Task<Guid?> TenantAdminAsync(
         return null;
     return await access.IsActiveAdminAsync(tenant, subject, ct) ? tenant : null;
 }
+
+internal sealed record StampSearchRequest(
+    DateTimeOffset FromUtc, DateTimeOffset ToUtcExclusive,
+    string DigestSha256Hex, int Offset, int Limit);
