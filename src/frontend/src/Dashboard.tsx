@@ -9,6 +9,17 @@ interface TenantInfo { organizationId: string; role: string; qualificationState:
 interface Summary { count: number; organizationId: string }
 interface DailyCount { dateUtc: string; count: number }
 interface DailySummary { organizationId: string; days: DailyCount[] }
+interface ImprintSearchPage {
+  items: RegistryItem[];
+  hasMore: boolean;
+}
+interface ImprintSearchView extends ImprintSearchPage {
+  offset: number;
+  hex: string;
+  token: string;
+  from: string;
+  to: string;
+}
 interface RegistryItem {
   id: string; issuedUtc: string; digestBase64: string; providerId: string;
   validationState: string;
@@ -57,6 +68,11 @@ export default function Dashboard({ accessToken }: { accessToken: string }) {
   const [issuing, setIssuing] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [issueMessage, setIssueMessage] = useState("");
+  const [searchHex, setSearchHex] = useState("");
+  const [searchState, setSearchState] = useState<ImprintSearchView | null>(null);
+  const [searchBusy, setSearchBusy] = useState(false);
+  const [searchError, setSearchError] = useState("");
+  const searchGeneration = useRef(0);
   const [error, setError] = useState("");
 
   const get = useCallback(async (path: string) => {
@@ -205,6 +221,63 @@ export default function Dashboard({ accessToken }: { accessToken: string }) {
     }
   };
 
+  // Search uses a read-only authenticated POST so a sensitive document
+  // fingerprint is never embedded in URL/query logs or browser history.
+  // It is distinct from the default period registry list and count.
+  const searchImprint = async (offset: number) => {
+    if (!/^[0-9A-Fa-f]{64}$/.test(searchHex) || offset < 0) return;
+    const generation = ++searchGeneration.current;
+    const hex = searchHex;
+    const token = accessToken;
+    const requestedFrom = from;
+    const requestedTo = to;
+    setSearchBusy(true);
+    setSearchError("");
+    setSearchState(null);
+    try {
+      const period = bounds(requestedFrom, requestedTo);
+      const response = await fetch("/api/v1/stamps/search", {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer " + token,
+          "Content-Type": "application/json"
+        },
+        cache: "no-store",
+        body: JSON.stringify({
+          fromUtc: period.get("fromUtc"),
+          toUtcExclusive: period.get("toUtcExclusive"),
+          digestSha256Hex: hex,
+          offset,
+          limit: REGISTRY_PAGE_SIZE
+        })
+      });
+      if (!response.ok) throw new Error(response.status === 403 ? t("noTenant") : t("error"));
+      const payload = await response.json() as ImprintSearchPage;
+      if (generation !== searchGeneration.current) return;
+      if (!payload || !Array.isArray(payload.items) ||
+          payload.items.length > REGISTRY_PAGE_SIZE ||
+          typeof payload.hasMore !== "boolean" ||
+          new Set(payload.items.map(item => item.id)).size !== payload.items.length)
+        throw new Error(t("error"));
+      setSearchState({ ...payload, offset, hex, token, from: requestedFrom, to: requestedTo });
+    } catch (exception) {
+      if (generation !== searchGeneration.current) return;
+      setSearchState(null);
+      setSearchError(exception instanceof Error ? exception.message : t("error"));
+    } finally {
+      if (generation === searchGeneration.current) setSearchBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    // A changing UTC period or identity immediately makes a previous
+    // search page ineligible for rendering. In-flight old replies are ignored.
+    searchGeneration.current += 1;
+    setSearchState(null);
+    setSearchError("");
+    setSearchBusy(false);
+  }, [from, to, accessToken]);
+
   const loadMoreAudit = async () => {
     const generation = loadGeneration.current;
     setBusy(true);
@@ -235,6 +308,10 @@ export default function Dashboard({ accessToken }: { accessToken: string }) {
   }[state] ?? t("unverified"));
 
   const sessionReady = loadedToken === accessToken;
+  const currentSearch = searchState &&
+    searchState.token === accessToken &&
+    searchState.from === from && searchState.to === to &&
+    searchState.hex === searchHex && sessionReady ? searchState : null;
   const currentTenant = sessionReady ? tenant : null;
   const currentSummary = sessionReady ? summary : null;
   const currentDaily = sessionReady ? daily : null;
@@ -343,6 +420,78 @@ export default function Dashboard({ accessToken }: { accessToken: string }) {
               </Button>
             </div>
           </div>}
+      </CardContent>
+    </Card>
+    <Card>
+      <CardHeader>
+        <h2 className="text-lg font-semibold">{t("searchImprintHeading")}</h2>
+        <p className="text-xs text-muted-foreground">{t("searchImprintHelp")}</p>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+          <label className="flex flex-1 flex-col gap-1 text-sm">
+            <span className="text-muted-foreground">{t("searchImprintLabel")}</span>
+            <input type="text" inputMode="text" spellCheck={false} autoComplete="off"
+              maxLength={64} value={searchHex}
+              aria-label={t("searchImprintLabel")}
+              className="h-10 w-full rounded-lg border border-border bg-background px-3 font-mono text-xs"
+              onChange={event => {
+                searchGeneration.current += 1;
+                setSearchHex(event.target.value);
+                setSearchState(null);
+                setSearchError("");
+                setSearchBusy(false);
+              }} />
+          </label>
+          <Button variant="outline" disabled={!sessionReady || searchBusy ||
+              !/^[0-9A-Fa-f]{64}$/.test(searchHex)}
+            onClick={() => void searchImprint(0)}>
+            {searchBusy ? t("loading") : t("searchImprintButton")}
+          </Button>
+        </div>
+        {searchError && <p role="alert" className="text-sm text-destructive">{searchError}</p>}
+        {currentSearch && <>
+          {currentSearch.items.length === 0 ?
+            <p className="text-sm text-muted-foreground">{t("searchImprintNoResults")}</p> :
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[580px] text-left text-sm" aria-label={t("searchImprintHeading")}>
+                <thead><tr className="border-b border-border text-muted-foreground">
+                  <th className="pb-3 font-medium">{t("issued")}</th>
+                  <th className="pb-3 font-medium">{t("provider")}</th>
+                  <th className="pb-3 font-medium">{t("status")}</th>
+                  <th className="pb-3 font-medium">{t("actions")}</th>
+                </tr></thead>
+                <tbody>{currentSearch.items.map(item =>
+                  <tr key={item.id} className="border-b border-border/50">
+                    <td className="py-3 pr-4 whitespace-nowrap">
+                      {new Date(item.issuedUtc).toLocaleString(i18n.language, { timeZone: "UTC" })}
+                    </td>
+                    <td className="py-3 pr-4">{item.providerId}</td>
+                    <td className="py-3 pr-4"><Badge>{labelFor(item.validationState)}</Badge></td>
+                    <td className="py-3"><Button size="sm" variant="outline"
+                      onClick={() => void downloadReceipt(item.id)}>{t("downloadReceipt")}</Button></td>
+                  </tr>)}</tbody>
+              </table>
+            </div>}
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p role="status" className="text-xs text-muted-foreground">
+              {t("searchImprintPageStatus", {
+                start: currentSearch.items.length > 0 ? currentSearch.offset + 1 : 0,
+                end: currentSearch.offset + currentSearch.items.length
+              })}
+            </p>
+            <div className="flex gap-2">
+              <Button size="sm" variant="outline" disabled={searchBusy || currentSearch.offset === 0}
+                onClick={() => void searchImprint(Math.max(0, currentSearch.offset - REGISTRY_PAGE_SIZE))}>
+                {t("searchImprintPrevious")}
+              </Button>
+              <Button size="sm" variant="outline" disabled={searchBusy || !currentSearch.hasMore}
+                onClick={() => void searchImprint(currentSearch.offset + REGISTRY_PAGE_SIZE)}>
+                {t("searchImprintNext")}
+              </Button>
+            </div>
+          </div>
+        </>}
       </CardContent>
     </Card>
     <Card>
