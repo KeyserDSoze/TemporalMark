@@ -24,3 +24,32 @@ An interrupted HTTP response might have been issued remotely; this slice cannot 
 - [Microsoft NetworkStream.ReadAsync](https://learn.microsoft.com/en-us/dotnet/api/system.net.sockets.networkstream.readasync?view=net-10.0)
 - [Microsoft HttpContent.ReadAsStreamAsync](https://learn.microsoft.com/en-us/dotnet/api/system.net.http.httpcontent.readasstreamasync?view=net-10.0)
 - [ADR 0053 response HTTP envelope](0053-rfc3161-strict-http-response-envelope.md)
+
+## Amendment — cancellation provenance must follow the caller token (2026-11-18)
+
+The #99 transport boundary also needs to distinguish **exception subclass** from
+**who actually cancelled the operation**. `OperationCanceledException` is the base
+class of `TaskCanceledException`; a response stream or handler can throw the base
+class when its internal timeout/abort happens without the caller's
+`CancellationToken` being signalled. A catch for only `TaskCanceledException`
+misses that failure and can result in an unhandled API 500. Conversely,
+swallowing every `OperationCanceledException` would erase the caller's
+intentional cancellation.
+
+Update the existing, narrow exception boundary to catch
+`OperationCanceledException` **only when the original caller token's
+`IsCancellationRequested` is false**. Return the same generic
+`TimestampProviderUnavailableException("External TSA request timed out.")`;
+do not include the raw exception message, retry automatically, persist
+a partial response or claim remote issuance did not happen. If the caller
+token is cancelled, propagate cancellation unchanged.
+
+TDD order for this amendment: update this ADR first; append RED-first
+`HttpMessageHandler` and `Stream` tests for base-class cancellation on
+send, stream acquisition and after a partial body, plus cancellation during
+stream read by a real caller token; then change the catch minimally, update
+runbook/threat/roadmap/issue and require exact-final SHA 4/4 GitHub CI.
+The prior I/O tests and all legal, tenant, and WebAuthn gates remain intact.
+
+References: [.NET OperationCanceledException](https://learn.microsoft.com/en-us/dotnet/api/system.operationcanceledexception?view=net-10.0);
+[.NET TaskCanceledException](https://learn.microsoft.com/en-us/dotnet/api/system.threading.tasks.taskcanceledexception?view=net-10.0).
