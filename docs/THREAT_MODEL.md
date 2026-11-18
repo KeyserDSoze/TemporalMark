@@ -337,3 +337,20 @@ After HTTP status/MIME acceptance, `ResponseHeadersRead` exposes an untrusted st
 ## Uninterpreted CMS-signed TSTInfo extensions (#100)
 
 RFC3161 §2.4.2 permits optional signed `TSTInfo.extensions`. A valid CMS signature authenticates the bytes but does not mean the receiver understands arbitrary OID meanings, extra timestamp service assertions or required processing rules. A signed token carrying even **noncritical** unknown extensions might be semantically misinterpreted if the API silently ignores them. The delegated *unqualified pilot* now enforces a deliberately strict no-TSTInfo-extensions profile **after** validating CMS signature/imprint/nonce, signer profile/pin, signed policy/genTime, custom-root issuer-signed CRLs and declared accuracy. Any nonempty signed TSTInfo extension list fails with a generic response error and no persisted evidence. This is **not** a claim that RFC3161 universally requires all clients to reject all such response extensions; the standard's unknown-request-extension rule primarily governs the TSA. A compliant QTSP may be rejected until explicit OID semantics, DER test fixtures, policy implications and historical trust status are independently reviewed. X.509 *certificate* extensions remain separately required. Shared on-prem/Azure behavior, no tenant allowlist or new privilege, V015/V016 registrar interlock unchanged, and all unqualified receipts remain Unverified. See ADR 0069/#100; #15/#17/#13 stay OPEN.
+
+### Non-caller cancellation during streamed TSA response (#99 amendment)
+
+The initial partial-stream hardening handled `IOException`, but a TSA
+handler/content stream can also throw the base `OperationCanceledException`
+(without caller cancellation), bypassing a `TaskCanceledException`-only
+catch. That previously risked an unhandled API 500 instead of generic
+transport unavailability. The provider now catches
+`OperationCanceledException` **only when the caller's
+`CancellationToken.IsCancellationRequested == false`**, maps it to
+the existing generic TSA timeout/unavailability response and refuses
+any partial DER. If a client cancels after data delivery begins,
+the original cancellation continues outward without being fabricated
+as an upstream failure. This does not prove no timestamp was created
+upstream, prevent double billing or enable safe blind retries. Tests
+cover upstream abort at send/acquire/partial-body and caller cancellation
+mid-body. ADR 0068 amendment/#99; no legal qualified or WORM claim.
