@@ -90,6 +90,102 @@ public sealed class TimestampRegistryServiceTests
     }
 
     [Fact]
+    public async Task DailyCountIsTenantBoundAndIncludesEmptyUtcDays()
+    {
+        var start = new DateTimeOffset(2026, 11, 15, 0, 0, 0, TimeSpan.Zero);
+        var period = new UtcPeriod(start, start.AddDays(3));
+        var a = MakeRecord(TenantA);
+        var values = new[]
+        {
+            a,
+            a with { Id = Guid.NewGuid(), IssuedUtc = start.AddHours(23) },
+            a with { Id = Guid.NewGuid(), IssuedUtc = start.AddDays(2).AddHours(1) },
+            MakeRecord(TenantB) with { IssuedUtc = start.AddHours(1) },
+            a with { Id = Guid.NewGuid(), IssuedUtc = start.AddDays(3) } // exclusive end
+        };
+        var repo = new FakeRegistry(values);
+
+        var result = await new TimestampRegistryService(repo).DailyAsync(
+            TenantA, period, CancellationToken.None);
+
+        Assert.Equal(TenantA, result.OrganizationId);
+        Assert.Equal(start, result.FromUtc);
+        Assert.Equal(start.AddDays(3), result.ToUtcExclusive);
+        Assert.Equal(new long[] { 2, 0, 1 }, result.Days.Select(x => x.Count).ToArray());
+        Assert.Equal(new[]
+        {
+            new DateOnly(2026, 11, 15), new DateOnly(2026, 11, 16), new DateOnly(2026, 11, 17)
+        }, result.Days.Select(x => x.DateUtc).ToArray());
+        Assert.Equal(1, repo.DailyQueries);
+    }
+
+    [Fact]
+    public async Task DailyAllowsInclusive31DayRangeButNoMore()
+    {
+        var repo = new FakeRegistry([]);
+        var start = new DateTimeOffset(2026, 11, 1, 0, 0, 0, TimeSpan.Zero);
+        var result = await new TimestampRegistryService(repo).DailyAsync(
+            TenantA, new UtcPeriod(start, start.AddDays(31)), default);
+        Assert.Equal(31, result.Days.Count);
+        Assert.All(result.Days, x => Assert.Equal(0, x.Count));
+        Assert.Equal(new DateOnly(2026, 12, 1), result.Days[^1].DateUtc);
+    }
+
+    [Fact]
+    public async Task DailyRejectsUnalignedOrOverlongPeriodsBeforeQuery()
+    {
+        var start = new DateTimeOffset(2026, 11, 1, 0, 0, 0, TimeSpan.Zero);
+        foreach (var period in new[]
+        {
+            new UtcPeriod(start.AddMinutes(1), start.AddDays(1)),
+            new UtcPeriod(start, start.AddDays(1).AddMinutes(1)),
+            new UtcPeriod(start, start.AddDays(32))
+        })
+        {
+            var repo = new FakeRegistry([]);
+            await Assert.ThrowsAsync<ArgumentException>(() =>
+                new TimestampRegistryService(repo).DailyAsync(TenantA, period, default));
+            Assert.Equal(0, repo.DailyQueries);
+        }
+    }
+
+    [Fact]
+    public async Task DailyRejectsEmptyTenantBeforeQuery()
+    {
+        var repo = new FakeRegistry([]);
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            new TimestampRegistryService(repo).DailyAsync(
+                Guid.Empty, new UtcPeriod(
+                    new DateTimeOffset(2026, 11, 1, 0, 0, 0, TimeSpan.Zero),
+                    new DateTimeOffset(2026, 11, 2, 0, 0, 0, TimeSpan.Zero)), default));
+        Assert.Equal(0, repo.DailyQueries);
+    }
+
+    [Fact]
+    public async Task DailyRejectsMalformedRepositorySeriesWithoutReturningPartialStats()
+    {
+        var one = new DateOnly(2026, 11, 15);
+        var period = new UtcPeriod(
+            new DateTimeOffset(2026, 11, 15, 0, 0, 0, TimeSpan.Zero),
+            new DateTimeOffset(2026, 11, 17, 0, 0, 0, TimeSpan.Zero));
+        var malformed = new IReadOnlyList<RegistryDayCount>[]
+        {
+            [new RegistryDayCount(one, 1), new RegistryDayCount(one, 1)],
+            [new RegistryDayCount(one.AddDays(-1), 1)],
+            [new RegistryDayCount(one.AddDays(2), 1)],
+            [new RegistryDayCount(one, 0)],
+            [new RegistryDayCount(one, -1)]
+        };
+        foreach (var series in malformed)
+        {
+            var repo = new FakeRegistry([], series);
+            await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                new TimestampRegistryService(repo).DailyAsync(TenantA, period, default));
+            Assert.Equal(1, repo.DailyQueries);
+        }
+    }
+
+    [Fact]
     public async Task ExportContainsDerAndManifestForAuthorizedTenant()
     {
         var fake = new FakeRegistry(new[] { MakeRecord(TenantA), MakeRecord(TenantB) });
@@ -185,8 +281,22 @@ public sealed class TimestampRegistryServiceTests
             TimestampValidationState.Unverified, der, null);
     }
 
-    private sealed class FakeRegistry(IReadOnlyList<TimestampRecord> data) : ITimestampRegistry
+    private sealed class FakeRegistry(
+        IReadOnlyList<TimestampRecord> data, IReadOnlyList<RegistryDayCount>? overrideDays = null) : ITimestampRegistry
     {
+        public int DailyQueries { get; private set; }
+        public Task<IReadOnlyList<RegistryDayCount>> CountByUtcDayAsync(
+            Guid org, UtcPeriod period, CancellationToken ct)
+        {
+            DailyQueries++;
+            return Task.FromResult(overrideDays ?? (IReadOnlyList<RegistryDayCount>)
+                Filter(org, period)
+                    .GroupBy(x => DateOnly.FromDateTime(x.IssuedUtc.UtcDateTime))
+                    .OrderBy(x => x.Key)
+                    .Select(x => new RegistryDayCount(x.Key, x.LongCount()))
+                    .ToArray());
+        }
+
         private IEnumerable<TimestampRecord> Filter(Guid org, UtcPeriod period) =>
             data.Where(x => x.OrganizationId == org && period.Contains(x.IssuedUtc));
         public Task<TimestampRecord?> FindByIdAsync(Guid org, Guid id, CancellationToken ct) =>
@@ -203,6 +313,8 @@ public sealed class TimestampRegistryServiceTests
     {
         public Task<TimestampRecord?> FindByIdAsync(Guid org, Guid id, CancellationToken ct) => Task.FromResult<TimestampRecord?>(record);
         public Task<long> CountAsync(Guid org, UtcPeriod period, CancellationToken ct) => Task.FromResult(1L);
+        public Task<IReadOnlyList<RegistryDayCount>> CountByUtcDayAsync(Guid org, UtcPeriod period, CancellationToken ct) =>
+            Task.FromResult<IReadOnlyList<RegistryDayCount>>([new RegistryDayCount(new DateOnly(2026, 11, 15), 1)]);
         public Task<IReadOnlyList<TimestampRecord>> PageAsync(Guid org, UtcPeriod period, int off, int lim, CancellationToken ct) =>
             Task.FromResult<IReadOnlyList<TimestampRecord>>(new[] { record });
         public Task<IReadOnlyList<TimestampRecord>> ForExportAsync(Guid org, UtcPeriod period, int max, CancellationToken ct) =>
