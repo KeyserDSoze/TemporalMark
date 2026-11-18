@@ -42,7 +42,7 @@ messages. Do not relay private archive contents to third-party validators.
   On Unix-origin entries, external file-type bits must identify an
   ordinary file or omit the type; FIFO, socket, character/block device,
   symbolic link and directory metadata are all rejected. No member
-  is extracted or executed. See [ADR 0077](../adr/0077-zip-compression-unix-special-file-gates.md)
+  is extracted or executed. The verifier also compares the **local ZIP header's** method and general-purpose flags against the **central-directory** values for each member before decompression. Python's default ZIP reader checks names but does not itself bind these fields: an altered local method can disagree with an otherwise valid central entry without changing manifest/DER hashes. Mismatches fail closed after a bounded 30-byte local-header read, with no path output. See [ADR 0078](../adr/0078-zip-local-central-header-method-flag-binding.md) and [#109](https://github.com/KeyserDSoze/TemporalMark/issues/109). See also [ADR 0077](../adr/0077-zip-compression-unix-special-file-gates.md)
   and focused [#108](https://github.com/KeyserDSoze/TemporalMark/issues/108).
 - Organization identifier is a canonical nonempty UUID. Manifest count
   matches entries and the ZIP. Each record ID is canonical and unique,
