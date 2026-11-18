@@ -84,6 +84,15 @@ class OfflinePeriodExportTests(unittest.TestCase):
         with self.assertRaises(verifier.ExportVerificationError):
             check(build_zip(files=[(record()["responseFile"], b"\x30\x02\x01\x01")]))
 
+    def test_empty_der_member_is_denied_even_if_hash_matches(self):
+        # TimestampRecord.Validate() refuses empty receipt bytes in the
+        # producer: the offline verifier must enforce the same invariant.
+        empty = b""
+        row = record(der=empty)
+        with self.assertRaises(verifier.ExportVerificationError):
+            check(build_zip(manifest([row]),
+                            files=[(row["responseFile"], empty)]))
+
     def test_modified_manifest_hash_is_rejected(self):
         m = manifest([record(TokenSha256Hex="0" * 64)])
         with self.assertRaises(verifier.ExportVerificationError):
@@ -123,7 +132,7 @@ class OfflinePeriodExportTests(unittest.TestCase):
             manifest(count=True),
             manifest(count=2),
             manifest(entries=[duplicate, duplicate]),
-            manifest(entries=[{"Id": RID}]),
+            manifest(entries=[{k: v for k, v in record().items() if k != "HashAlgorithmOid"}]),
             manifest(organizationId="not-a-uuid"),
         ]
         for m in cases:
