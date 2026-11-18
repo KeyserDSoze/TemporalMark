@@ -311,3 +311,17 @@ dotnet test tests/backend/TemporalMark.Provisioner.Tests/TemporalMark.Provisione
 ```
 
 Sources: [RFC 3161 §2.4.2](https://www.rfc-editor.org/rfc/rfc3161#section-2.4.2) and [.NET Rfc3161TimestampTokenInfo](https://learn.microsoft.com/en-us/dotnet/api/system.security.cryptography.pkcs.rfc3161timestamptokeninfo?view=net-10.0).
+
+## Fail-closed response-stream I/O outages (#99; ADR 0068)
+
+The configured TSA client uses `HttpCompletionOption.ResponseHeadersRead`, so the response may advertise **200 OK** and `application/timestamp-reply` while the actual socket stream fails to open, or may return a partial DER prefix before a read fails. A raw `System.IO.IOException` from those reads previously bypassed the provider's HttpRequestException/timeout normalization and could reach an unhandled API error. The delegated pilot now converts transport `IOException` into a generic `TimestampProviderUnavailableException` (API 503), **without retaining/returning any partially read bytes** or leaking the raw I/O exception message. This also catches I/O errors from the send path. The existing status/MIME guard, 1 MiB cap, full DER/CMS verification, 120-second signed genTime window, signer KU/EKU, operator root/CRL floors and signed claimed accuracy rules remain unchanged. A complete but invalid DER response still maps to a TSA response error (502). Explicit caller cancellation must remain a cancellation rather than a fabricated successful response.
+
+**Operational caveat:** an unavailable response may still correspond to a request *received* or even processed by the upstream TSA. This change is not external issuance idempotency, an exactly-once billing guarantee, a safe automatic retry mechanism, or a record of legal delivery. Do not retry blindly without an independently reviewed nonce/transaction correlation and quota policy. Temporary transport interruptions must never generate `Unverified` evidence or masquerade as qualified timestamp proof.
+
+Focused RED-first test `tests/backend/TemporalMark.Provisioner.Tests/ExternalRfc3161StreamingIoFailureTests.cs` injects `IOException` during send, stream acquisition and **after a delivered DER prefix**, asserts sanitized unavailability and unchanged invalid-DER behavior, and preserves caller cancellation. Uses only disposable root/CRL test fixtures; no live QTSP. ADR first `dc135237`, test-first `ca5f382c`, implementation `4d877568`. **Actual exact-final-main 4/4 Actions result must still be verified** before closing #99; previous #97/#98 are separately pending CI. Parent #15, WORM #17 and CAB/AgID #13 remain open.
+
+```sh
+dotnet test tests/backend/TemporalMark.Provisioner.Tests/TemporalMark.Provisioner.Tests.csproj --configuration Release --filter FullyQualifiedName~ExternalRfc3161StreamingIoFailureTests
+```
+
+Reference: [ADR 0068](../adr/0068-rfc3161-response-stream-io-fail-closed.md), [Microsoft NetworkStream.ReadAsync](https://learn.microsoft.com/en-us/dotnet/api/system.net.sockets.networkstream.readasync?view=net-10.0).
