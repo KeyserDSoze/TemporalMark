@@ -41,8 +41,9 @@ public sealed class TimestampRegistryService(ITimestampRegistry registry)
         if (offset < 0 || limit < 1 || limit > 200)
             throw new ArgumentOutOfRangeException(nameof(limit), "Use 1..200 records per page and offset >= 0.");
         var records = await registry.PageAsync(organizationId, period, offset, limit, cancellationToken);
-        if (records.Any(record => record.OrganizationId != organizationId || !period.Contains(record.IssuedUtc)))
-            throw new InvalidOperationException("Repository returned a record outside authorized tenant/period.");
+        // Do not surface record metadata unless the underlying retained DER
+        // and hash are self-consistent and each listed ID is unique.
+        ValidateReturnedRecords(records, organizationId, period);
         return records;
     }
 
@@ -53,6 +54,9 @@ public sealed class TimestampRegistryService(ITimestampRegistry registry)
         var records = await registry.ForExportAsync(organizationId, period, ExportLimit + 1, cancellationToken);
         if (records.Count > ExportLimit)
             throw new ExportTooLargeException();
+        // Fail before creating any ZIP or manifest: a duplicate ID could
+        // otherwise create ambiguous tokens/{id}.tsr archive paths.
+        ValidateReturnedRecords(records, organizationId, period);
 
         using var buffer = new MemoryStream();
         using (var zip = new ZipArchive(buffer, ZipArchiveMode.Create, leaveOpen: true))
@@ -86,15 +90,32 @@ public sealed class TimestampRegistryService(ITimestampRegistry registry)
 
             foreach (var record in records)
             {
-                record.Validate();
-                if (record.OrganizationId != organizationId || !period.Contains(record.IssuedUtc))
-                    throw new InvalidOperationException("Repository returned a record outside authorized tenant/period.");
                 var entry = zip.CreateEntry($"tokens/{record.Id:N}.tsr", CompressionLevel.Optimal);
                 await using var output = entry.Open();
                 await output.WriteAsync(record.ResponseDer, cancellationToken);
             }
         }
         return buffer.ToArray();
+    }
+
+    private static void ValidateReturnedRecords(
+        IReadOnlyList<TimestampRecord> records, Guid organizationId, UtcPeriod period)
+    {
+        var seenIds = new HashSet<Guid>();
+        foreach (var record in records)
+        {
+            if (record.OrganizationId != organizationId || !period.Contains(record.IssuedUtc))
+                throw new InvalidOperationException(
+                    "Repository returned a record outside authorized tenant/period.");
+
+            // Existing domain rule checks actual retained token bytes against
+            // its stored SHA-256; this does not assert RFC3161 qualification.
+            record.Validate();
+
+            if (!seenIds.Add(record.Id))
+                throw new InvalidOperationException(
+                    "Repository returned duplicate timestamp record identifiers.");
+        }
     }
 
     private static void RequireTenant(Guid organizationId)
