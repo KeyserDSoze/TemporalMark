@@ -384,6 +384,40 @@ def check_authorized(token, own_org, own_id, other_id, own_audit, own_der, other
         raise AssertionError(f"{role}: spoofed ZIP leaked cross-tenant data")
 
 
+def assert_search_audit_fail_closed_on_real_postgres_write_denial(token: str):
+    # CI-only negative test. Permission changes are made by the disposable
+    # PostgreSQL owner and MUST be reverted even if the HTTP assertion fails.
+    # No production database endpoint or parameters are accepted.
+    def owner_sql(statement: str):
+        proc = subprocess.run([
+            "docker", "compose", "-f", "docker/compose.yml",
+            "exec", "-T", "postgres", "psql", "-X", "-q",
+            "-v", "ON_ERROR_STOP=1", "-U", "temporalmark",
+            "-d", "temporalmark"
+        ], input=statement + "\n", text=True, capture_output=True,
+            timeout=35, check=False)
+        if proc.returncode != 0:
+            raise AssertionError("CI-only audit writer permission exercise failed")
+
+    before = [row["id"] for row in audit(token)
+              if row.get("action") == "DocumentImprintSearchPerformed"]
+    owner_sql("REVOKE INSERT ON TABLE public.tenant_audit_events FROM temporalmark_runtime_group;")
+    try:
+        status, _, body = search_imprint(token, DIGEST_A.hex())
+        if status != 500:
+            raise AssertionError("Audit append outage did not fail closed with HTTP 500")
+        if (STAMP_A.encode() in body or DIGEST_A.hex().encode() in body or
+                base64.b64encode(DIGEST_A) in body):
+            raise AssertionError("Audit outage disclosed registry results or searched imprint")
+    finally:
+        owner_sql("GRANT INSERT ON TABLE public.tenant_audit_events TO temporalmark_runtime_group;")
+
+    after = [row["id"] for row in audit(token)
+             if row.get("action") == "DocumentImprintSearchPerformed"]
+    if after != before:
+        raise AssertionError("Denied audit append unexpectedly persisted a search event")
+
+
 def main():
     if os.environ.get("TEMPORALMARK_CI_API_ISOLATION") != "1":
         raise AssertionError("Explicit CI-only fixture gate required")
@@ -461,6 +495,7 @@ def main():
         "/stamps/issue", token=disabled_token, method="POST", payload=payload), 403)
     if summary(a_token)["count"] != 1 or summary(b_token)["count"] != 1:
         raise AssertionError("Disabled external TSA accidentally minted an evidence record")
+    assert_search_audit_fail_closed_on_real_postgres_write_denial(a_token)
     print("PASS: real Keycloak-signed JWT 401/403; two isolated PostgreSQL tenants; "
           "real API list/summary/UTC daily/document-SHA256-search/TSR/ZIP/audit; header/query/body spoofing; "
           "inactive membership; no qualified issuance")
