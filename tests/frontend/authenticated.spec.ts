@@ -22,6 +22,19 @@ test("development tenant administrator authenticates and sees own registry", asy
   await expect(page.getByText("Nessuna marca registrata nel periodo selezionato.")).toBeVisible();
   await expect(page.getByText("Servizio NON qualificato")).toBeVisible();
   await expect(page.getByText("Cronologia accessi alle evidenze")).toBeVisible();
+  // Real signed-Keycloak session, empty tenant registry: one accessible
+  // zero-valued bar for every day in the default 30-day UTC window.
+  const chart = page.getByRole("group", { name: "Marche registrate per giorno (UTC)" });
+  await expect(chart).toBeVisible();
+  await expect(chart.getByRole("img")).toHaveCount(30);
+
+  // A longer period must not fail summary/registry/audit/export merely
+  // because the daily aggregate is deliberately capped at 31 days.
+  await page.locator('input[type="date"]').nth(0).fill("2026-01-01");
+  await page.locator('input[type="date"]').nth(1).fill("2026-03-01");
+  await page.getByRole("button", { name: "Applica filtri" }).click();
+  await expect(page.getByText(/Il grafico giornaliero mostra fino a 31 giorni UTC/)).toBeVisible();
+  await expect(page.getByText("Nessuna marca registrata nel periodo selezionato.")).toBeVisible();
   // Exporting an empty registry is still a tenant-sensitive operation.
   const download = page.waitForEvent("download");
   await page.getByRole("button", { name: "Esporta ZIP del periodo" }).click();
