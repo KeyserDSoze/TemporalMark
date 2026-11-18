@@ -83,3 +83,27 @@ these assertions to constitute evidence. Older successful runs
 do not prove the new #110 route or frontend logic. This remains
 **unqualified registry counts**, not legal issuance/retention proof
 (ADR [0079](../adr/0079-tenant-utc-daily-dashboard-counts.md)).
+
+## Browser date-filter regression found and corrected in #110
+
+The final documentation-inclusive candidate [`83372ec`](https://github.com/KeyserDSoze/TemporalMark/commit/83372ec878887e3293ed1532832f435fd902f089)
+ran [GitHub Actions 44296880404 attempt 1](https://github.com/KeyserDSoze/TemporalMark/actions/runs/44296880404/attempts/1).
+The **backend, frontend and Terraform jobs succeeded**, but the real
+signed-Keycloak `docker-smoke` browser job failed in
+`tests/frontend/authenticated.spec.ts` after exercising the new
+over-31-day chart fallback. The test had selected
+**2026-01-01 through 2026-03-01**, then prepared a new ZIP export on
+**2026-11-18** and incorrectly expected the just-created `PeriodExportPrepared`
+audit event to appear **inside the old January–March audit filter**.
+The API correctly returned the in-range audit results only; this is
+a test-sequencing error, not a justification to weaken tenant/UTC
+audit isolation.
+
+The browser fixture fix [`60d59b3`](https://github.com/KeyserDSoze/TemporalMark/commit/60d59b3ab9c5eff084c8ed8a3b6f4b4c9f2b5fe8)
+explicitly resets the selected period to the **current 30-day UTC
+window**, waits for the zero-day chart to reappear, and **only then**
+downloads the ZIP and checks the newly prepared in-period audit
+event. The long-range fallback and standard chart assertions are
+preserved. No API audit query, OIDC rule, SQL scope, WORM or legal
+qualifying assertion was changed. Final exact HEAD 4/4 CI must be
+independently verified before closing focused issue #110.
