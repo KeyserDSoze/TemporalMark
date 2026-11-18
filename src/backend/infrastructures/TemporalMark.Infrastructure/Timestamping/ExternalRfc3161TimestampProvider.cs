@@ -7,9 +7,12 @@ using TemporalMark.Business.Stamping;
 namespace TemporalMark.Infrastructure.Timestamping;
 
 /// <summary>
-/// Strict RFC 3161 client. Checks the nonce/imprint and cryptographic signer
-/// but NOT certificate revocation, historical Trusted List or legal qualification.
-/// This MUST NOT be used to label timestamps as qualified.
+/// Strict UNQUALIFIED RFC 3161 delegated pilot. Verifies nonce/imprint,
+/// cryptographic signer and a restricted offline custom-root PKIX path plus
+/// issuer-signed complete CRLs and operator-controlled CRLNumber floors.
+/// This does NOT establish independently authenticated CRL provenance,
+/// historical EU Trusted List service status or legal qualification;
+/// no timestamp from this provider may be labeled qualified.
 /// </summary>
 public sealed class ExternalRfc3161TimestampProvider(
     HttpClient http,
