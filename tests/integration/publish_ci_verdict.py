@@ -119,10 +119,10 @@ def main() -> int:
             with Path(summary_path).open("a", encoding="utf-8") as summary:
                 summary.write(
                     f"### Four-core-job CI verdict: {payload['state']}\n\n"
-                    f"Commit: \`{sha}\`  \\n"
-                    f"Core job results: \`{payload['description']}\`  \\n"
-                    f"Workflow attempt: {target_url}\\n\n"
-                    "GitHub-reported job results only; not a signed production attestation.\\n")
+                    f"Commit: `{sha}`  \n"
+                    f"Core job results: `{payload['description']}`  \n"
+                    f"Workflow attempt: {target_url}\n\n"
+                    "GitHub-reported job results only; not a signed production attestation.\n")
         return 0
     except (ValueError, OSError, RuntimeError, urllib.error.URLError) as error:
         # Avoid printing raw external HTTP messages or the bearer token.
