@@ -188,6 +188,60 @@ class OfflinePeriodExportTests(unittest.TestCase):
             self.assertIn("FAILED", errors.getvalue())
             self.assertNotIn(str(path), errors.getvalue())
 
+    @staticmethod
+    def _change_only_local_header_short(raw: bytes, name: str,
+                                       field_offset: int, value: int) -> bytes:
+        # Source-only RED-first #109: central directory, DER, CRC, manifest
+        # and member bytes remain unchanged. Do not accidentally modify the
+        # central ZIP header or fail test-fixture construction.
+        modified = bytearray(raw)
+        with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+            member = archive.getinfo(name)
+            offset = member.header_offset
+        assert modified[offset:offset + 4] == b"PK\x03\x04"
+        assert field_offset in (6, 8)  # flags or method in local header
+        struct.pack_into("<H", modified, offset + field_offset, value)
+        return bytes(modified)
+
+    def test_local_only_unknown_method_disagrees_with_central_v1_decompression(self):
+        for member in ("manifest.json", record()["responseFile"]):
+            with self.subTest(member=member):
+                raw = build_zip()
+                with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+                    self.assertEqual(zipfile.ZIP_DEFLATED,
+                                     archive.getinfo(member).compress_type)
+                altered = self._change_only_local_header_short(
+                    raw, member, 8, 99)
+                with self.assertRaises(verifier.ExportVerificationError):
+                    check(altered)
+
+    def test_local_only_flag_differences_are_not_accepted_from_either_member(self):
+        for member in ("manifest.json", record()["responseFile"]):
+            for conflicting_flags in (0x0001, 0x0008, 0x0800):
+                with self.subTest(member=member, local_flags=conflicting_flags):
+                    raw = build_zip()
+                    with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+                        self.assertEqual(0, archive.getinfo(member).flag_bits)
+                    altered = self._change_only_local_header_short(
+                        raw, member, 6, conflicting_flags)
+                    with self.assertRaises(verifier.ExportVerificationError):
+                        check(altered)
+
+    def test_local_central_mismatch_cli_error_is_generic_not_path_leak(self):
+        altered = self._change_only_local_header_short(
+            build_zip(), record()["responseFile"], 8, 99)
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "tenant-private-export.zip"
+            path.write_bytes(altered)
+            output, errors = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+                status = verifier.main([str(path)])
+            self.assertEqual(1, status)
+            self.assertEqual("", output.getvalue())
+            self.assertIn("FAILED", errors.getvalue())
+            self.assertNotIn(str(path), errors.getvalue())
+            self.assertNotIn(ORG, errors.getvalue())
+
     def test_known_but_not_v1_bzip2_member_is_rejected(self):
         member = zipfile.ZipInfo(record()["responseFile"])
         member.compress_type = zipfile.ZIP_BZIP2
