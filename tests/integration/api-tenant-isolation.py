@@ -465,6 +465,35 @@ def assert_shared_tenant_principal_search_quota(a_token: str, b_token: str):
         raise AssertionError("Denied or malformed searches unexpectedly appended tenant audit")
 
 
+def assert_search_rate_store_permission_failure_is_closed(token: str):
+    # CI-only: deny the shared SQL rate function on the runtime group.
+    # No process-local fallback may answer a search; always restore grant.
+    def mutate_grant(sql: str):
+        result = subprocess.run([
+            "docker", "compose", "-f", "docker/compose.yml",
+            "exec", "-T", "postgres", "psql", "-X", "-q",
+            "-v", "ON_ERROR_STOP=1", "-U", "temporalmark", "-d", "temporalmark"
+        ], input=sql + "\n", text=True, capture_output=True,
+            timeout=35, check=False)
+        if result.returncode != 0:
+            raise AssertionError("CI-only quota privilege change failed")
+
+    mutate_grant("REVOKE EXECUTE ON FUNCTION public.consume_imprint_search_rate(uuid,text) "
+                 "FROM temporalmark_runtime_group;")
+    try:
+        status, _, raw = search_imprint(token, DIGEST_B.hex())
+        if status != 500:
+            raise AssertionError("Unavailable shared quota gate did not deny search")
+        if (STAMP_B.encode() in raw or DIGEST_B.hex().encode() in raw or
+                base64.b64encode(DIGEST_B) in raw or b"hasMore" in raw):
+            raise AssertionError("Failed quota gate disclosed a document match")
+    finally:
+        mutate_grant("GRANT EXECUTE ON FUNCTION public.consume_imprint_search_rate(uuid,text) "
+                     "TO temporalmark_runtime_group;")
+    must_status("shared quota recovered after CI-only SQL grant restoration",
+                search_imprint(token, DIGEST_B.hex()), 200)
+
+
 def main():
     if os.environ.get("TEMPORALMARK_CI_API_ISOLATION") != "1":
         raise AssertionError("Explicit CI-only fixture gate required")
@@ -544,6 +573,7 @@ def main():
         raise AssertionError("Disabled external TSA accidentally minted an evidence record")
     assert_search_audit_fail_closed_on_real_postgres_write_denial(a_token)
     assert_shared_tenant_principal_search_quota(a_token, b_token)
+    assert_search_rate_store_permission_failure_is_closed(b_token)
     print("PASS: real Keycloak-signed JWT 401/403; two isolated PostgreSQL tenants; "
           "real API list/summary/UTC daily/document-SHA256-search/TSR/ZIP/audit; header/query/body spoofing; "
           "inactive membership; no qualified issuance")
