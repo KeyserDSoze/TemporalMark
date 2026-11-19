@@ -27,6 +27,8 @@ builder.Services.AddScoped<ITimestampWriter, PostgresTimestampWriter>();
 builder.Services.AddScoped<TimestampIssueService>();
 builder.Services.AddScoped<ITenantAuditRepository, PostgresTenantAuditRepository>();
 builder.Services.AddScoped<TenantAuditService>();
+builder.Services.AddScoped<IImprintSearchRateRepository, PostgresImprintSearchRateRepository>();
+builder.Services.AddScoped<ImprintSearchRateGateService>();
 builder.Services.AddHttpClient("external-tsa", http =>
 {
     http.Timeout = TimeSpan.FromSeconds(20);
@@ -179,15 +181,29 @@ api.MapGet("/stamps/daily", async Task<IResult> (
 api.MapPost("/stamps/search", async Task<IResult> (
     StampSearchRequest input, HttpContext http, ClaimsPrincipal user,
     ITenantAuthorization access, TimestampRegistryService registry, TenantAuditService audit,
-    CancellationToken ct) =>
+    ImprintSearchRateGateService searchRateGate, CancellationToken ct) =>
 {
     var tenant = await TenantAdminAsync(user, access, ct);
     if (!tenant.HasValue) return Results.Forbid();
     try
     {
+        var period = new UtcPeriod(input.FromUtc, input.ToUtcExclusive);
+        TimestampRegistryService.ValidateDocumentImprintSearchRequest(
+            tenant.Value, period, input.DigestSha256Hex, input.Offset, input.Limit);
+        // Shared PostgreSQL transaction enforces tenant + principal limits across
+        // API replicas before any document registry query. Never key by imprint.
+        var admission = await searchRateGate.TryAcquireAsync(
+            tenant.Value, user.FindFirstValue("sub")!, ct);
+        if (!admission.Allowed)
+        {
+            http.Response.Headers.CacheControl = "no-store";
+            http.Response.Headers["Retry-After"] =
+                admission.RetryAfterSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            // No match/hasMore, digest or tenant result in the 429 response.
+            return Results.StatusCode(StatusCodes.Status429TooManyRequests);
+        }
         var result = await registry.SearchByDocumentSha256Async(
-            tenant.Value,
-            new UtcPeriod(input.FromUtc, input.ToUtcExclusive),
+            tenant.Value, period,
             input.DigestSha256Hex, input.Offset, input.Limit, ct);
         // Persist lookup audit before returning any sensitive result. DB failure => no matches.
         // Never copy the searched imprint, matched IDs or match counts into audit.
