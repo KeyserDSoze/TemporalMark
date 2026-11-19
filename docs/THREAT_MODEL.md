@@ -797,3 +797,11 @@ proof, historical EUTL trust, signed WORM manifest, complete
 all-time snapshot or eIDAS/CAB/AgID approval. Parent #14/#17/#15/#13
 remain OPEN and pilot evidence remains `Unverified`. No registrar
 V015/V016 or cloud-specific exemption.
+
+## Web Nginx access event privacy — scoped #117 / ADR 0084 (NOT full ingress logging governance)
+
+The previously inherited Nginx `combined` access format includes `$request` (raw request line with URL query) and client IP/referrer/user-agent. Even when an intended `POST /api/v1/stamps/search` keeps a document imprint in JSON, malicious or legacy clients may still send an imprint, token or customer identifier in the URL, Referer, User-Agent or other headers. The same compiled web image is referenced by Docker/on-prem and Azure Container Apps; see [ADR 0084](../adr/0084-minimized-nginx-imprint-search-access-log.md) and [operator guide](NGINX_ACCESS_LOG_PRIVACY.md).
+
+For the **web Nginx container access stream only**, a static `http`-scope `temporalmark_minimal` format is now used explicitly at web server scope. The allowed event has a fixed marker, numeric HTTP status, method and duration; no URI/path/query, request body, bearer/cookie, client IP, subject, tenant, referer, agent, or search result. CI first proves RED against the missing config, then runs source policy tests and a real pinned Docker/Nginx HTTP canary probe which fails if the raw synthetic URL/query/referrer/agent/fake bearer/JSON document imprint appears in any captured web-container log. The test does **not** exercise all exceptional error paths or real production logging.
+
+**Residual release blockers:** Azure Container Apps external managed ingress access diagnostics and Log Analytics, separate CDN/WAF/proxy or on-prem operator overrides, Nginx error logs for exceptional requests, Kestrel/API and IdP exception traces, third-party instrumentation, per-tenant subject retention, backups and GDPR-DPIA decisions are not proven safe. No production log retention policy, independent signed WORM custody, edge/preauth rate limiting, eIDAS qualification or CAB/AgID approval follows. #115/#113/#17/#13/#15 remain OPEN; V015/V016 registrar interlocks remain frozen; pilot evidence remains `Unverified`.
