@@ -82,10 +82,6 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-      - name: Real pinned Nginx web-container access log confidentiality (#117)
-        env:
-          TEMPORALMARK_CI_NGINX_ACCESS_PRIVACY: "1"
-        run: python3 tests/integration/nginx-access-privacy.py
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: "22"
@@ -130,6 +126,10 @@ jobs:
           curl -fsS --retry 40 --retry-delay 3 --retry-all-errors --retry-connrefused http://127.0.0.1:8080/healthz
           curl -fsS --retry 40 --retry-delay 3 --retry-all-errors --retry-connrefused http://127.0.0.1:3000/
           curl -fsS --retry 40 --retry-delay 3 --retry-all-errors --retry-connrefused http://127.0.0.1:8081/realms/temporalmark/.well-known/openid-configuration
+      - name: Real pinned Nginx web-container access log confidentiality (#117)
+        env:
+          TEMPORALMARK_CI_NGINX_ACCESS_PRIVACY: "1"
+        run: python3 tests/integration/nginx-access-privacy.py
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: "22"
