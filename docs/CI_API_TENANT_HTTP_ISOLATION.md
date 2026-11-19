@@ -150,3 +150,9 @@ and [operator guide](DOCUMENT_IMPRINT_SEARCH.md). Any CI claim of
 completion must be checked on the **exact final docs-inclusive
 `main` SHA** using all four core jobs; older successful test runs
 must not be reused for later source commits.
+
+## Tenant + principal search quota and 429 regression (#116)
+
+After verifying real two-tenant Keycloak-signed search audit (#114), the disposable API test repeatedly sends valid SHA-256 document-imprint JSON searches under tenant A's genuine signed admin bearer. Its **V019 SQL function** must admit only the remaining portion of that actor's 12-per-UTC-minute budget, then respond 429 with a numeric 1–60-second `Retry-After`, no-store and no match/imprint metadata. Spoofed B tenant IDs in body/headers must not reset the quota; malformed document hex still returns 400 *before* the limiter; tenant B's signed bearer and real PostgreSQL registry remain independently usable. Every 200 successful lookup must still append the privacy-minimized #114 tenant audit, while 429/malformed requests append none. The earlier real revoked-audit-INSERT test must still return HTTP 500 without matching data.
+
+A distinct xUnit real-Postgres suite verifies 12 actor and 30 tenant limits, 72 parallel SQL calls from six principals in one tenant, expiry, 22023 future-clock rollback denials and restricted runtime-role SELECT privileges. CI expects 19 checksummed migrations. These tests are **not** proof of multiple writable PostgreSQL primaries, release configuration in Azure, reverse-proxy body-log redaction, GDPR retention approval or signed WORM audit. See [ADR 0083](../adr/0083-postgres-atomic-imprint-search-rate-admission.md) and [operator runbook](IMPRINT_SEARCH_RATE_LIMITING.md).
