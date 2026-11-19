@@ -772,10 +772,22 @@ no tenant search events. PostgreSQL audit-write failure denies search
 responses. Disposable signed-Keycloak/Pg A/B CI exercises the gate,
 including a temporary runtime-role INSERT denial that is reverted.
 
-**Outstanding under #113/#17:** this ordinary PostgreSQL pilot audit
-is not tamper-evident WORM; no distributed tenant/principal rate limit,
-independently approved privacy retention/DPIA, separate audit custody
-or production reverse-proxy request-body redaction has been delivered.
+**Scoped #116/V019 mitigation:** one shared PostgreSQL 17 primary
+serializes tenant+principal quota checks using transaction-level tenant
+advisory locks, fixed 12/actor and 30/tenant per UTC 60-second bucket.
+Signed-OIDC active tenant-admin and strict input preflight precede quota;
+denial returns 429/Retry-After without match data, failed shared primary
+fails closed, and neither raw imprints nor JWTs are quota keys. The runtime
+role cannot directly SELECT/DML rate tables; SQL schema owner can change
+quotas and remains a sensitive privilege. Actor subjects are personal data
+and need independent retention/deletion beyond opportunistic cleanup.
+
+**Outstanding under #115/#113/#17:** this ordinary PostgreSQL pilot audit
+is not tamper-evident WORM. The limiter requires a shared writable primary,
+not multi-primary regions; fixed-window boundaries allow short bursts.
+No verified edge/pre-auth throttling, independently approved privacy
+retention/DPIA, separate signed audit custody or production reverse-proxy
+request-body redaction has been delivered.
 A reverse-proxy configured to log request bodies may still leak
 hashes despite POST. Confidential document imprints, correlation
 between known document hashes and tenant results, overbroad admin
