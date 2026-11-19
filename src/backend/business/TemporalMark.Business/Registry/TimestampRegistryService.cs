@@ -76,6 +76,22 @@ public sealed class TimestampRegistryService(ITimestampRegistry registry)
             organizationId, period.FromUtc, period.ToUtcExclusive, series);
     }
 
+    /// <summary>Pure request preflight: run after authenticated tenant gate and
+    /// before any quota consumption or registry SQL. Never use imprint as a quota key.</summary>
+    public static void ValidateDocumentImprintSearchRequest(
+        Guid organizationId, UtcPeriod period, string? digestSha256Hex, int offset, int limit)
+    {
+        RequireTenant(organizationId);
+        ArgumentNullException.ThrowIfNull(period);
+        if (offset < 0 || limit < 1 || limit > 50)
+            throw new ArgumentOutOfRangeException(nameof(limit),
+                "Use 1..50 search results per page and offset >= 0.");
+        if (digestSha256Hex is null || digestSha256Hex.Length != 64 ||
+            !digestSha256Hex.All(Uri.IsHexDigit))
+            throw new ArgumentException("A 64-character SHA-256 hexadecimal imprint is required.",
+                nameof(digestSha256Hex));
+    }
+
     /// <summary>
     /// Exact SHA-256 *document imprint* search (not token DER hash).
     /// The caller supplies hex only; the database stores canonical Base64.
@@ -85,16 +101,7 @@ public sealed class TimestampRegistryService(ITimestampRegistry registry)
         Guid organizationId, UtcPeriod period, string digestSha256Hex,
         int offset, int limit, CancellationToken cancellationToken)
     {
-        RequireTenant(organizationId);
-        if (offset < 0 || limit < 1 || limit > 50)
-            throw new ArgumentOutOfRangeException(nameof(limit),
-                "Use 1..50 search results per page and offset >= 0.");
-        // Reject hostile encodings/oversize before allocating a decoder or
-        // calling SQL. A 32-byte SHA-256 hex imprint is exactly 64 ASCII chars.
-        if (digestSha256Hex is null || digestSha256Hex.Length != 64 ||
-            !digestSha256Hex.All(Uri.IsHexDigit))
-            throw new ArgumentException("A 64-character SHA-256 hexadecimal imprint is required.",
-                nameof(digestSha256Hex));
+        ValidateDocumentImprintSearchRequest(organizationId, period, digestSha256Hex, offset, limit);
 
         var canonicalBase64 = Convert.ToBase64String(Convert.FromHexString(digestSha256Hex));
         const string sha256Oid = "2.16.840.1.101.3.4.2.1";
