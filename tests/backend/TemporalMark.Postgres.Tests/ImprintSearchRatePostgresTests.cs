@@ -4,6 +4,7 @@ using Xunit;
 namespace TemporalMark.Postgres.Tests;
 
 /// <summary>RED-first live PostgreSQL 17, disposable tenant IDs; all replicas share one primary.</summary>
+[Collection("SharedSearchQuotaPostgresState")]
 public sealed class ImprintSearchRatePostgresTests
 {
     private static NpgsqlConnection OwnerConnection() =>
