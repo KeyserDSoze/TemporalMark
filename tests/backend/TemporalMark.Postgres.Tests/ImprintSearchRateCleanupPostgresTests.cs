@@ -8,6 +8,7 @@ namespace TemporalMark.Postgres.Tests;
 /// metadata, separate from original timestamp evidence/audit retention.
 /// Operates exclusively on disposable PostgreSQL 17 CI tenant rows.
 /// </summary>
+[Collection("SharedSearchQuotaPostgresState")]
 public sealed class ImprintSearchRateCleanupPostgresTests
 {
     private static NpgsqlConnection Owner() =>
