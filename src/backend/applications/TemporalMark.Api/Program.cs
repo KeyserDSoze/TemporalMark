@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.HttpLogging;
 using Microsoft.IdentityModel.Tokens;
 using Npgsql;
 using TemporalMark.Business.Registry;
@@ -11,6 +12,23 @@ using TemporalMark.Infrastructure.Postgres;
 using TemporalMark.Infrastructure.Timestamping;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// CODE-OWNED, environment-independent privacy boundary for ordinary request
+// telemetry. Nginx access logs are separately minimized (#117), but a
+// malformed request can still contain an imprint/credential in URL or headers.
+// Suppress informational request start/completion and route diagnostics;
+// preserve Warning/Error for incident investigation (still privacy-reviewed).
+builder.Logging.AddFilter("Microsoft.AspNetCore.Hosting.Diagnostics", LogLevel.Warning);
+builder.Logging.AddFilter("Microsoft.AspNetCore.Routing.EndpointMiddleware", LogLevel.Warning);
+builder.Logging.AddFilter("Microsoft.AspNetCore.Routing.Matching.DfaMatcher", LogLevel.Warning);
+// Explicit defense-in-depth should anyone add a logging middleware later.
+// DO NOT add UseHttpLogging or UseW3CLogging without an approved review.
+builder.Logging.AddFilter("Microsoft.AspNetCore.HttpLogging.HttpLoggingMiddleware", LogLevel.None);
+builder.Logging.AddFilter("Microsoft.AspNetCore.HttpLogging.W3CLogger", LogLevel.None);
+builder.Services.AddHttpLogging(options =>
+{
+    options.LoggingFields = HttpLoggingFields.None;
+});
 
 builder.Services.AddHealthChecks();
 builder.Services.AddProblemDetails();
