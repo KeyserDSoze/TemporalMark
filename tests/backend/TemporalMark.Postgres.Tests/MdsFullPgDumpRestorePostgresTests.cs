@@ -90,7 +90,7 @@ public sealed class MdsFullPgDumpRestorePostgresTests
         await using (var row = await integrity.ExecuteReaderAsync())
         {
             Assert.True(await row.ReadAsync());
-            Assert.Equal(19L, row.GetInt64(0));
+            Assert.Equal(20L, row.GetInt64(0));
             for (var i = 1; i <= 6; i++)
                 Assert.False(row.GetBoolean(i));
             Assert.False(await row.ReadAsync());
