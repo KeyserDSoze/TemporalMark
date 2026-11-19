@@ -33,6 +33,8 @@ jobs:
           # RED-first #101: final SHA status must never claim a skipped core job passed.
           # RED-first #117: enforce explicit Nginx access-only field allowlist.
           python3 -m unittest discover -s tests/integration -p 'test_nginx_access_privacy.py' -v
+          # RED-first #119: API/Kestrel request logging must remain content-free.
+          python3 -m unittest discover -s tests/integration -p 'test_api_diagnostic_privacy.py' -v
           python3 -m unittest discover -s tests/integration -p 'test_publish_ci_verdict.py' -v
           # RED-first #107: offline ZIP integrity without legal/trust assertions.
           python3 -m unittest discover -s tests/integration -p 'test_verify_period_export.py' -v
@@ -130,6 +132,10 @@ jobs:
         env:
           TEMPORALMARK_CI_NGINX_ACCESS_PRIVACY: "1"
         run: python3 tests/integration/nginx-access-privacy.py
+      - name: Real API container normal request log confidentiality (#119)
+        env:
+          TEMPORALMARK_CI_API_LOG_PRIVACY: "1"
+        run: python3 tests/integration/api-diagnostic-privacy.py
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: "22"
