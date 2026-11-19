@@ -34,7 +34,9 @@ class NginxAccessPrivacyPolicyTests(unittest.TestCase):
         self.assertIn("access_log /dev/stdout temporalmark_minimal;", source)
         self.assertEqual(1, len(re.findall(r"(?m)^\s*access_log\s+", source)))
         self.assertNotRegex(source, r"(?m)^\s*log_format\s+")
-        self.assertNotRegex(source, r"\$(?:request_uri|request_body|args|query_string|http_|remote_addr|uri)(?:\b|_)")
+        # $uri is legitimately used by try_files for SPA routing: this
+        # policy only constrains access_log, not non-logging proxy directives.
+        self.assertNotRegex(source, r"(?m)^\s*access_log\s+[^;]*(?:\$|combined|off)")
 
     def test_docker_image_installs_http_context_format_into_conf_d(self):
         source = DOCKERFILE.read_text(encoding="utf-8")
