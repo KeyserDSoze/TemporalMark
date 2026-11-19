@@ -106,8 +106,15 @@ ZIP export continue independently.
   or count, receipt ID or search period is stored. Invalid or unauthorized
   searches do not append an event; audit write failure denies the search
   (HTTP 500, without match metadata). Receipt downloads remain separately
-  audited. Distributed search throttling, reverse-proxy/body log review,
-  GDPR retention/DPIA and independently sealed custody remain open in #113/#17.
+  audited. The scoped V019/#116 shared-PostgreSQL-primary gate now admits
+  **12 valid searches per OIDC principal and 30 per tenant per 60-second
+  UTC window** across replicas sharing that primary. Denied requests return
+  **429** with bounded integer `Retry-After` (1–60 seconds), no-store and no
+  matches. Invalid searches still return 400 before quota; auth failures
+  remain 401/403. See [rate admission runbook](IMPRINT_SEARCH_RATE_LIMITING.md).
+  Network-edge limits, multi-primary operation, reverse-proxy/body log review,
+  GDPR retention/DPIA and independently sealed custody remain open in
+  #115/#113/#17.
 - Tests exercise signed-Keycloak and real PostgreSQL tenant A/B
   canaries with distinct imprints, invalid inputs (400), anonymous
   (401), inactive admin (403), cross-tenant body/header spoofing,
