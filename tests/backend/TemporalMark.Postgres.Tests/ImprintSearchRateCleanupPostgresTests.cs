@@ -164,6 +164,23 @@ public sealed class ImprintSearchRateCleanupPostgresTests
         Assert.InRange(b.Tenants, 0, 1);
     }
 
+    [Theory]
+    [InlineData("temporalmark_runtime_group")]
+    [InlineData("temporalmark_provisioner_group")]
+    [InlineData("temporalmark_approver_group")]
+    [InlineData("temporalmark_credential_registrar_group")]
+    public async Task AdministrativePurgeIsNotExecutableByAnyOperationalRole(string role)
+    {
+        await using var conn = Owner();
+        await conn.OpenAsync();
+        await using var cmd = new NpgsqlCommand("""
+            SELECT has_function_privilege(@role,
+                'public.purge_stale_imprint_search_rate_counters(integer)', 'EXECUTE')
+            """, conn);
+        cmd.Parameters.AddWithValue("role", role);
+        Assert.False(Assert.IsType<bool>(await cmd.ExecuteScalarAsync()));
+    }
+
     [Fact]
     public async Task RuntimeCannotExecuteMaintenanceOrReadItsProtectedRateTables()
     {
