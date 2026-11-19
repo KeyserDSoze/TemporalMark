@@ -31,6 +31,8 @@ jobs:
           python3 -m unittest discover -s tests/integration -p 'test_check_nuget_lockfiles.py' -v
           python3 tests/integration/check_nuget_lockfiles.py
           # RED-first #101: final SHA status must never claim a skipped core job passed.
+          # RED-first #117: enforce explicit Nginx access-only field allowlist.
+          python3 -m unittest discover -s tests/integration -p 'test_nginx_access_privacy.py' -v
           python3 -m unittest discover -s tests/integration -p 'test_publish_ci_verdict.py' -v
           # RED-first #107: offline ZIP integrity without legal/trust assertions.
           python3 -m unittest discover -s tests/integration -p 'test_verify_period_export.py' -v
@@ -80,6 +82,10 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Real pinned Nginx web-container access log confidentiality (#117)
+        env:
+          TEMPORALMARK_CI_NGINX_ACCESS_PRIVACY: "1"
+        run: python3 tests/integration/nginx-access-privacy.py
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: "22"
