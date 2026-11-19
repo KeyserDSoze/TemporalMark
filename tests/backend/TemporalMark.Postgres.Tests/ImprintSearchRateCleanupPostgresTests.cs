@@ -88,6 +88,22 @@ public sealed class ImprintSearchRateCleanupPostgresTests
         await Consume(idle, "ci-idle-B");
         await Consume(active, "ci-active");
 
+        // A search audit is a separate evidence-access record and must survive
+        // maintenance of disposable admission counters, even for idle tenant.
+        await using (var auditConn = Owner())
+        {
+            await auditConn.OpenAsync();
+            await using var appendAudit = new NpgsqlCommand("""
+                INSERT INTO public.tenant_audit_events(
+                    id, organization_id, actor_subject_id, action, occurred_utc)
+                VALUES (@id, @org, 'ci-idle-A',
+                        'document_imprint_search_performed', now())
+                """, auditConn);
+            appendAudit.Parameters.AddWithValue("id", Guid.NewGuid());
+            appendAudit.Parameters.AddWithValue("org", idle);
+            Assert.Equal(1, await appendAudit.ExecuteNonQueryAsync());
+        }
+
         await using (var owner = Owner())
         {
             await owner.OpenAsync();
@@ -113,6 +129,7 @@ public sealed class ImprintSearchRateCleanupPostgresTests
         Assert.Equal(1L, await Count(active, "imprint_search_rate_principals"));
         Assert.Equal(1L, await Count(active, "imprint_search_rate_tenants"));
         Assert.Equal(1L, await Count(idle, "organizations"));
+        Assert.Equal(1L, await Count(idle, "tenant_audit_events"));
         Assert.Equal(1L, await Count(active, "organizations"));
 
         // The counter can be recreated through the ORIGINAL authenticated
