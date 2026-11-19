@@ -418,6 +418,53 @@ def assert_search_audit_fail_closed_on_real_postgres_write_denial(token: str):
         raise AssertionError("Denied audit append unexpectedly persisted a search event")
 
 
+def assert_shared_tenant_principal_search_quota(a_token: str, b_token: str):
+    # RED-first #116: real PostgreSQL-backed, actor+tenant quotas, not
+    # per-process rate limiter or mocked JWT. All test identities disposable.
+    before = [row["id"] for row in audit(a_token)
+              if row.get("action") == "DocumentImprintSearchPerformed"]
+    admissions = 0
+    denial = None
+    for _ in range(40):
+        status, headers, raw = search_imprint(a_token, DIGEST_A.hex())
+        if status == 200:
+            admissions += 1
+            continue
+        if status == 429:
+            denial = headers, raw
+            break
+        raise AssertionError(f"Search rate limiter unexpectedly returned HTTP {status}")
+
+    if denial is None or not 1 <= admissions <= 12:
+        raise AssertionError("Per-actor search quota did not deny in the bounded HTTP probe")
+    headers, raw = denial
+    try:
+        retry = int(headers.get("Retry-After", ""))
+    except ValueError:
+        raise AssertionError("429 lacks numeric Retry-After") from None
+    if not 1 <= retry <= 60 or "no-store" not in headers.get("Cache-Control", "").lower():
+        raise AssertionError("429 lacks bounded retry or no-store")
+    if (b"hasMore" in raw or STAMP_A.encode() in raw or
+            DIGEST_A.hex().encode() in raw or base64.b64encode(DIGEST_A) in raw):
+        raise AssertionError("429 disclosed search match, receipt or confidential imprint")
+
+    # A forged B organization in JSON or headers must never change A's quota.
+    must_status("429 ignores forged tenant selector", search_imprint(
+        a_token, DIGEST_A.hex(),
+        extra_body={"organizationId": ORG_B, "tenantId": ORG_B},
+        headers={"X-Organization-Id": ORG_B, "X-Tenant-Id": ORG_B}), 429)
+    # Invalid request remains 400 before SQL quota and before any audit.
+    must_status("invalid input remains 400 even after quota exhaustion",
+                search_imprint(a_token, "bad"), 400)
+    # Tenant B's separately authenticated principal is not rate denied by A.
+    must_status("independent B tenant quota not exhausted by A",
+                search_imprint(b_token, DIGEST_B.hex()), 200)
+    after = [row["id"] for row in audit(a_token)
+             if row.get("action") == "DocumentImprintSearchPerformed"]
+    if len(after) - len(before) != admissions:
+        raise AssertionError("Denied or malformed searches unexpectedly appended tenant audit")
+
+
 def main():
     if os.environ.get("TEMPORALMARK_CI_API_ISOLATION") != "1":
         raise AssertionError("Explicit CI-only fixture gate required")
@@ -496,6 +543,7 @@ def main():
     if summary(a_token)["count"] != 1 or summary(b_token)["count"] != 1:
         raise AssertionError("Disabled external TSA accidentally minted an evidence record")
     assert_search_audit_fail_closed_on_real_postgres_write_denial(a_token)
+    assert_shared_tenant_principal_search_quota(a_token, b_token)
     print("PASS: real Keycloak-signed JWT 401/403; two isolated PostgreSQL tenants; "
           "real API list/summary/UTC daily/document-SHA256-search/TSR/ZIP/audit; header/query/body spoofing; "
           "inactive membership; no qualified issuance")
