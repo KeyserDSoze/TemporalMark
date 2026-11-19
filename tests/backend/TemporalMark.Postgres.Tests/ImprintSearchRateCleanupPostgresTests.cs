@@ -74,7 +74,7 @@ public sealed class ImprintSearchRateCleanupPostgresTests
         await using var conn = Owner();
         await conn.OpenAsync();
         await using var cmd = new NpgsqlCommand(
-            $"SELECT count(*) FROM public.{table} WHERE organization_id=@org", conn);
+            $"SELECT count(*) FROM public.{table} WHERE {(table == "organizations" ? "id" : "organization_id")}=@org", conn);
         cmd.Parameters.AddWithValue("org", id);
         return Assert.IsType<long>(await cmd.ExecuteScalarAsync());
     }
