@@ -1,6 +1,9 @@
 server {
   listen 80;
   server_name _;
+  # Explicitly override the upstream combined format in this server.
+  # The only access metadata is status, method and request duration.
+  access_log /dev/stdout temporalmark_minimal;
   root /usr/share/nginx/html;
   index index.html;
   add_header X-Content-Type-Options nosniff always;
