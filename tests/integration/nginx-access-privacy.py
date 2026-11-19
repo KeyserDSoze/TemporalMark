@@ -65,6 +65,11 @@ def main():
     )
     if proc.returncode:
         raise AssertionError("Cannot verify actual Nginx access logs")
+    # Also reject a second inherited/custom access stream that would log
+    # the sentinels alongside the sanitized tm_access line. This includes
+    # stdout AND stderr from the disposable Nginx web container.
+    if any(sentinel in proc.stdout or sentinel in proc.stderr for sentinel in SENTINELS):
+        raise AssertionError("Nginx container logs exposed synthetic sensitive request content")
     access_lines = [line for line in proc.stdout.splitlines()
                     if "tm_access status=" in line]
     if not any("status=200 method=GET duration=" in line for line in access_lines):
