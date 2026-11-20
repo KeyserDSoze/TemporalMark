@@ -2,7 +2,6 @@
 """RED-first source policy for enumerated, exact CI-only MFA loopback callbacks."""
 import json
 from pathlib import Path
-import re
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -51,7 +50,7 @@ class DisposableMfaCallbackFallbackPolicyTests(unittest.TestCase):
         self.assertIn("socket_holder.listen(1)", wrapper)
         self.assertIn("mfa.config.ts", wrapper)
         self.assertIn("finally:", wrapper)
-        self.assertIn("socket.close()", wrapper)
+        self.assertIn("socket_holder.close()", wrapper)
         self.assertIn("run-mfa-with-blocked-primary-callback.py", self.ci)
         # Workflow must NOT launch the original test directly.
         self.assertNotIn("(cd tests/frontend && npx playwright test --config mfa.config.ts)", self.ci)
