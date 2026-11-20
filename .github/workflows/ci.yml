@@ -167,6 +167,7 @@ jobs:
           test "$(docker compose -f docker/compose.yml exec -T postgres psql -U temporalmark -d temporalmark -tAc 'SELECT count(*) FROM schema_migrations')" = "20"
       - name: PostgreSQL migration and tenant concurrency tests
         env:
+          TEMPORALMARK_RUNTIME_TEST_DB: "Host=127.0.0.1;Port=5432;Database=temporalmark;Username=temporalmark_api;Password=local-dev-only"
           TEMPORALMARK_TEST_DB: "Host=127.0.0.1;Port=5432;Database=temporalmark;Username=temporalmark;Password=local-dev-only"
           TEMPORALMARK_PROVISIONING_TEST_DB: "Host=127.0.0.1;Port=5432;Database=temporalmark;Username=temporalmark_provisioner;Password=local-provisioner-only"
           TEMPORALMARK_APPROVER_TEST_DB: "Host=127.0.0.1;Port=5432;Database=temporalmark;Username=temporalmark_approver;Password=local-approver-only"
