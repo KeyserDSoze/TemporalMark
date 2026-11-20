@@ -240,7 +240,7 @@ resource "azurerm_container_app" "api" {
 
   lifecycle {
     precondition {
-      condition = lower(try(regex("^https://([a-z0-9-]+)[.]vault[.]azure[.]net/secrets/", var.registry_connection_secret_uri)[0], "")) == lower(try(regex("/vaults/([a-z0-9-]+)$", var.registry_connection_key_vault_id)[0], ""))
+      condition     = lower(try(regex("^https://([a-z0-9-]+)[.]vault[.]azure[.]net/secrets/", var.registry_connection_secret_uri)[0], "")) == lower(try(regex("/vaults/([a-z0-9-]+)$", var.registry_connection_key_vault_id)[0], ""))
       error_message = "Registry connection secret URI must target exactly the separately approved Key Vault resource ID."
     }
   }
