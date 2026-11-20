@@ -228,7 +228,7 @@ resource "azurerm_container_app" "web" {
   }
 
   ingress {
-    external_enabled           = true
+    external_enabled           = var.enable_public_web_ingress
     allow_insecure_connections = false
     target_port                = 80
     transport                  = "auto"
