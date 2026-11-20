@@ -1,5 +1,7 @@
 # Microsoft Entra PostgreSQL Npgsql 10 candidate — offline, detached (#130 / ADR 0096)
 
+**Update #134 / ADR 0100 (2026-11-20):** The former *detached-only* #130 Npgsql candidate is now composed through a new, **explicitly opt-in, Production-environment-only API branch**, `RegistryPostgres:AuthenticationMode=ContainerAppsEntraCandidate`, with the strict local #131 ACA token supplier and read-only SQL #133 role preflight **before opening HTTP listeners**. The default SQL password path, current Azure Terraform deployment, privileged CLIs and migration runner are unchanged; this opt-in has **not** been used or proven on live Azure, and no Entra PostgreSQL SQL role was granted. See [ADR 0100](../adr/0100-explicit-api-entra-postgres-prelisten-privilege-gate.md) and [current API runbook](API_POSTGRES_ENTRA_PRELISTEN_CANDIDATE.md). The original sections below describe the earlier #130 scoped release, not the latest wiring.
+
 **Development/prequalification only. NOT wired to the API, operator CLI, PostgreSQL migration runner, Azure Terraform or on-prem deployment.** See [ADR 0096](../adr/0096-detached-npgsql-entra-token-candidate.md), scoped [#130](https://github.com/KeyserDSoze/TemporalMark/issues/130), open parent [#128](https://github.com/KeyserDSoze/TemporalMark/issues/128), Azure [#18](https://github.com/KeyserDSoze/TemporalMark/issues/18), and the prior isolated [Entra-only Terraform candidate](AZURE_POSTGRES_ENTRA_CANDIDATE.md).
 
 ## Why an isolated candidate first?
