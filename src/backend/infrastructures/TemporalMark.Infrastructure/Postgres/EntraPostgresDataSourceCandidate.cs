@@ -56,9 +56,16 @@ public static class EntraPostgresDataSourceCandidate
             throw new ArgumentException("An approved canonical Azure PostgreSQL host is required",
                 nameof(connectionString));
 
+        // Npgsql 10 ContainsKey() means "recognized keyword", NOT "explicitly
+        // set". Inspect Keys, which lists the fields present in this string.
+        // Otherwise omitted passwords look explicitly configured and the
+        // safe candidate cannot initialize; see Npgsql issue #6463.
+        bool Explicit(string keyword) => settings.Keys.Cast<string>().Any(
+            key => string.Equals(key, keyword, StringComparison.OrdinalIgnoreCase));
+
         if (settings.Port != 5432 ||
-            !settings.ContainsKey("Username") ||
-            !settings.ContainsKey("Database") ||
+            !Explicit("Username") ||
+            !Explicit("Database") ||
             !Regex.IsMatch(settings.Username ?? "",
                 @"\A[A-Za-z_][A-Za-z0-9_-]{1,62}\z", RegexOptions.CultureInvariant) ||
             !Regex.IsMatch(settings.Database ?? "",
@@ -66,18 +73,18 @@ public static class EntraPostgresDataSourceCandidate
             throw new ArgumentException("Explicit PostgreSQL role, database and port are required",
                 nameof(connectionString));
 
-        if (settings.ContainsKey("Password") || settings.ContainsKey("Passfile") ||
-            settings.ContainsKey("Trust Server Certificate") ||
-            settings.ContainsKey("SSL Certificate") ||
-            settings.ContainsKey("SSL Key") ||
-            settings.ContainsKey("SSL Password"))
+        if (Explicit("Password") || Explicit("Passfile") ||
+            Explicit("Trust Server Certificate") ||
+            Explicit("SSL Certificate") ||
+            Explicit("SSL Key") ||
+            Explicit("SSL Password"))
             throw new ArgumentException("SQL passwords, passfiles and TLS bypasses are forbidden",
                 nameof(connectionString));
 
         // Npgsql 10 can prefer GSSAPI over TLS by default. Require explicit
         // TLS VerifyFull, with GSS disabled, to enforce hostname verification.
-        if (!settings.ContainsKey("SSL Mode") || settings.SslMode != SslMode.VerifyFull ||
-            !settings.ContainsKey("GSS Encryption Mode") ||
+        if (!Explicit("SSL Mode") || settings.SslMode != SslMode.VerifyFull ||
+            !Explicit("GSS Encryption Mode") ||
             settings.GssEncryptionMode != GssEncryptionMode.Disable)
             throw new ArgumentException("Verified TLS and disabled GSS encryption are required",
                 nameof(connectionString));
