@@ -66,10 +66,24 @@ variable "postgres_password" {
   description = "Azure PostgreSQL bootstrap credential. WARNING: Terraform state contains sensitive data."
 }
 
-variable "registry_connection_string" {
+# Externally provision and approve the Key Vault SECRET VALUE; Terraform must
+# receive its versioned URL only, never a database connection string.
+variable "registry_connection_secret_uri" {
   type        = string
-  sensitive   = true
-  description = "App database connection string, injected as a Container Apps secret; replace with Managed Identity before compliance."
+  description = "Version-pinned URL of the externally approved Key Vault API registry DB secret. No secret bytes or automatic latest-version references."
+  validation {
+    condition     = can(regex("^https://[a-z0-9][a-z0-9-]{1,22}[a-z0-9][.]vault[.]azure[.]net/secrets/[A-Za-z0-9-]{1,127}/[0-9a-f]{32}$", var.registry_connection_secret_uri))
+    error_message = "Use an approved HTTPS Azure Key Vault secret URI with a 32-character lowercase hex version; no unversioned, query, fragment or userinfo references."
+  }
+}
+
+variable "registry_connection_key_vault_id" {
+  type        = string
+  description = "ARM resource ID of the externally pre-provisioned, RBAC-enabled, single-purpose Key Vault; no secret content or keys. The URI vault must match."
+  validation {
+    condition     = can(regex("^/subscriptions/[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}/resourceGroups/[A-Za-z0-9_.()-]+/providers/Microsoft[.]KeyVault/vaults/[a-z0-9][a-z0-9-]{1,22}[a-z0-9]$", var.registry_connection_key_vault_id))
+    error_message = "Supply a full approved Azure Key Vault ARM resource ID, not a secret or URL."
+  }
 }
 
 # Prequalification uses an internal-load-balancer ACA environment and both
