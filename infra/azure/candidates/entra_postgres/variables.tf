@@ -80,3 +80,14 @@ variable "entra_admin_group_name" {
     error_message = "Supply a canonical admin group label without whitespace/control characters."
   }
 }
+
+# Distinct from the existing API identities (Blob system MI and Key Vault UAI)
+# and from the Entra database ADMIN group. No automatic SQL role or grant.
+variable "postgres_runtime_identity_name" {
+  type        = string
+  description = "Independently approved dedicated PostgreSQL runtime user-assigned managed identity, disposable candidate only (never existing API identities)."
+  validation {
+    condition     = can(regex("^[a-z][a-z0-9-]{1,63}-pg-mi-candidate$", var.postgres_runtime_identity_name))
+    error_message = "Use a lowercase distinct user-assigned identity name ending -pg-mi-candidate, never a production or existing API identity."
+  }
+}
