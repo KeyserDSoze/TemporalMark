@@ -3,7 +3,8 @@ output "resource_group" {
 }
 
 output "frontend_url" {
-  value = "https://${azurerm_container_app.web.ingress[0].fqdn}"
+  description = "Externally reachable web URL only after explicit public ingress opt-in; null in the default internal-only reference."
+  value       = var.enable_public_web_ingress ? "https://${azurerm_container_app.web.ingress[0].fqdn}" : null
 }
 
 output "postgres_fqdn" {
