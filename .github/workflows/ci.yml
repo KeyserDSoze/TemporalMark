@@ -233,6 +233,8 @@ jobs:
         run: terraform -chdir=infra/azure validate
       - name: Plan-only Terraform mock-provider OCI image digest policy (#120)
         run: terraform -chdir=infra/azure test -no-color -filter=tests/image_pins.tftest.hcl
+      - name: Plan-only Terraform mock-provider OIDC issuer policy (#122)
+        run: terraform -chdir=infra/azure test -no-color -filter=tests/oidc_issuer.tftest.hcl
 
   # A fifth reporting-only job. The four core test jobs stay unmodified.
   # GitHub REST Commit Status becomes readable through the connected
