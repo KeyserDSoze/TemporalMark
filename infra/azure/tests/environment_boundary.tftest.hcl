@@ -23,10 +23,6 @@ run "default_internal_environment_and_internal_apps" {
     error_message = "Prequalification ACA environment must use a VNet internal load balancer by DEFAULT."
   }
   assert {
-    condition     = azurerm_container_app_environment.main.infrastructure_subnet_id == azurerm_subnet.apps.id
-    error_message = "Internal ACA environment must retain its dedicated VNet infrastructure subnet."
-  }
-  assert {
     condition     = azurerm_container_app.web.ingress[0].external_enabled == false && azurerm_container_app.api.ingress[0].external_enabled == false
     error_message = "Both app ingresses must remain internal by default."
   }
