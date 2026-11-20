@@ -18,7 +18,7 @@ variables {
 run "api_db_secret_uses_only_key_vault_reference" {
   command = plan
   assert {
-    condition     = azurerm_container_app.api.secret[0].key_vault_secret_id != null && azurerm_container_app.api.secret[0].value == null
+    condition     = one(azurerm_container_app.api.secret).key_vault_secret_id != null && one(azurerm_container_app.api.secret).value == null
     error_message = "API DB connection must be a Key Vault secret reference; a direct secret.value leaks into Terraform state."
   }
 }
