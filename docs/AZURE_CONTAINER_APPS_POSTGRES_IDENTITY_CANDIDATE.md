@@ -1,5 +1,7 @@
 # Azure Container Apps managed-identity PostgreSQL token supplier candidate (#131)
 
+**Update #134 / ADR 0100 (2026-11-20):** The previous #131 detached ACA local MI supplier can now be **explicitly selected from the API** under `RegistryPostgres:AuthenticationMode=ContainerAppsEntraCandidate` (ASP.NET Production only), with pinned UAI client GUID and an actual SQL connection/privilege pre-listen gate. No Terraform config opts in, no Container App identity is actually attached, and no live Azure endpoint/token/SQL is used in CI. This remains a **nondeployed prequalification path**; default on-prem/active Azure SQL auth stays unchanged. See [API opt-in runbook](API_POSTGRES_ENTRA_PRELISTEN_CANDIDATE.md) and [ADR 0100](../adr/0100-explicit-api-entra-postgres-prelisten-privilege-gate.md). Earlier detached-only descriptions below are historical for the #131 scoped release.
+
 **Status: offline prequalification, NOT deployed and NOT wired to the API/Provisioner/migrations.** See [ADR 0097](../adr/0097-container-apps-managed-identity-postgres-token-candidate.md), scoped [#131](https://github.com/KeyserDSoze/TemporalMark/issues/131), [Npgsql data-source candidate](ENTRA_POSTGRES_NPGSQL_CANDIDATE.md), parent [#128](https://github.com/KeyserDSoze/TemporalMark/issues/128) and Azure [#18](https://github.com/KeyserDSoze/TemporalMark/issues/18). No Azure subscription, Container App or database was accessed by the offline tests.
 
 ## Why this boundary is needed
