@@ -4,15 +4,15 @@
 mock_provider "azurerm" {}
 
 variables {
-  subscription_id        = "11111111-1111-4111-8111-111111111111"
-  resource_group_name    = "tm-ci-entra-rg"
-  location               = "westeurope"
-  candidate_server_name  = "tm-ci-entra-candidate"
-  postgres_subnet_id     = "/subscriptions/11111111-1111-4111-8111-111111111111/resourceGroups/tm-ci-entra-rg/providers/Microsoft.Network/virtualNetworks/tm-ci-entra-vnet/subnets/postgres"
-  private_dns_zone_id    = "/subscriptions/11111111-1111-4111-8111-111111111111/resourceGroups/tm-ci-entra-rg/providers/Microsoft.Network/privateDnsZones/tm-ci-entra.postgres.database.azure.com"
-  entra_tenant_id        = "22222222-2222-4222-8222-222222222222"
-  entra_admin_group_id   = "33333333-3333-4333-8333-333333333333"
-  entra_admin_group_name      = "tm-ci-db-admin-group"
+  subscription_id                = "11111111-1111-4111-8111-111111111111"
+  resource_group_name            = "tm-ci-entra-rg"
+  location                       = "westeurope"
+  candidate_server_name          = "tm-ci-entra-candidate"
+  postgres_subnet_id             = "/subscriptions/11111111-1111-4111-8111-111111111111/resourceGroups/tm-ci-entra-rg/providers/Microsoft.Network/virtualNetworks/tm-ci-entra-vnet/subnets/postgres"
+  private_dns_zone_id            = "/subscriptions/11111111-1111-4111-8111-111111111111/resourceGroups/tm-ci-entra-rg/providers/Microsoft.Network/privateDnsZones/tm-ci-entra.postgres.database.azure.com"
+  entra_tenant_id                = "22222222-2222-4222-8222-222222222222"
+  entra_admin_group_id           = "33333333-3333-4333-8333-333333333333"
+  entra_admin_group_name         = "tm-ci-db-admin-group"
   postgres_runtime_identity_name = "tm-ci-pg-mi-candidate"
 }
 
