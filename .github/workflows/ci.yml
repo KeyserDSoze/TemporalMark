@@ -14,6 +14,8 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - name: Verify immutable GitHub Action source references
         run: |
+          # RED-first #126: Azure private runner live preflight (mocked CLI/DNS in CI).
+          python3 -m unittest discover -s tests/integration -p 'test_azure_private_blob_preflight.py' -v
           python3 -m unittest discover -s tests/integration -p 'test_check_ci_action_pins.py' -v
           python3 tests/integration/check_ci_action_pins.py
           python3 -m unittest discover -s tests/integration -p 'test_check_ci_action_runtimes.py' -v
