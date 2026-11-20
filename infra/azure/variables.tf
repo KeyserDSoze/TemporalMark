@@ -25,12 +25,20 @@ variable "storage_account_name" {
 
 variable "api_image" {
   type        = string
-  description = "Prebuilt publicly pullable ASP.NET Core image (or add private registry identity)."
+  description = "Reviewed ASP.NET Core OCI image manifest pinned by SHA-256 digest (not a mutable tag); private registry identity is a separate release gate."
+  validation {
+    condition     = can(regex("^[a-z0-9][a-z0-9.:-]*/[a-z0-9][a-z0-9._/-]*@sha256:[0-9a-f]{64}$", var.api_image))
+    error_message = "api_image must be registry/repository@sha256:<64 lowercase hex digits>; mutable tags and unpinned images are forbidden."
+  }
 }
 
 variable "web_image" {
   type        = string
-  description = "Prebuilt publicly pullable Nginx React image with correct VITE_OIDC_AUTHORITY."
+  description = "Reviewed Nginx/PWA OCI manifest pinned by SHA-256 digest; verify correct built-in VITE_OIDC_AUTHORITY before publish."
+  validation {
+    condition     = can(regex("^[a-z0-9][a-z0-9.:-]*/[a-z0-9][a-z0-9._/-]*@sha256:[0-9a-f]{64}$", var.web_image))
+    error_message = "web_image must be registry/repository@sha256:<64 lowercase hex digits>; mutable tags and unpinned images are forbidden."
+  }
 }
 
 variable "oidc_authority" {
