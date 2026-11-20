@@ -35,6 +35,8 @@ jobs:
           python3 -m unittest discover -s tests/integration -p 'test_nginx_access_privacy.py' -v
           # RED-first #119: API/Kestrel request logging must remain content-free.
           python3 -m unittest discover -s tests/integration -p 'test_api_diagnostic_privacy.py' -v
+          # RED-first #121: exact Keycloak callback allowlist and collision-resilient bind.
+          python3 -m unittest discover -s tests/integration -p 'test_disposable_mfa_callback_fallback.py' -v
           python3 -m unittest discover -s tests/integration -p 'test_publish_ci_verdict.py' -v
           # RED-first #107: offline ZIP integrity without legal/trust assertions.
           python3 -m unittest discover -s tests/integration -p 'test_verify_period_export.py' -v
@@ -180,7 +182,9 @@ jobs:
           # CI-only master realm setup grants view-users/view-realm/query-users
           # to an MFA-realm service account; never manage-users or SQL registrar.
           python3 tests/integration/configure-keycloak-registrar-mfa-ci.py prepare
-          (cd tests/frontend && npx playwright test --config mfa.config.ts)
+          # Force the CI-only primary redirect listener port to be occupied;
+          # real browser TOTP + Code/PKCE must bind an explicitly registered fallback.
+          TEMPORALMARK_CI_MFA_FALLBACK=1 python3 tests/integration/run-mfa-with-blocked-primary-callback.py
           (cd tests/frontend && npx playwright test --config registrar-mfa.config.ts)
           # Both browser sessions required real password + TOTP and signed
           # Keycloak audience-specific access tokens, not password grants.
