@@ -37,7 +37,7 @@ resource "azurerm_postgresql_flexible_server" "registry_candidate" {
     prevent_destroy = true
 
     precondition {
-      condition = startswith(
+      condition     = startswith(
         lower(var.postgres_subnet_id),
         "${local.expected_resource_scope}/providers/microsoft.network/virtualnetworks/"
       ) && endswith(lower(var.postgres_subnet_id), "/subnets/postgres")
@@ -45,7 +45,7 @@ resource "azurerm_postgresql_flexible_server" "registry_candidate" {
     }
 
     precondition {
-      condition = startswith(
+      condition     = startswith(
         lower(var.private_dns_zone_id),
         "${local.expected_resource_scope}/providers/microsoft.network/privatednszones/"
       ) && endswith(lower(var.private_dns_zone_id), ".postgres.database.azure.com")
