@@ -48,6 +48,16 @@ resource "azurerm_subnet" "postgres" {
   }
 }
 
+# Blob Private Link must use a dedicated, NON-delegated subnet.
+# Delegated ACA and PostgreSQL subnets are not valid PE destinations.
+resource "azurerm_subnet" "evidence_private_endpoint" {
+  name                              = "blob-private-endpoints"
+  resource_group_name               = azurerm_resource_group.main.name
+  virtual_network_name              = azurerm_virtual_network.main.name
+  address_prefixes                  = ["10.40.3.0/24"]
+  private_endpoint_network_policies = "Disabled"
+}
+
 resource "azurerm_private_dns_zone" "postgres" {
   name                = "${var.prefix}.postgres.database.azure.com"
   resource_group_name = azurerm_resource_group.main.name
@@ -94,6 +104,8 @@ resource "azurerm_storage_account" "evidence" {
   account_replication_type        = "ZRS"
   account_kind                    = "StorageV2"
   min_tls_version                 = "TLS1_2"
+  https_traffic_only_enabled      = true
+  public_network_access_enabled   = false
   allow_nested_items_to_be_public = false
   shared_access_key_enabled       = false
   tags                            = local.tags
@@ -108,10 +120,53 @@ resource "azurerm_storage_account" "evidence" {
   }
 }
 
+# Private Blob DNS and endpoint are a separate network boundary from
+# ACA ingress. A real Terraform apply must run on a private-network agent.
+resource "azurerm_private_dns_zone" "evidence_blob" {
+  name                = "privatelink.blob.core.windows.net"
+  resource_group_name = azurerm_resource_group.main.name
+  tags                = local.tags
+}
+
+resource "azurerm_private_dns_zone_virtual_network_link" "evidence_blob" {
+  name                  = "blob-evidence-vnet"
+  resource_group_name   = azurerm_resource_group.main.name
+  private_dns_zone_name = azurerm_private_dns_zone.evidence_blob.name
+  virtual_network_id    = azurerm_virtual_network.main.id
+  registration_enabled  = false
+}
+
+resource "azurerm_private_endpoint" "evidence_blob" {
+  name                = "${var.prefix}-evidence-blob-pe"
+  location            = var.location
+  resource_group_name = azurerm_resource_group.main.name
+  subnet_id           = azurerm_subnet.evidence_private_endpoint.id
+  tags                = local.tags
+
+  private_service_connection {
+    name                           = "evidence-blob"
+    private_connection_resource_id = azurerm_storage_account.evidence.id
+    is_manual_connection           = false
+    subresource_names              = ["blob"]
+  }
+
+  private_dns_zone_group {
+    name                 = "evidence-blob-private-dns"
+    private_dns_zone_ids = [azurerm_private_dns_zone.evidence_blob.id]
+  }
+}
+
 resource "azurerm_storage_container" "evidence" {
   name                  = "timestamp-evidence"
   storage_account_id    = azurerm_storage_account.evidence.id
   container_access_type = "private"
+
+  # AzureRM container creation uses the Blob data plane. Do not race ahead of
+  # the private endpoint/DNS setup. Apply runner must resolve/reach private IP.
+  depends_on = [
+    azurerm_private_endpoint.evidence_blob,
+    azurerm_private_dns_zone_virtual_network_link.evidence_blob
+  ]
 
   lifecycle {
     prevent_destroy = true
