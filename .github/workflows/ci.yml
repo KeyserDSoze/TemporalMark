@@ -16,6 +16,9 @@ jobs:
         run: |
           # RED-first #126: Azure private runner live preflight (mocked CLI/DNS in CI).
           python3 -m unittest discover -s tests/integration -p 'test_azure_private_blob_preflight.py' -v
+          # #129 / ADR 0095: computed SQL admin fields are unknown in Terraform mock plans.
+          # Reject any source-declared SQL admin password in the isolated candidate.
+          python3 -m unittest discover -s tests/integration -p 'test_azure_entra_candidate_source.py' -v
           python3 -m unittest discover -s tests/integration -p 'test_check_ci_action_pins.py' -v
           python3 tests/integration/check_ci_action_pins.py
           python3 -m unittest discover -s tests/integration -p 'test_check_ci_action_runtimes.py' -v
