@@ -245,6 +245,10 @@ jobs:
         run: terraform -chdir=infra/azure test -no-color -filter=tests/evidence_blob_private_network.tftest.hcl
       - name: Plan-only Terraform API Key Vault secret-state boundary (#127)
         run: terraform -chdir=infra/azure test -no-color -filter=tests/api_key_vault_reference.tftest.hcl
+      - name: Init isolated Entra-only PostgreSQL new-server candidate (NO Azure apply) (#129)
+        run: terraform -chdir=infra/azure/candidates/entra_postgres init -backend=false
+      - name: Plan-only isolated Entra PostgreSQL auth and private-network policy (#129)
+        run: terraform -chdir=infra/azure/candidates/entra_postgres test -no-color -filter=tests/entra_only_candidate.tftest.hcl
 
   # A fifth reporting-only job. The four core test jobs stay unmodified.
   # GitHub REST Commit Status becomes readable through the connected
