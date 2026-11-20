@@ -39,3 +39,39 @@ run "evidence_account_rejects_public_network_and_plaintext" {
     error_message = "Evidence Blob container cannot allow anonymous access."
   }
 }
+
+
+# Keep Blob traffic off public network. We deliberately check known plan
+# attributes, not Azure-assigned IDs unknown in mocked provider plans.
+run "evidence_private_blob_link_and_dns_are_in_the_vnet" {
+  command = plan
+
+  assert {
+    condition     = azurerm_subnet.evidence_private_endpoint.address_prefixes == ["10.40.3.0/24"]
+    error_message = "Blob Private Endpoint must use its own VNet subnet, not delegated ACA/PostgreSQL subnets."
+  }
+  assert {
+    condition     = azurerm_private_dns_zone.evidence_blob.name == "privatelink.blob.core.windows.net"
+    error_message = "Blob endpoint must use the Microsoft-recommended private DNS zone."
+  }
+  assert {
+    condition     = azurerm_private_dns_zone_virtual_network_link.evidence_blob.name == "blob-evidence-vnet"
+    error_message = "Blob private DNS must be linked to the application VNet."
+  }
+  assert {
+    condition     = azurerm_private_endpoint.evidence_blob.name == "${var.prefix}-evidence-blob-pe"
+    error_message = "Evidence Blob must have a dedicated private endpoint."
+  }
+  assert {
+    condition     = azurerm_private_endpoint.evidence_blob.private_service_connection[0].subresource_names == ["blob"]
+    error_message = "Private endpoint must connect specifically to the Blob subservice."
+  }
+  assert {
+    condition     = azurerm_private_endpoint.evidence_blob.private_service_connection[0].is_manual_connection == false
+    error_message = "Blob Private Endpoint must connect to the owned account without an unapproved manual connection."
+  }
+  assert {
+    condition     = azurerm_private_endpoint.evidence_blob.private_dns_zone_group[0].name == "evidence-blob-private-dns"
+    error_message = "Blob Private Endpoint must be configured with a private DNS zone group."
+  }
+}
