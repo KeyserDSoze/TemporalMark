@@ -47,7 +47,7 @@ run "evidence_private_blob_link_and_dns_are_in_the_vnet" {
   command = plan
 
   assert {
-    condition     = azurerm_subnet.evidence_private_endpoint.address_prefixes == ["10.40.3.0/24"]
+    condition     = length(azurerm_subnet.evidence_private_endpoint.address_prefixes) == 1 && azurerm_subnet.evidence_private_endpoint.address_prefixes[0] == "10.40.3.0/24"
     error_message = "Blob Private Endpoint must use its own VNet subnet, not delegated ACA/PostgreSQL subnets."
   }
   assert {
@@ -63,7 +63,7 @@ run "evidence_private_blob_link_and_dns_are_in_the_vnet" {
     error_message = "Evidence Blob must have a dedicated private endpoint."
   }
   assert {
-    condition     = azurerm_private_endpoint.evidence_blob.private_service_connection[0].subresource_names == ["blob"]
+    condition     = length(azurerm_private_endpoint.evidence_blob.private_service_connection[0].subresource_names) == 1 && azurerm_private_endpoint.evidence_blob.private_service_connection[0].subresource_names[0] == "blob"
     error_message = "Private endpoint must connect specifically to the Blob subservice."
   }
   assert {
