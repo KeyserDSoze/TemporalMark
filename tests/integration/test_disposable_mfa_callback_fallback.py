@@ -47,7 +47,7 @@ class DisposableMfaCallbackFallbackPolicyTests(unittest.TestCase):
     def test_ci_intentionally_occupies_primary_loopback_callback(self):
         self.assertTrue(WRAPPER.is_file())
         wrapper = WRAPPER.read_text(encoding="utf-8")
-        self.assertIn('socket.bind(("127.0.0.1", 45678))', wrapper)
+        self.assertIn('socket_holder.bind(("127.0.0.1", 45678))', wrapper)
         self.assertIn("socket.listen(1)", wrapper)
         self.assertIn("mfa.config.ts", wrapper)
         self.assertIn("finally:", wrapper)
