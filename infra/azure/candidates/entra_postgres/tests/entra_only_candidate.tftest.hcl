@@ -143,3 +143,65 @@ run "reject_same_entra_admin_and_tenant_id" {
   }
   expect_failures = [azurerm_postgresql_flexible_server_active_directory_administrator.registry_candidate]
 }
+
+# #132 / ADR 0098: reviewed *runtime* PostgreSQL managed identity is separate
+# from privileged Entra GROUP admin, no SQL login or Container App attachment.
+run "isolated_runtime_identity_is_explicit_candidate_only" {
+  command = plan
+  variables {
+    postgres_runtime_identity_name = "tm-ci-pg-mi-candidate"
+  }
+  assert {
+    condition     = azurerm_user_assigned_identity.postgres_runtime_candidate.name == var.postgres_runtime_identity_name
+    error_message = "Runtime PG managed identity must be an explicit dedicated approved test identity, not the Azure API/Key Vault identity."
+  }
+  assert {
+    condition     = azurerm_user_assigned_identity.postgres_runtime_candidate.location == var.location && azurerm_user_assigned_identity.postgres_runtime_candidate.resource_group_name == var.resource_group_name
+    error_message = "Runtime PG identity scope/region must match approved candidate RG and region."
+  }
+  assert {
+    condition     = azurerm_user_assigned_identity.postgres_runtime_candidate.tags["auto_deploy"] == "DENIED" && azurerm_user_assigned_identity.postgres_runtime_candidate.tags["compliance"] == "NOT_QUALIFIED" && azurerm_user_assigned_identity.postgres_runtime_candidate.tags["environment"] == "disposable-entra-candidate"
+    error_message = "Runtime managed identity must have explicit no-auto-deploy, not-qualified, candidate-only custody tags."
+  }
+}
+
+run "reject_unapproved_runtime_identity_without_candidate_suffix" {
+  command = plan
+  variables {
+    postgres_runtime_identity_name = "temporalmark-api"
+  }
+  expect_failures = [var.postgres_runtime_identity_name]
+}
+
+run "reject_unapproved_runtime_identity_uppercase" {
+  command = plan
+  variables {
+    postgres_runtime_identity_name = "TM-CI-PG-MI-CANDIDATE"
+  }
+  expect_failures = [var.postgres_runtime_identity_name]
+}
+
+run "reject_unapproved_runtime_identity_empty" {
+  command = plan
+  variables {
+    postgres_runtime_identity_name = ""
+  }
+  expect_failures = [var.postgres_runtime_identity_name]
+}
+
+run "reject_unapproved_runtime_identity_overlong" {
+  command = plan
+  variables {
+    postgres_runtime_identity_name = "this-is-an-excessively-long-database-runtime-identity-intentionally-beyond-the-approved-limit-pg-mi-candidate"
+  }
+  expect_failures = [var.postgres_runtime_identity_name]
+}
+
+run "reject_runtime_identity_conflicting_with_entra_admin_group_label" {
+  command = plan
+  variables {
+    postgres_runtime_identity_name = "tm-ci-pg-mi-candidate"
+    entra_admin_group_name         = "tm-ci-pg-mi-candidate"
+  }
+  expect_failures = [azurerm_user_assigned_identity.postgres_runtime_candidate]
+}
