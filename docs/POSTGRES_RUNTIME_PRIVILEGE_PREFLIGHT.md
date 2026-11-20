@@ -1,0 +1,42 @@
+# PostgreSQL runtime SQL privilege preflight — isolated/read-only (#133 / ADR 0099)
+
+**Development/prequalification only; not wired into current API, Provisioner, migrations or any Azure deployment.** See [ADR 0099](../adr/0099-detached-readonly-postgres-runtime-privilege-preflight.md), [#133](https://github.com/KeyserDSoze/TemporalMark/issues/133), Azure [#128](https://github.com/KeyserDSoze/TemporalMark/issues/128) and [#18](https://github.com/KeyserDSoze/TemporalMark/issues/18). No new migrations, SQL permissions or Entra provider packages are created. The existing Azure PostgreSQL bootstrap admin password **remains in Terraform state**.
+
+## What the component checks
+
+`src/backend/infrastructures/TemporalMark.Infrastructure/Postgres/PostgresRuntimePrivilegePreflight.cs` exports:
+
+```csharp
+await PostgresRuntimePrivilegePreflight.VerifyAsync(
+    alreadyOpenAuthenticatedPostgresConnection,
+    expectedRuntimeLoginFromApprovedOperatorConfiguration,
+    cancellationToken);
+```
+
+It **never opens a connection or writes SQL**. The caller must separately authenticate and open an `NpgsqlConnection` with credentials appropriate to its approved deployment; the expected runtime login is a fixed, independently reviewed configuration value **not derived from an HTTP request, OIDC JWT, tenant, log or document hash**. The caller then runs one parameterized, read-only PostgreSQL catalog/ACL `SELECT` against this exact session.
+
+The preflight requires all of these conditions at the time of inspection:
+
+- `session_user = current_user = expected login` and catalog `rolcanlogin=true`; deny superuser, `CREATEDB`, `CREATEROLE`, replication and `BYPASSRLS`.
+- Membership of the existing `temporalmark_runtime_group`, with **no direct/transitive membership** of `temporalmark_provisioner_group`, `temporalmark_approver_group`, `temporalmark_credential_registrar_group`, built-in super-privilege groups `pg_monitor`, `pg_read_all_data`, `pg_write_all_data`, `pg_execute_server_program`, `pg_read_server_files`, `pg_write_server_files`, or optional Azure `azure_pg_admin`. The optional Azure role is checked through `pg_roles`, not blindly referenced on open-source installations where it is absent.
+- Deny database `CREATE`, schema `public` `CREATE`, direct `INSERT`/`UPDATE`/`DELETE`/`TRUNCATE` on `public.organizations` and `public.organization_memberships`, and `EXECUTE` on privileged legacy `bootstrap_organization` and `bootstrap_verified_organization` functions.
+- Require `USAGE` on schema `public`, `SELECT` on organizations/memberships, `INSERT` on the timestamp registry and tenant audit events. Checks use PostgreSQL's **effective** `has_*_privilege` functions instead of only ACL text.
+- The return value is **success without any credential or catalog report**, or a generic fixed `InvalidOperationException` without inner exception. Malformed expected login is rejected before SQL; user-initiated cancellation is preserved. SQL errors, missing mandatory groups/functions/tables, network loss, schema drift or unknown privilege state fail closed.
+
+## TDD and real PostgreSQL verification
+
+`tests/backend/TemporalMark.Postgres.Tests/PostgresRuntimePrivilegePreflightTests.cs` runs against the existing **real PostgreSQL 17 Docker** fixture with four separate **local-only** test logins:
+
+- **Positive** local `temporalmark_api` with runtime group and no elevated grants: pass; migration count remains 20 before/after.
+- **Negative** migration owner/superuser `temporalmark`, provisioning CLI login, independent approver login, and a correct runtime connection with a **different claimed login**: denied, no leaked credential or role string in exception.
+- Negative closed connection (the preflight never opens it), missing/injected expected-role name and pre-cancelled context.
+
+The GitHub Docker smoke uses a dedicated `TEMPORALMARK_RUNTIME_TEST_DB` fixture **only for these real local tests**. All other real PostgreSQL migration/tenant-concurrency checks, full logical `pg_dump/pg_restore` tests, Keycloak signed TOTP/PKCE, tenant A/B HTTP 401/403, Playwright and Terraform mock plans must still pass. No live Azure managed identity, Azure subscription, PostgreSQL Entra token or cloud SQL role is used or inferred by this fixture.
+
+## What it does NOT prove
+
+This is an **optional, point-in-time, non-exhaustive** runtime database session security gate. It does not prove the real Azure Entra managed identity exists, belongs to the approved tenant, was issued the right token, is attached to a Container App, or was granted and reviewed the right SQL mapping. It does not prove TLS/private VNet/DNS, complete PostgreSQL object ownership/default privileges, hidden extra functions, unreviewed role groups, security-definer logic, row-level security isolation, future privilege drift or immediately revoke existing pooled DB sessions. For production, independently manage SQL role grants/ownership and continuously re-check actual privileges after migrations/role changes, plus run end-to-end live private Azure data-plane tests with the separately governed UAI and token supplier.
+
+The preflight is **not enabled in the current API, migration runner or privileged CLI**. Existing password-based on-prem installations and Azure reference deployment are unchanged. Azure #128/#18 still require approved managed-identity SQL role mapping, distinct migration/registrar/reviewer DB principals, credential rotation/historical state custody, TLS/private connectivity, rollback/restore and CAB. The project is **not** a qualified timestamp provider and no production WORM custody/eIDAS proof is implied.
+
+Official technical sources: [PostgreSQL 17 pg_roles](https://www.postgresql.org/docs/17/view-pg-roles.html), [PostgreSQL 17 system/privilege functions](https://www.postgresql.org/docs/17/functions-info.html), [Microsoft PostgreSQL Entra configuration](https://learn.microsoft.com/en-us/azure/postgresql/security/security-entra-configure), [Azure PostgreSQL Entra managed identity connectivity](https://learn.microsoft.com/en-us/azure/postgresql/security/security-connect-with-managed-identity).
