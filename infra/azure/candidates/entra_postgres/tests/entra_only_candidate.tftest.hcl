@@ -69,56 +69,78 @@ run "reviewed_entra_group_is_separate_administrator" {
 
 run "reject_existing_server_name_without_candidate_suffix" {
   command = plan
-  variables { candidate_server_name = "temporalmark-pg" }
+  variables {
+    candidate_server_name = "temporalmark-pg"
+  }
   expect_failures = [var.candidate_server_name]
 }
 run "reject_uppercase_or_bad_candidate_server_name" {
   command = plan
-  variables { candidate_server_name = "TM-CI-ENTRA-CANDIDATE" }
+  variables {
+    candidate_server_name = "TM-CI-ENTRA-CANDIDATE"
+  }
   expect_failures = [var.candidate_server_name]
 }
 run "reject_missing_subscription" {
   command = plan
-  variables { subscription_id = "" }
+  variables {
+    subscription_id = ""
+  }
   expect_failures = [var.subscription_id]
 }
 run "reject_invalid_entra_tenant" {
   command = plan
-  variables { entra_tenant_id = "invalid-tenant" }
+  variables {
+    entra_tenant_id = "invalid-tenant"
+  }
   expect_failures = [var.entra_tenant_id]
 }
 run "reject_invalid_group_object_id" {
   command = plan
-  variables { entra_admin_group_id = "invalid-group" }
+  variables {
+    entra_admin_group_id = "invalid-group"
+  }
   expect_failures = [var.entra_admin_group_id]
 }
 run "reject_unapproved_group_label" {
   command = plan
-  variables { entra_admin_group_name = "not a canonical group" }
+  variables {
+    entra_admin_group_name = "not a canonical group"
+  }
   expect_failures = [var.entra_admin_group_name]
 }
 run "reject_wrong_postgres_subnet_name" {
   command = plan
-  variables { postgres_subnet_id = "/subscriptions/11111111-1111-4111-8111-111111111111/resourceGroups/tm-ci-entra-rg/providers/Microsoft.Network/virtualNetworks/tm-ci-entra-vnet/subnets/apps" }
+  variables {
+    postgres_subnet_id = "/subscriptions/11111111-1111-4111-8111-111111111111/resourceGroups/tm-ci-entra-rg/providers/Microsoft.Network/virtualNetworks/tm-ci-entra-vnet/subnets/apps"
+  }
   expect_failures = [var.postgres_subnet_id]
 }
 run "reject_non_pg_private_dns_zone" {
   command = plan
-  variables { private_dns_zone_id = "/subscriptions/11111111-1111-4111-8111-111111111111/resourceGroups/tm-ci-entra-rg/providers/Microsoft.Network/privateDnsZones/privatelink.blob.core.windows.net" }
+  variables {
+    private_dns_zone_id = "/subscriptions/11111111-1111-4111-8111-111111111111/resourceGroups/tm-ci-entra-rg/providers/Microsoft.Network/privateDnsZones/privatelink.blob.core.windows.net"
+  }
   expect_failures = [var.private_dns_zone_id]
 }
 run "reject_subnet_in_different_subscription" {
   command = plan
-  variables { postgres_subnet_id = "/subscriptions/99999999-9999-4999-8999-999999999999/resourceGroups/tm-ci-entra-rg/providers/Microsoft.Network/virtualNetworks/tm-ci-entra-vnet/subnets/postgres" }
+  variables {
+    postgres_subnet_id = "/subscriptions/99999999-9999-4999-8999-999999999999/resourceGroups/tm-ci-entra-rg/providers/Microsoft.Network/virtualNetworks/tm-ci-entra-vnet/subnets/postgres"
+  }
   expect_failures = [azurerm_postgresql_flexible_server.registry_candidate]
 }
 run "reject_dns_zone_in_different_resource_group" {
   command = plan
-  variables { private_dns_zone_id = "/subscriptions/11111111-1111-4111-8111-111111111111/resourceGroups/unapproved-rg/providers/Microsoft.Network/privateDnsZones/tm-ci-entra.postgres.database.azure.com" }
+  variables {
+    private_dns_zone_id = "/subscriptions/11111111-1111-4111-8111-111111111111/resourceGroups/unapproved-rg/providers/Microsoft.Network/privateDnsZones/tm-ci-entra.postgres.database.azure.com"
+  }
   expect_failures = [azurerm_postgresql_flexible_server.registry_candidate]
 }
 run "reject_same_entra_admin_and_tenant_id" {
   command = plan
-  variables { entra_admin_group_id = "22222222-2222-4222-8222-222222222222" }
+  variables {
+    entra_admin_group_id = "22222222-2222-4222-8222-222222222222"
+  }
   expect_failures = [azurerm_postgresql_flexible_server_active_directory_administrator.registry_candidate]
 }
