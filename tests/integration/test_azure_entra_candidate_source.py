@@ -70,7 +70,7 @@ class EntraCandidateSourcePolicyTests(unittest.TestCase):
         variables = (CANDIDATE / "variables.tf").read_text()
         self.assertEqual(
             1, len(re.findall(
-                r'^resource "azurerm_user_assigned_identity" "postgres_runtime_candidate"\\s*\\{',
+                r'^resource "azurerm_user_assigned_identity" "postgres_runtime_candidate"\s*\{',
                 source, re.MULTILINE,
             )),
             "Exactly one isolated PostgreSQL runtime UAI must be declared",
@@ -84,7 +84,7 @@ class EntraCandidateSourcePolicyTests(unittest.TestCase):
         # provider plan values. Never pretend computed IDs are real on CI.
         identity_block = source.partition(
             'resource "azurerm_user_assigned_identity" "postgres_runtime_candidate" {'
-        )[2].split("\\nresource ", 1)[0]
+        )[2].split("\nresource ", 1)[0]
         self.assertIn('prevent_destroy = true', identity_block)
         self.assertIn('var.entra_admin_group_name', identity_block)
         self.assertNotIn('principal_type = "ServicePrincipal"', identity_block)
@@ -101,27 +101,27 @@ class EntraCandidateSourcePolicyTests(unittest.TestCase):
                 self.assertRegex(
                     outputs,
                     re.compile(
-                        r'output "' + re.escape(name) + r'"\\s*\\{[^}]*'
-                        r'value\\s*=\\s*azurerm_user_assigned_identity'
-                        r'\\.postgres_runtime_candidate\\.' + attribute + r'\\b',
+                        r'output "' + re.escape(name) + r'"\s*\{[^}]*'
+                        r'value\s*=\s*azurerm_user_assigned_identity'
+                        r'\.postgres_runtime_candidate\.' + attribute + r'\b',
                         re.MULTILINE | re.DOTALL,
                     ),
                 )
         self.assertEqual(3, outputs.count('output "'))
-        self.assertNotRegex(outputs, r'(?im)^\\s*(sensitive|password|secret|token)\\s*=')
+        self.assertNotRegex(outputs, r'(?im)^\s*(sensitive|password|secret|token)\s*=')
 
     def test_runtime_identity_candidate_never_auto_attaches_or_grants_sql_or_rbac(self):
-        sources = "\\n".join((CANDIDATE / p).read_text()
+        sources = "\n".join((CANDIDATE / p).read_text()
                             for p in ("main.tf", "variables.tf", "versions.tf"))
         for banned in (
-            r'^\\s*resource "azurerm_container_app"',
-            r'^\\s*resource "azurerm_role_assignment"',
-            r'^\\s*resource "azurerm_postgresql_flexible_server_active_directory_administrator" "postgres_runtime_candidate"',
-            r'^\\s*resource "null_resource"',
-            r'^\\s*resource "terraform_data"',
-            r'^\\s*data "external"',
-            r'^\\s*provisioner "local-exec"',
-            r'pgaadauth_create_principal\\s*\\(',
+            r'^\s*resource "azurerm_container_app"',
+            r'^\s*resource "azurerm_role_assignment"',
+            r'^\s*resource "azurerm_postgresql_flexible_server_active_directory_administrator" "postgres_runtime_candidate"',
+            r'^\s*resource "null_resource"',
+            r'^\s*resource "terraform_data"',
+            r'^\s*data "external"',
+            r'^\s*provisioner "local-exec"',
+            r'pgaadauth_create_principal\s*\(',
         ):
             with self.subTest(pattern=banned):
                 self.assertNotRegex(sources, re.compile(banned, re.MULTILINE))
