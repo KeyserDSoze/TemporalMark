@@ -18,6 +18,8 @@ jobs:
           python3 -m unittest discover -s tests/integration -p 'test_azure_private_blob_preflight.py' -v
           # #129 / ADR 0095: computed SQL admin fields are unknown in Terraform mock plans.
           # Reject any source-declared SQL admin password in the isolated candidate.
+          # #134 / ADR 0100: explicit API Entra mode, no hidden auto-selection.
+          python3 -m unittest discover -s tests/integration -p 'test_api_entra_postgres_optin.py' -v
           python3 -m unittest discover -s tests/integration -p 'test_azure_entra_candidate_source.py' -v
           python3 -m unittest discover -s tests/integration -p 'test_check_ci_action_pins.py' -v
           python3 tests/integration/check_ci_action_pins.py
