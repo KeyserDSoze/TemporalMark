@@ -1,5 +1,7 @@
 # PostgreSQL runtime SQL privilege preflight — isolated/read-only (#133 / ADR 0099)
 
+**Update #134 / ADR 0100 (2026-11-20):** The earlier optional, detached-only #133 SQL preflight is now an explicit **mandatory pre-listen startup gate** when — and only when — the API is configured in the `ContainerAppsEntraCandidate` PostgreSQL mode. It still never changes SQL grants/data, is not invoked by the default password-mode API or by privileged CLIs/migrations, and has **not** been tested against actual Azure Entra SQL principals. Real cloud staging/role custody and Terraform admin state remediation remain #128/#18 OPEN. See [API opt-in runbook](API_POSTGRES_ENTRA_PRELISTEN_CANDIDATE.md), [ADR 0100](../adr/0100-explicit-api-entra-postgres-prelisten-privilege-gate.md). Earlier detached-only text below refers to the #133 historical scope.
+
 **Development/prequalification only; not wired into current API, Provisioner, migrations or any Azure deployment.** See [ADR 0099](../adr/0099-detached-readonly-postgres-runtime-privilege-preflight.md), [#133](https://github.com/KeyserDSoze/TemporalMark/issues/133), Azure [#128](https://github.com/KeyserDSoze/TemporalMark/issues/128) and [#18](https://github.com/KeyserDSoze/TemporalMark/issues/18). No new migrations, SQL permissions or Entra provider packages are created. The existing Azure PostgreSQL bootstrap admin password **remains in Terraform state**.
 
 ## What the component checks
