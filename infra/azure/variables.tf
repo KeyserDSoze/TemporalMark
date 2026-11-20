@@ -72,6 +72,15 @@ variable "registry_connection_string" {
   description = "App database connection string, injected as a Container Apps secret; replace with Managed Identity before compliance."
 }
 
+# Pre-qualification deployments are internal-only by default. Setting
+# true is a release decision requiring separately evidenced WAF, privacy and
+# CAB approval; this boolean is NOT a check of any such external approval.
+variable "enable_public_web_ingress" {
+  type        = bool
+  default     = false
+  description = "Explicit opt-in to make the Azure web Container App externally accessible. Requires independent WAF/managed-ingress log/DPIA/CAB approval before use; API ingress stays private."
+}
+
 variable "evidence_retention_days" {
   type        = number
   default     = 3650
