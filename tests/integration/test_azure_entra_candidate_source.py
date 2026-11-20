@@ -65,5 +65,67 @@ class EntraCandidateSourcePolicyTests(unittest.TestCase):
         self.assertNotRegex(workflow, r'terraform\s+-chdir=infra/azure/candidates/entra_postgres\s+apply\b')
 
 
+    def test_scoped_runtime_identity_is_separate_non_admin_and_not_auto_attached(self):
+        source = (CANDIDATE / "main.tf").read_text()
+        variables = (CANDIDATE / "variables.tf").read_text()
+        self.assertEqual(
+            1, len(re.findall(
+                r'^resource "azurerm_user_assigned_identity" "postgres_runtime_candidate"\\s*\\{',
+                source, re.MULTILINE,
+            )),
+            "Exactly one isolated PostgreSQL runtime UAI must be declared",
+        )
+        self.assertIn('variable "postgres_runtime_identity_name" {', variables)
+        self.assertIn('name                = var.postgres_runtime_identity_name', source)
+        self.assertIn('resource_group_name = var.resource_group_name', source)
+        self.assertIn('location            = var.location', source)
+        self.assertIn('tags                = local.candidate_tags', source)
+        # Source checks complement mock plan; lifecycle is not provable by
+        # provider plan values. Never pretend computed IDs are real on CI.
+        identity_block = source.partition(
+            'resource "azurerm_user_assigned_identity" "postgres_runtime_candidate" {'
+        )[2].split("\\nresource ", 1)[0]
+        self.assertIn('prevent_destroy = true', identity_block)
+        self.assertIn('var.entra_admin_group_name', identity_block)
+        self.assertNotIn('principal_type = "ServicePrincipal"', identity_block)
+
+    def test_candidate_identity_outputs_are_only_nonsecret_metadata(self):
+        outputs = (CANDIDATE / "outputs.tf").read_text()
+        expected = {
+            'postgres_runtime_identity_resource_id': 'id',
+            'postgres_runtime_identity_client_id': 'client_id',
+            'postgres_runtime_identity_principal_id': 'principal_id',
+        }
+        for name, attribute in expected.items():
+            with self.subTest(output=name):
+                self.assertRegex(
+                    outputs,
+                    re.compile(
+                        r'output "' + re.escape(name) + r'"\\s*\\{[^}]*'
+                        r'value\\s*=\\s*azurerm_user_assigned_identity'
+                        r'\\.postgres_runtime_candidate\\.' + attribute + r'\\b',
+                        re.MULTILINE | re.DOTALL,
+                    ),
+                )
+        self.assertEqual(3, outputs.count('output "'))
+        self.assertNotRegex(outputs, r'(?im)^\\s*(sensitive|password|secret|token)\\s*=')
+
+    def test_runtime_identity_candidate_never_auto_attaches_or_grants_sql_or_rbac(self):
+        sources = "\\n".join((CANDIDATE / p).read_text()
+                            for p in ("main.tf", "variables.tf", "versions.tf"))
+        for banned in (
+            r'^\\s*resource "azurerm_container_app"',
+            r'^\\s*resource "azurerm_role_assignment"',
+            r'^\\s*resource "azurerm_postgresql_flexible_server_active_directory_administrator" "postgres_runtime_candidate"',
+            r'^\\s*resource "null_resource"',
+            r'^\\s*resource "terraform_data"',
+            r'^\\s*data "external"',
+            r'^\\s*provisioner "local-exec"',
+            r'pgaadauth_create_principal\\s*\\(',
+        ):
+            with self.subTest(pattern=banned):
+                self.assertNotRegex(sources, re.compile(banned, re.MULTILINE))
+
+
 if __name__ == "__main__":
     unittest.main()
