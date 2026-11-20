@@ -237,6 +237,8 @@ jobs:
         run: terraform -chdir=infra/azure test -no-color -filter=tests/oidc_issuer.tftest.hcl
       - name: Plan-only Terraform private ingress boundary policy (#123)
         run: terraform -chdir=infra/azure test -no-color -filter=tests/ingress_boundary.tftest.hcl
+      - name: Plan-only Terraform internal environment load balancer policy (#124)
+        run: terraform -chdir=infra/azure test -no-color -filter=tests/environment_boundary.tftest.hcl
 
   # A fifth reporting-only job. The four core test jobs stay unmodified.
   # GitHub REST Commit Status becomes readable through the connected
