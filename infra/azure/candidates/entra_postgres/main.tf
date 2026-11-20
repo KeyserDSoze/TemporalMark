@@ -3,11 +3,11 @@
 # DO NOT apply to a live subscription without CAB/role, state and DR approval.
 locals {
   expected_resource_scope = lower("/subscriptions/${var.subscription_id}/resourceGroups/${var.resource_group_name}")
-  candidate_tags           = {
-    application   = "TemporalMark"
-    environment   = "disposable-entra-candidate"
-    compliance    = "NOT_QUALIFIED"
-    auto_deploy   = "DENIED"
+  candidate_tags = {
+    application = "TemporalMark"
+    environment = "disposable-entra-candidate"
+    compliance  = "NOT_QUALIFIED"
+    auto_deploy = "DENIED"
   }
 }
 
