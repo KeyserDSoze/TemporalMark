@@ -36,11 +36,15 @@ public sealed class PostgresRuntimePrivilegePreflightTests
     [Fact]
     public async Task LocalRuntimeWithExpectedReadOnlyAclCanPassWithoutModifyingMigrations()
     {
+        // The ordinary runtime login must NOT be granted access to the
+        // migration-owner ledger merely to test read-only behavior.
+        await using var owner = Owner();
+        await owner.OpenAsync();
+        Assert.Equal(20L, await MigrationCountAsync(owner));
         await using var c = Runtime();
         await c.OpenAsync();
-        Assert.Equal(20L, await MigrationCountAsync(c));
         await PostgresRuntimePrivilegePreflight.VerifyAsync(c, "temporalmark_api", CancellationToken.None);
-        Assert.Equal(20L, await MigrationCountAsync(c));
+        Assert.Equal(20L, await MigrationCountAsync(owner));
     }
 
     [Fact]
@@ -126,7 +130,9 @@ public sealed class PostgresRuntimePrivilegePreflightTests
         cancelled.Cancel();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
             PostgresRuntimePrivilegePreflight.VerifyAsync(c, "temporalmark_api", cancelled.Token));
-        Assert.Equal(20L, await MigrationCountAsync(c));
+        await using var owner = Owner();
+        await owner.OpenAsync();
+        Assert.Equal(20L, await MigrationCountAsync(owner));
     }
 
     [Fact]
