@@ -32,12 +32,51 @@ builder.Services.AddHttpLogging(options =>
 
 builder.Services.AddHealthChecks();
 builder.Services.AddProblemDetails();
-builder.Services.AddSingleton(_ =>
+// The existing OSS on-prem and current Azure reference remain Password mode
+// unless an operator explicitly chooses the independent Container Apps Entra
+// candidate. Never auto-detect cloud credentials or downgrade failed Entra.
+var registryPostgresMode =
+    builder.Configuration["RegistryPostgres:AuthenticationMode"] ?? "Password";
+ContainerAppsEntraApiRegistryCandidate? entraRegistryCandidate = null;
+switch (registryPostgresMode)
 {
-    var connectionString = builder.Configuration.GetConnectionString("Registry")
-        ?? throw new InvalidOperationException("ConnectionStrings:Registry is required.");
-    return NpgsqlDataSource.Create(connectionString);
-});
+    case "Password":
+        builder.Services.AddSingleton(_ =>
+        {
+            var connectionString = builder.Configuration.GetConnectionString("Registry")
+                ?? throw new InvalidOperationException("ConnectionStrings:Registry is required.");
+            return NpgsqlDataSource.Create(connectionString);
+        });
+        break;
+
+    case "ContainerAppsEntraCandidate":
+        // This opt-in is NOT a production rollout authorization. Even in a
+        // Production environment, actual Entra SQL role/grants and Azure
+        // staging/CAB remain mandatory (#128/#18). No local/dev escape hatch.
+        if (!builder.Environment.IsProduction())
+            throw new InvalidOperationException("Registry PostgreSQL Entra startup denied");
+        try
+        {
+            entraRegistryCandidate = ContainerAppsEntraApiRegistryCandidate.Create(
+                builder.Configuration.GetConnectionString("Registry"),
+                Environment.GetEnvironmentVariable("IDENTITY_ENDPOINT"),
+                Environment.GetEnvironmentVariable("IDENTITY_HEADER"),
+                builder.Configuration["RegistryPostgres:UserAssignedClientId"],
+                builder.Configuration["RegistryPostgres:ExpectedRuntimeLogin"]);
+        }
+        catch (Exception)
+        {
+            // Never echo raw SQL string, MI secret, local URL or token.
+            throw new InvalidOperationException("Registry PostgreSQL Entra startup denied");
+        }
+        // This explicit single instance is owned by the candidate and disposed
+        // on application stop; regular repositories still share NpgsqlDataSource.
+        builder.Services.AddSingleton<NpgsqlDataSource>(entraRegistryCandidate.DataSource);
+        break;
+
+    default:
+        throw new InvalidOperationException("Unsupported PostgreSQL authentication mode");
+}
 builder.Services.AddScoped<ITimestampRegistry, PostgresTimestampRegistry>();
 builder.Services.AddScoped<ITenantAuthorization, PostgresTenantAuthorization>();
 builder.Services.AddScoped<TimestampRegistryService>();
@@ -143,6 +182,25 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
 builder.Services.AddAuthorization();
 
 var app = builder.Build();
+
+// In the explicit Entra candidate mode only, acquire an actual token and
+// open a real TLS-verified SQL session, then confirm non-admin runtime grants
+// BEFORE ANY HTTP LISTENER IS STARTED. Failure aborts startup without a
+// password fallback or leaking provider/credential details. Bounded timeout.
+if (entraRegistryCandidate is not null)
+{
+    app.Lifetime.ApplicationStopped.Register(entraRegistryCandidate.Dispose);
+    using var prelistenTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+    try
+    {
+        await entraRegistryCandidate.VerifyAtStartupAsync(prelistenTimeout.Token);
+    }
+    catch (Exception)
+    {
+        entraRegistryCandidate.Dispose();
+        throw new InvalidOperationException("Registry PostgreSQL Entra startup denied");
+    }
+}
 app.UseCors("web");
 app.UseAuthentication();
 app.UseAuthorization();
