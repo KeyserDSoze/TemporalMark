@@ -30,7 +30,7 @@ Developer-only login: `demo-admin` / `local-dev-only`. See [Docker guide](docker
 adr/                  architecture decisions
 docs/                 compliance and audit gap register
 docker/               reproducible local functional stack
-infra/azure/          Terraform reference (OCI digest #120, OIDC #122, private app #123 and environment #124)
+infra/azure/          Terraform reference (OCI #120, OIDC #122, private ACA #123/#124, private Blob #125)
 scripts/              on-prem bootstrap and database schema
 src/backend/
   applications/       ASP.NET Core HTTP boundary
