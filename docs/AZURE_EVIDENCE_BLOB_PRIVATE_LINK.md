@@ -1,0 +1,29 @@
+# Azure evidence Blob — public network denied and private VNet endpoint (#125)
+
+**Prequalification reference, not qualified legal preservation or a verified Azure deployment.** See [ADR 0092](../adr/0092-private-azure-blob-evidence-network.md), [#18](https://github.com/KeyserDSoze/TemporalMark/issues/18), [#115](https://github.com/KeyserDSoze/TemporalMark/issues/115) and [#17](https://github.com/KeyserDSoze/TemporalMark/issues/17).
+
+## Threat and new Terraform boundary
+
+Before #125, the evidence Storage Account already disabled anonymous container access and Shared Key, had TLS1_2 minimum, Blob versioning and change feed and an **unlocked** pilot immutability policy, but did **not** explicitly disable its public network endpoint. Authorization and data-plane network ingress are separate concerns.
+
+The Terraform reference now explicitly configures the evidence account with `public_network_access_enabled=false` and `https_traffic_only_enabled=true`, preserving Shared Key disabled, private Blob container and existing `prevent_destroy`. It creates a dedicated **nondelegated** `10.40.3.0/24` private endpoint subnet (not the ACA `10.40.1.0/24` or PostgreSQL `10.40.2.0/24` delegated subnets), an Azure Storage **Blob** Private Endpoint with `subresource_names=["blob"]`, the recommended DNS zone `privatelink.blob.core.windows.net`, a link to the application's VNet, and a Private Endpoint DNS zone group. No public bypass / permissive ACL is added. The API's existing system-assigned identity and `Storage Blob Data Contributor` role assignment remain; **actual evidence upload/download through that identity is not implemented or demonstrated by Terraform**.
+
+Microsoft [Storage Private Endpoint guidance](https://learn.microsoft.com/en-us/azure/storage/common/storage-private-endpoints) confirms private IP access from VNet and public-network disabling, while the [networking FAQ](https://learn.microsoft.com/en-us/troubleshoot/azure/azure-storage/blobs/networking/storage-network-security-faq) requires correct private DNS zones and name resolution. Neither a private Blob container nor a private endpoint guarantees legal WORM custody. Existing immutable-policy `locked=false` is intentional pending independent compliance authorization.
+
+## Important Terraform data-plane release blocker
+
+The reference still declares `azurerm_storage_container.evidence`, which AzureRM provisions through **Blob data-plane operations**, not merely the Azure management plane. It also has `shared_access_key_enabled=false`. To avoid Shared Key authentication, the provider now explicitly uses `storage_use_azuread=true`. The Storage container depends on the Blob Private Endpoint and private DNS VNet link.
+
+**This does not make an external GitHub runner able to apply the stack.** With `public_network_access_enabled=false`, a normal public hosted CI runner **cannot reach** the Blob data plane even with Azure AD privileges. A real deployment requires a separately approved Terraform execution runner/network path **inside the VNet or through a trusted private network**, correct DNS resolution of `<account>.blob.core.windows.net` to the private endpoint IP, appropriate Azure AD Storage Blob data-plane roles, and handling of RBAC/DNS propagation. A management-plane design for creating the container may be a separate production alternative; it requires fresh security review. Do **not** enable public Storage access temporarily or grant storage account Shared Keys merely to make Terraform apply succeed. Keep state, credentials, private runner and protected change approval under #18.
+
+## Test boundary and operator checklist
+
+The mandatory four-core CI executes `terraform -chdir=infra/azure test -no-color -filter=tests/evidence_blob_private_network.tftest.hcl` with `mock_provider "azurerm"`. A positive plan verifies public access denial, HTTPS-only, no Shared Key/anonymous Blob, TLS1_2, private container and configured subnet/private DNS/endpoint/Blob subresource/automatic connection. The other tests for ingress network policy, OCI digest and OIDC remain mandatory. **Terraform mock plan does not create Azure resources, perform network traffic, check private endpoint approval or prove that the app can PUT/GET evidence.**
+
+Before any real release:
+1. Obtain approved topology and private runner/managed identity, Azure Storage data-plane RBAC, network peering, DNS and policy change control. Verify private endpoint and its IP/DNS and **prove** direct public access is denied from outside the VNet, without using a real document digest or customer JWT in logs.
+2. On the private authorized runner, verify Terraform state/backend secrecy and inspect **real** `terraform plan` for unintended resource replacement, retention changes or private endpoint/DNS side effects. Use an approved staged apply with recovery and backup drills; an existing production Storage Account is NOT safely converted by the CI alone.
+3. Perform controlled upload/read-back/versioning tests through the **actual application identity** from the intended ACA runtime network. Independently check signature-based legal evidence preservation, immutability lock approval, external custodian, backup/log retention, GDPR-DPIA/legal hold and destruction controls. Private transport is not an independent immutable witness.
+4. If production needs Blob queue/file/table services, design and validate **separate** private endpoints/DNS zones and access policies for each subresource; #125 covers only Blob. Check deployed DNS is consistent for private Azure Storage account and other Azure Storage accounts in the VNet.
+
+**Remaining OPEN:** #18 real Azure rollout/identity/secret management and private runner, #115/#113 managed ingress/error/Log Analytics privacy and retention, #17 independent WORM/evidence custody, #13/#15 eIDAS/QTSP qualification, V015/V016 independent WebAuthn reviewer/registrar security. Pilot evidence remains `Unverified`.
