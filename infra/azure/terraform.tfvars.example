@@ -3,7 +3,8 @@ subscription_id          = "00000000-0000-0000-0000-000000000000"
 prefix                   = "temporalmark-dev"
 location                 = "westeurope"
 storage_account_name     = "tmreplacewithunique"
-# Private-by-default: public WAF/ingress privacy/CAB review before changing to true.
+# Default: ACA ENVIRONMENT internal VNet load balancer + web/API app ingress internal.
+# True makes both environment and web PUBLIC; review replacement, WAF, log-DPIA and CAB first.
 enable_public_web_ingress = false
 # FAKE placeholders ONLY: replace with actual registry-reported image manifest digests.
 # Keep the API/web release evidence and build-embedded OIDC authority aligned.
