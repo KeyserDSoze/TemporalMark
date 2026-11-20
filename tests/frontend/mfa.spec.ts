@@ -9,7 +9,10 @@ import { writeFileSync } from "node:fs";
 import { jwtVerify, createRemoteJWKSet } from "jose";
 
 const issuer = "http://localhost:8081/realms/temporalmark-mfa-ci";
-const redirect = "http://127.0.0.1:45678/oidc-mfa-callback";
+// Strict CI-only redirect allowlist mirrors the disposable Keycloak client.
+// Never replace with a wildcard or an unregistered arbitrary ephemeral port.
+const callbackPorts = [45678, 46678, 47678] as const;
+let redirect = "http://127.0.0.1:45678/oidc-mfa-callback";
 const clientId = "temporalmark-mfa-pkce-ci";
 const expectedAcr = "urn:temporalmark:loa:2";
 const username = "demo-mfa-approver";
@@ -40,6 +43,34 @@ function totp(secret: string): string {
   return String((digest.readUInt32BE(offset) & 0x7fffffff) % 1000000).padStart(6, "0");
 }
 
+// Bind only already registered loopback redirect URIs. An occupied primary
+// callback must not suppress the real password + TOTP + PKCE proof.
+async function bindApprovedCallback(server: Server): Promise<number> {
+  for (const port of callbackPorts) {
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const onListening = () => {
+          server.off("error", onError);
+          resolve();
+        };
+        const onError = (error: Error) => {
+          server.off("listening", onListening);
+          reject(error);
+        };
+        server.once("listening", onListening);
+        server.once("error", onError);
+        server.listen(port, "127.0.0.1");
+      });
+      return port;
+    } catch (error) {
+      // Never fall back on permission, host, TLS or unexpected socket errors.
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== "EADDRINUSE") throw error;
+    }
+  }
+  throw new Error("No approved disposable MFA loopback callback port available");
+}
+
 test("real Keycloak browser password+TOTP, Code+PKCE S256 and verified ACR (not password grant)", async ({ browser }) => {
   let callbackServer: Server | undefined;
   const callbackCodes: { code: string; state: string }[] = [];
@@ -56,10 +87,10 @@ test("real Keycloak browser password+TOTP, Code+PKCE S256 and verified ACR (not 
       response.writeHead(200, { "Content-Type": "text/plain", "Cache-Control": "no-store" });
       response.end("CI OIDC callback captured");
     });
-    await new Promise<void>((resolve, reject) => {
-      callbackServer!.once("error", reject);
-      callbackServer!.listen(45678, "127.0.0.1", resolve);
-    });
+    const port = await bindApprovedCallback(callbackServer);
+    // This exact URI is reused for initial login, callback processing and
+    // one-time authorization-code exchange; never allow requester input.
+    redirect = `http://127.0.0.1:${port}/oidc-mfa-callback`;
 
     async function start() {
       const context = await browser.newContext({ recordVideo: undefined });
@@ -163,6 +194,9 @@ test("real Keycloak browser password+TOTP, Code+PKCE S256 and verified ACR (not 
     if (file) writeFileSync(file, json.access_token, { mode: 0o600, flag: "wx" });
     await second.context.close();
   } finally {
-    await new Promise<void>(resolve => callbackServer?.close(() => resolve()) ?? resolve());
+    await new Promise<void>(resolve => {
+      if (callbackServer?.listening) callbackServer.close(() => resolve());
+      else resolve();
+    });
   }
 });
