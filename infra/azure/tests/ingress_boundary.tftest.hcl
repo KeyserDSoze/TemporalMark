@@ -3,16 +3,16 @@
 mock_provider "azurerm" {}
 
 variables {
-  subscription_id            = "00000000-0000-0000-0000-000000000000"
-  prefix                     = "tm-ci-ingress"
-  location                   = "westeurope"
-  storage_account_name       = "tmciingressbound"
-  oidc_authority             = "https://identity.example.org/realms/ci"
-  postgres_password          = "CI-FAKE-NOT-FOR-DEPLOY"
+  subscription_id                  = "00000000-0000-0000-0000-000000000000"
+  prefix                           = "tm-ci-ingress"
+  location                         = "westeurope"
+  storage_account_name             = "tmciingressbound"
+  oidc_authority                   = "https://identity.example.org/realms/ci"
+  postgres_password                = "CI-FAKE-NOT-FOR-DEPLOY"
   registry_connection_secret_uri   = "https://tmciregistryvault.vault.azure.net/secrets/registry-connection/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   registry_connection_key_vault_id = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/tm-ci-kv-rg/providers/Microsoft.KeyVault/vaults/tmciregistryvault"
-  api_image                  = "registry.example.invalid/temporalmark/api@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-  web_image                  = "registry.example.invalid/temporalmark/web@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  api_image                        = "registry.example.invalid/temporalmark/api@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  web_image                        = "registry.example.invalid/temporalmark/web@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 }
 
 run "default_both_apps_internal" {
