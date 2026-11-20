@@ -27,3 +27,23 @@ Before any real release:
 4. If production needs Blob queue/file/table services, design and validate **separate** private endpoints/DNS zones and access policies for each subresource; #125 covers only Blob. Check deployed DNS is consistent for private Azure Storage account and other Azure Storage accounts in the VNet.
 
 **Remaining OPEN:** #18 real Azure rollout/identity/secret management and private runner, #115/#113 managed ingress/error/Log Analytics privacy and retention, #17 independent WORM/evidence custody, #13/#15 eIDAS/QTSP qualification, V015/V016 independent WebAuthn reviewer/registrar security. Pilot evidence remains `Unverified`.
+
+## Scoped #126 — live read-only preflight, to run from an authorized private runner
+
+[ADR 0093](../adr/0093-live-azure-blob-private-runner-preflight.md) and [issue #126](https://github.com/KeyserDSoze/TemporalMark/issues/126) add a **read-only operator tool**, not Azure deployment evidence. The GitHub CI exercises **simulated** Azure CLI metadata and DNS negative/positive cases, not any Azure tenant. This tool is intentionally not an automatic public GitHub Actions step.
+
+**Prerequisites:** obtain an approved, already deployed VNet/private-access runner, private endpoint connection and DNS link, authorized Azure subscription, Azure CLI on PATH and `az login` using the designated Microsoft Entra principal. The runner needs resource/read permissions for the Storage Account, Private Endpoint and its NIC, plus a suitable Blob data-plane **read/list** RBAC role for the evidence container. This is **not** equivalent to the Terraform apply principal or the ACA system-assigned managed identity; neither account keys nor SAS are accepted. Do not provide a real customer token, blob name, imprint or secret in arguments. The runner must not inherit `HTTP_PROXY`, `HTTPS_PROXY`, or `ALL_PROXY` (including lowercase variants), since a proxy would invalidate the direct-path DNS assertion.
+
+Execute on that runner only, using approved identifiers and no command tracing or `--debug`:
+
+```sh
+python3 scripts/azure_private_blob_preflight.py \
+  --subscription-id 00000000-0000-0000-0000-000000000000 \
+  --resource-group <APPROVED_RESOURCE_GROUP> \
+  --storage-account <APPROVED_STORAGE_ACCOUNT> \
+  --private-endpoint <APPROVED_PRIVATE_ENDPOINT_NAME>
+```
+
+The **UUID above is an example, not a deployment subscription**. Replace all placeholders. Use the current Terraform evidence container name `timestamp-evidence` and the dedicated private endpoint subnet `10.40.3.0/24`/ `blob-private-endpoints`. The script fails closed if the active subscription differs, the Storage Account lacks explicit public access/anonymous/Shared Key denial or HTTPS/TLS restrictions, PE is not Succeeded/Approved Blob-only targeting that account, NIC/subnet is wrong, or the ordinary `<account>.blob.core.windows.net` DNS resolution includes any address other than its private NIC IP. Finally it invokes a **bounded metadata-only** Blob LIST with `--auth-mode login --num-results 1 --output none`, returning only generic PASS/FAIL text. Azure CLI stdout/stderr is suppressed to avoid leaking secrets or blob metadata into CI/operator logs. The script **never** uploads, downloads, deletes, enumerates Blob names in output, creates resources or changes permissions.
+
+A PASS attests only **the executing runner's** observed control-plane settings, DNS answer and Microsoft Entra LIST authorization/reachability at that time. Retain a timestamped, independently controlled change record of the run without sensitive CLI raw output. Verify real production Private Endpoint DNS from the intended **ACA runtime**, direct external public-network denial from a separate external probe, authorized **application** evidence PUT/GET/readback/versioning, approved Terraform apply runner state and Azure Data Contributor roles, backup/restore and independent custodial WORM/retention decisions under #18/#17. Failure must stop rollout; no public endpoint, Shared Key or proxy bypass is an acceptable workaround. Managed Azure ingress/WAF/Log Analytics logging, GDPR/DPIA and qualified trust-service requirements remain separately open.
