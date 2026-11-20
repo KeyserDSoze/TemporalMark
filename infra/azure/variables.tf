@@ -50,10 +50,7 @@ variable "oidc_authority" {
     # DNS-style host requires a final alphabetic label, excluding IP literals.
     # Each path segment starts with an alphanumeric, underscore, tilde or
     # hyphen: no empty, '.' or '..' navigation segments and no trailing '/'.
-    condition = can(regex(
-      "^https://([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?[.])+[a-z]([a-z0-9-]{0,61}[a-z0-9])?([:][0-9]{1,5})?(/[A-Za-z0-9_~-][A-Za-z0-9._~-]*)*$",
-      var.oidc_authority
-    ))
+    condition     = can(regex("^https://([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?[.])+[a-z]([a-z0-9-]{0,61}[a-z0-9])?([:][0-9]{1,5})?(/[A-Za-z0-9_~-][A-Za-z0-9._~-]*)*$", var.oidc_authority))
     error_message = "oidc_authority must be a reviewed HTTPS DNS FQDN issuer with optional port/path, without IP/localhost, userinfo, query, fragment, empty or dot-path segments."
   }
 }
