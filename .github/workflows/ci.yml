@@ -66,6 +66,35 @@ jobs:
         run: dotnet test tests/backend/TemporalMark.Provisioner.Tests/TemporalMark.Provisioner.Tests.csproj --configuration Release --no-restore
       - name: Publish API
         run: dotnet publish src/backend/applications/TemporalMark.Api/TemporalMark.Api.csproj --configuration Release --output /tmp/temporalmark-api --no-restore
+      - name: Reject unknown and development-only Entra PostgreSQL API modes before listening (#134)
+        run: |
+          set -euo pipefail
+          api="/tmp/temporalmark-api/TemporalMark.Api.dll"
+          # Real published .NET entrypoint, no listener, no SQL or Azure socket.
+          # Never output credential-bearing stdout/stderr from these probes.
+          if output="$(env ASPNETCORE_ENVIRONMENT=Development RegistryPostgres__AuthenticationMode=TYPO-UNKNOWN dotnet "$api" 2>&1)"; then
+            echo "Unknown registry auth mode unexpectedly started API"; exit 1
+          fi
+          printf '%s' "$output" | grep -Fq 'Unsupported PostgreSQL authentication mode'
+          if printf '%s' "$output" | grep -Fq 'Now listening on'; then
+            echo "Unknown mode opened HTTP listener"; exit 1
+          fi
+          if output="$(env ASPNETCORE_ENVIRONMENT=Development RegistryPostgres__AuthenticationMode=ContainerAppsEntraCandidate dotnet "$api" 2>&1)"; then
+            echo "Development Entra mode unexpectedly started API"; exit 1
+          fi
+          printf '%s' "$output" | grep -Fq 'Registry PostgreSQL Entra startup denied'
+          if printf '%s' "$output" | grep -Fq 'Now listening on'; then
+            echo "Development Entra mode opened HTTP listener"; exit 1
+          fi
+          if output="$(env ASPNETCORE_ENVIRONMENT=Production RegistryPostgres__AuthenticationMode=ContainerAppsEntraCandidate RegistryPostgres__UserAssignedClientId=22222222-2222-4222-8222-222222222222 RegistryPostgres__ExpectedRuntimeLogin=tm-api-mi IDENTITY_ENDPOINT=http://localhost:42356/msi/token IDENTITY_HEADER=ACA-SECRET-HEADER-CANARY ConnectionStrings__Registry='Host=evil.example.org;Database=temporalmark;Username=tm-api-mi;Password=SQL-SECRET-CANARY;SSL Mode=Require' dotnet "$api" 2>&1)"; then
+            echo "Unsafe Entra SQL configuration unexpectedly started API"; exit 1
+          fi
+          printf '%s' "$output" | grep -Fq 'Registry PostgreSQL Entra startup denied'
+          if printf '%s' "$output" | grep -Eq 'ACA-SECRET-HEADER-CANARY|SQL-SECRET-CANARY|evil[.]example[.]org|Now listening on'; then
+            echo "Sensitive data leak or unexpected HTTP listener in startup failure"; exit 1
+          fi
+          echo 'PASS: published API rejects unknown, development Entra and unsafe production Entra configuration before HTTP without secret leakage.'
+
       - name: Publish isolated operator provisioning CLI
         run: dotnet publish src/backend/applications/TemporalMark.Provisioner/TemporalMark.Provisioner.csproj --configuration Release --output /tmp/temporalmark-provisioner --no-restore
       - name: Registrar V015 CLI cannot run before signed ceremony
