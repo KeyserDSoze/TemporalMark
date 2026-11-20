@@ -3,8 +3,10 @@ subscription_id          = "00000000-0000-0000-0000-000000000000"
 prefix                   = "temporalmark-dev"
 location                 = "westeurope"
 storage_account_name     = "tmreplacewithunique"
-api_image                = "registry.example.invalid/temporalmark-api:tag"
-web_image                = "registry.example.invalid/temporalmark-web:tag"
+# FAKE placeholders ONLY: replace with actual registry-reported image manifest digests.
+# Keep the API/web release evidence and build-embedded OIDC authority aligned.
+api_image                = "registry.example.invalid/temporalmark-api@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+web_image                = "registry.example.invalid/temporalmark-web@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 oidc_authority           = "https://id.example.com/realms/temporalmark"
 postgres_admin           = "temporalmarkadmin"
 postgres_password        = "SET_VIA_TF_VAR_postgres_password_INSTEAD"
