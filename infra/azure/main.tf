@@ -136,12 +136,13 @@ resource "azurerm_log_analytics_workspace" "main" {
 }
 
 resource "azurerm_container_app_environment" "main" {
-  name                       = "${var.prefix}-apps"
-  location                   = var.location
-  resource_group_name        = azurerm_resource_group.main.name
-  infrastructure_subnet_id   = azurerm_subnet.apps.id
-  log_analytics_workspace_id = azurerm_log_analytics_workspace.main.id
-  tags                       = local.tags
+  name                           = "${var.prefix}-apps"
+  location                       = var.location
+  resource_group_name            = azurerm_resource_group.main.name
+  infrastructure_subnet_id       = azurerm_subnet.apps.id
+  internal_load_balancer_enabled = !var.enable_public_web_ingress
+  log_analytics_workspace_id     = azurerm_log_analytics_workspace.main.id
+  tags                           = local.tags
 }
 
 resource "azurerm_container_app" "api" {
