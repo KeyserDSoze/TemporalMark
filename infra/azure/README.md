@@ -14,6 +14,8 @@ terraform plan
 terraform apply
 ```
 
+**Default network safety (#123):** The web Container App is now **internal-only by default** (`enable_public_web_ingress=false`); the API stays internal in all modes. Terraform `frontend_url` is `null` until a public web ingress is explicitly selected. The example `terraform.tfvars.example` leaves public web ingress disabled. To publish a frontend, an operator must deliberately set `enable_public_web_ingress=true` **after independent** WAF/ingress-log/DPIA/security/CAB approval; the toggle is NOT evidence of that approval, and this stack still creates no WAF or private endpoint. An internal Container App is accessible to **other apps in the same Container Apps environment**, not automatically to every caller on a VNet. [Private web ingress operator guide](../../docs/AZURE_PRIVATE_INGRESS.md), [ADR 0090](../../adr/0090-azure-private-default-web-ingress.md).
+
 **Important pilot limitations / blockers:**
 - The API requires **versioned SQL migrations** in `scripts/migrations` (see `docs/DATABASE_MIGRATIONS.md`); the separate `scripts/apply-migrations.sh` runner must be run from within the VNet after provisioning. A production Azure migration job is **not** wired yet; `scripts/postgres-init/` is a development fixture, not an Azure upgrade mechanism.
 - A preconfigured OIDC authority and registered web/API clients are required. Tenant admin identities and memberships are not automatically enrolled on Azure.
