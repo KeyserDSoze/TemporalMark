@@ -200,6 +200,22 @@ resource "azurerm_container_app_environment" "main" {
   tags                           = local.tags
 }
 
+# External Key Vault and versioned secret are approved/provisioned OUTSIDE this
+# Terraform state. User-assigned identity is available BEFORE app creation.
+# SystemAssigned identity is retained separately for evidence Blob access.
+resource "azurerm_user_assigned_identity" "api_registry_secret_reader" {
+  name                = "${var.prefix}-api-registry-secret-reader"
+  resource_group_name = azurerm_resource_group.main.name
+  location            = var.location
+  tags                = local.tags
+}
+
+resource "azurerm_role_assignment" "api_registry_secret_reader" {
+  scope                = var.registry_connection_key_vault_id
+  role_definition_name = "Key Vault Secrets User"
+  principal_id         = azurerm_user_assigned_identity.api_registry_secret_reader.principal_id
+}
+
 resource "azurerm_container_app" "api" {
   name                         = "${var.prefix}-api"
   resource_group_name          = azurerm_resource_group.main.name
@@ -207,12 +223,30 @@ resource "azurerm_container_app" "api" {
   revision_mode                = "Single"
   tags                         = local.tags
 
-  identity { type = "SystemAssigned" }
-
-  secret {
-    name  = "registry-connection"
-    value = var.registry_connection_string
+  # UserAssigned can read the external Key Vault secret at first creation;
+  # SystemAssigned remains the evidence Blob Data Contributor identity.
+  identity {
+    type         = "SystemAssigned, UserAssigned"
+    identity_ids = [azurerm_user_assigned_identity.api_registry_secret_reader.id]
   }
+
+  # Key Vault URI only: the DB password/connection string never enters this
+  # Container App Terraform resource/state as a direct secret.value.
+  secret {
+    name                = "registry-connection"
+    key_vault_secret_id = var.registry_connection_secret_uri
+    identity            = azurerm_user_assigned_identity.api_registry_secret_reader.id
+  }
+
+  lifecycle {
+    precondition {
+      condition = lower(try(regex("^https://([a-z0-9-]+)[.]vault[.]azure[.]net/secrets/", var.registry_connection_secret_uri)[0], "")) == lower(try(regex("/vaults/([a-z0-9-]+)$", var.registry_connection_key_vault_id)[0], ""))
+      error_message = "Registry connection secret URI must target exactly the separately approved Key Vault resource ID."
+    }
+  }
+
+  # Azure IAM graph ordering is NOT an RBAC propagation/reachability guarantee.
+  depends_on = [azurerm_role_assignment.api_registry_secret_reader]
 
   template {
     min_replicas = 1
