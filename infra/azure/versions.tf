@@ -10,7 +10,10 @@ terraform {
 
 provider "azurerm" {
   features {}
-  subscription_id = var.subscription_id
+  subscription_id     = var.subscription_id
+  # Storage Shared Key is disabled. Blob container data-plane management
+  # requires a private-network Terraform runner with Azure AD/RBAC access.
+  storage_use_azuread = true
 }
 
 data "azurerm_client_config" "current" {}
