@@ -37,18 +37,12 @@ resource "azurerm_postgresql_flexible_server" "registry_candidate" {
     prevent_destroy = true
 
     precondition {
-      condition     = startswith(
-        lower(var.postgres_subnet_id),
-        "${local.expected_resource_scope}/providers/microsoft.network/virtualnetworks/"
-      ) && endswith(lower(var.postgres_subnet_id), "/subnets/postgres")
+      condition     = startswith(lower(var.postgres_subnet_id), "${local.expected_resource_scope}/providers/microsoft.network/virtualnetworks/") && endswith(lower(var.postgres_subnet_id), "/subnets/postgres")
       error_message = "Candidate subnet must be the explicit postgres delegated subnet in the requested subscription/resource group."
     }
 
     precondition {
-      condition     = startswith(
-        lower(var.private_dns_zone_id),
-        "${local.expected_resource_scope}/providers/microsoft.network/privatednszones/"
-      ) && endswith(lower(var.private_dns_zone_id), ".postgres.database.azure.com")
+      condition     = startswith(lower(var.private_dns_zone_id), "${local.expected_resource_scope}/providers/microsoft.network/privatednszones/") && endswith(lower(var.private_dns_zone_id), ".postgres.database.azure.com")
       error_message = "Private PostgreSQL DNS zone must be in the approved subscription/resource group, not a public or Blob DNS zone."
     }
   }
