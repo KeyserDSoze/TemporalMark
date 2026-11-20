@@ -13,5 +13,9 @@ web_image                = "registry.example.invalid/temporalmark-web@sha256:bbb
 oidc_authority           = "https://id.example.com/realms/temporalmark"
 postgres_admin           = "temporalmarkadmin"
 postgres_password        = "SET_VIA_TF_VAR_postgres_password_INSTEAD"
-registry_connection_string = "SET_VIA_TF_VAR_registry_connection_string_INSTEAD"
+# FAKE NON-SECRET identifiers. Provision a dedicated RBAC-enabled Key Vault and
+# approve/provision the secret VALUE separately, never through this Terraform.
+# Reference an exact secret VERSION to make rollouts explicitly reviewable.
+registry_connection_secret_uri = "https://tmciregistryvault.vault.azure.net/secrets/registry-connection/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+registry_connection_key_vault_id = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/tm-ci-kv-rg/providers/Microsoft.KeyVault/vaults/tmciregistryvault"
 evidence_retention_days  = 3650
