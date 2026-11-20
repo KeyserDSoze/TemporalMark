@@ -43,10 +43,18 @@ variable "web_image" {
 
 variable "oidc_authority" {
   type        = string
-  description = "Public HTTPS OIDC issuer/authority; never a local Keycloak dev issuer."
+  description = "Reviewed production OIDC issuer: HTTPS DNS FQDN, optional port and nonempty path segments. No userinfo, query, fragment, IP or localhost. Real issuer discovery/JWKS approval remains mandatory."
   validation {
-    condition     = startswith(var.oidc_authority, "https://")
-    error_message = "A non-development OIDC authority must use HTTPS."
+    # Deliberately bounded reference-template syntax, not a URL parser or a
+    # trust anchor. OIDC Discovery requires HTTPS and NO query or fragment.
+    # DNS-style host requires a final alphabetic label, excluding IP literals.
+    # Each path segment starts with an alphanumeric, underscore, tilde or
+    # hyphen: no empty, '.' or '..' navigation segments and no trailing '/'.
+    condition = can(regex(
+      "^https://([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?[.])+[a-z]([a-z0-9-]{0,61}[a-z0-9])?([:][0-9]{1,5})?(/[A-Za-z0-9_~-][A-Za-z0-9._~-]*)*$",
+      var.oidc_authority
+    ))
+    error_message = "oidc_authority must be a reviewed HTTPS DNS FQDN issuer with optional port/path, without IP/localhost, userinfo, query, fragment, empty or dot-path segments."
   }
 }
 
