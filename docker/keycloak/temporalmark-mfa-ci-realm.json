@@ -132,7 +132,9 @@
       "implicitFlowEnabled": false,
       "serviceAccountsEnabled": false,
       "redirectUris": [
-        "http://127.0.0.1:45678/oidc-mfa-callback"
+        "http://127.0.0.1:45678/oidc-mfa-callback",
+        "http://127.0.0.1:46678/oidc-mfa-callback",
+        "http://127.0.0.1:47678/oidc-mfa-callback"
       ],
       "webOrigins": [],
       "attributes": {
