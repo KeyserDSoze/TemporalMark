@@ -243,6 +243,8 @@ jobs:
         run: terraform -chdir=infra/azure test -no-color -filter=tests/environment_boundary.tftest.hcl
       - name: Plan-only Terraform private evidence Blob network policy (#125)
         run: terraform -chdir=infra/azure test -no-color -filter=tests/evidence_blob_private_network.tftest.hcl
+      - name: Plan-only Terraform API Key Vault secret-state boundary (#127)
+        run: terraform -chdir=infra/azure test -no-color -filter=tests/api_key_vault_reference.tftest.hcl
 
   # A fifth reporting-only job. The four core test jobs stay unmodified.
   # GitHub REST Commit Status becomes readable through the connected
