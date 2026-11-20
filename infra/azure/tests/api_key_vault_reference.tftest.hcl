@@ -4,16 +4,16 @@
 mock_provider "azurerm" {}
 
 variables {
-  subscription_id            = "00000000-0000-0000-0000-000000000000"
-  prefix                     = "tm-ci-kv"
-  location                   = "westeurope"
-  storage_account_name       = "tmcikvsecret"
-  oidc_authority             = "https://id.example.org/realms/ci"
-  postgres_password          = "CI-FAKE-DO-NOT-DEPLOY"
+  subscription_id                  = "00000000-0000-0000-0000-000000000000"
+  prefix                           = "tm-ci-kv"
+  location                         = "westeurope"
+  storage_account_name             = "tmcikvsecret"
+  oidc_authority                   = "https://id.example.org/realms/ci"
+  postgres_password                = "CI-FAKE-DO-NOT-DEPLOY"
   registry_connection_secret_uri   = "https://tmciregistryvault.vault.azure.net/secrets/registry-connection/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   registry_connection_key_vault_id = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/tm-ci-kv-rg/providers/Microsoft.KeyVault/vaults/tmciregistryvault"
-  api_image                  = "registry.example.invalid/temporalmark/api@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-  web_image                  = "registry.example.invalid/temporalmark/web@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  api_image                        = "registry.example.invalid/temporalmark/api@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  web_image                        = "registry.example.invalid/temporalmark/web@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 }
 
 run "api_db_secret_uses_only_key_vault_reference" {
@@ -48,48 +48,64 @@ run "api_uses_bootstrapped_uai_and_vault_scoped_read_only_role" {
 
 run "reject_http_key_vault_secret_uri" {
   command = plan
-  variables { registry_connection_secret_uri = "http://tmciregistryvault.vault.azure.net/secrets/registry-connection/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }
+  variables {
+    registry_connection_secret_uri = "http://tmciregistryvault.vault.azure.net/secrets/registry-connection/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  }
   expect_failures = [var.registry_connection_secret_uri]
 }
 
 run "reject_key_vault_uri_unversioned" {
   command = plan
-  variables { registry_connection_secret_uri = "https://tmciregistryvault.vault.azure.net/secrets/registry-connection" }
+  variables {
+    registry_connection_secret_uri = "https://tmciregistryvault.vault.azure.net/secrets/registry-connection"
+  }
   expect_failures = [var.registry_connection_secret_uri]
 }
 
 run "reject_key_vault_uri_query" {
   command = plan
-  variables { registry_connection_secret_uri = "https://tmciregistryvault.vault.azure.net/secrets/registry-connection/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa?token=test" }
+  variables {
+    registry_connection_secret_uri = "https://tmciregistryvault.vault.azure.net/secrets/registry-connection/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa?token=test"
+  }
   expect_failures = [var.registry_connection_secret_uri]
 }
 
 run "reject_key_vault_uri_userinfo" {
   command = plan
-  variables { registry_connection_secret_uri = "https://admin:password@tmciregistryvault.vault.azure.net/secrets/registry-connection/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }
+  variables {
+    registry_connection_secret_uri = "https://admin:password@tmciregistryvault.vault.azure.net/secrets/registry-connection/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  }
   expect_failures = [var.registry_connection_secret_uri]
 }
 
 run "reject_key_vault_uri_unapproved_host" {
   command = plan
-  variables { registry_connection_secret_uri = "https://tmciregistryvault.example.net/secrets/registry-connection/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }
+  variables {
+    registry_connection_secret_uri = "https://tmciregistryvault.example.net/secrets/registry-connection/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  }
   expect_failures = [var.registry_connection_secret_uri]
 }
 
 run "reject_key_vault_uri_nonhex_version" {
   command = plan
-  variables { registry_connection_secret_uri = "https://tmciregistryvault.vault.azure.net/secrets/registry-connection/latest" }
+  variables {
+    registry_connection_secret_uri = "https://tmciregistryvault.vault.azure.net/secrets/registry-connection/latest"
+  }
   expect_failures = [var.registry_connection_secret_uri]
 }
 
 run "reject_invalid_key_vault_arm_id" {
   command = plan
-  variables { registry_connection_key_vault_id = "/subscriptions/unknown/resourceGroups/test/providers/Microsoft.KeyVault/vaults/test" }
+  variables {
+    registry_connection_key_vault_id = "/subscriptions/unknown/resourceGroups/test/providers/Microsoft.KeyVault/vaults/test"
+  }
   expect_failures = [var.registry_connection_key_vault_id]
 }
 
 run "reject_secret_uri_different_vault_than_rbac_scope" {
   command = plan
-  variables { registry_connection_secret_uri = "https://othervaultapproved.vault.azure.net/secrets/registry-connection/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }
+  variables {
+    registry_connection_secret_uri = "https://othervaultapproved.vault.azure.net/secrets/registry-connection/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  }
   expect_failures = [azurerm_container_app.api]
 }
