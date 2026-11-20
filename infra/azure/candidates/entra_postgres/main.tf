@@ -81,3 +81,23 @@ resource "azurerm_postgresql_flexible_server_database" "registry_candidate" {
     prevent_destroy = true
   }
 }
+
+# Distinct app data-plane identity (#132 / ADR 0098), for a FUTURE approved
+# Container Apps attachment and Entra PostgreSQL principal creation.
+# Not an Entra administrator, not an Azure SQL grant, not deployed by CI.
+# The currently deployed API Blob and Key Vault identities remain untouched.
+resource "azurerm_user_assigned_identity" "postgres_runtime_candidate" {
+  name                = var.postgres_runtime_identity_name
+  resource_group_name = var.resource_group_name
+  location            = var.location
+  tags                = local.candidate_tags
+
+  lifecycle {
+    prevent_destroy = true
+
+    precondition {
+      condition     = lower(var.postgres_runtime_identity_name) != lower(var.entra_admin_group_name) && lower(var.postgres_runtime_identity_name) != lower(var.candidate_server_name)
+      error_message = "Dedicated PostgreSQL runtime identity must not reuse the Entra administrator group name or candidate server name."
+    }
+  }
+}
