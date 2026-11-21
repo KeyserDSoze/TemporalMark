@@ -234,6 +234,27 @@ public static class PostgresRuntimePrivilegePreflight
             AND NOT pg_catalog.has_table_privilege('public.organization_decision_challenges', 'DELETE')
             AND NOT pg_catalog.has_table_privilege('public.organization_decision_challenges', 'TRUNCATE')
             AND NOT pg_catalog.has_table_privilege('public.organization_decision_challenges', 'TRIGGER')
+            -- #154 / ADR 0119: no currently executable SECURITY DEFINER
+            -- function or procedure in a non-system schema is permitted
+            -- except the one reviewed V019 search-quota routine. The former
+            -- finite list of privileged routines could miss a new overload,
+            -- an owner-held trigger function or default PUBLIC EXECUTE on
+            -- a future SECURITY DEFINER. Compare the full routine OID,
+            -- not merely its name, to avoid unexpected overload approval.
+            AND NOT EXISTS (
+                SELECT 1
+                  FROM pg_catalog.pg_proc AS candidate_routine
+                  JOIN pg_catalog.pg_namespace AS routine_schema
+                    ON routine_schema.oid = candidate_routine.pronamespace
+                 WHERE candidate_routine.prosecdef
+                   AND candidate_routine.prokind IN ('f', 'p')
+                   AND routine_schema.nspname NOT IN ('pg_catalog', 'information_schema')
+                   AND routine_schema.nspname !~ '^pg_'
+                   AND candidate_routine.oid <>
+                       'public.consume_imprint_search_rate(uuid,text)'::pg_catalog.regprocedure
+                   AND pg_catalog.has_function_privilege(
+                       candidate_routine.oid, 'EXECUTE')
+            )
             -- #147 / ADR 0112: group-membership restrictions are NOT
             -- equivalent to effective FUNCTION EXECUTE grants. Reject an
             -- accidental direct/inherited/PUBLIC runtime grant of enrollment,
