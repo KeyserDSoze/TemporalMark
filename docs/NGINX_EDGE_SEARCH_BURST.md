@@ -40,3 +40,20 @@ No successful local synthetic request test is proof of actual Azure Container Ap
 - No `terraform apply`, Azure managed ingress validation, CAB endorsement, signed WORM evidence, privacy-approved actor-retention schedule, JWT subject abuse mitigation, QTSP/eIDAS qualification or actual release authorization is performed. Parents #115/#113/#18/#17/#13/#15 remain OPEN.
 
 Official references: [Nginx limit_req](https://nginx.org/en/docs/http/ngx_http_limit_req_module.html), [Nginx proxy_intercept_errors](https://nginx.org/en/docs/http/ngx_http_proxy_module.html#proxy_intercept_errors), [Nginx error_page](https://nginx.org/en/docs/http/ngx_http_core_module.html#error_page).
+
+## Case-insensitive search path shares the same Nginx protections (#144 / ADR 0109)
+
+The original scoped #143 route used **case-sensitive** `location = /api/v1/stamps/search` on Linux. However ASP.NET Core 10's `/api/v1/stamps/search` endpoint and Kestrel's separate 4KiB pre-auth check are **case-insensitive**. `POST /api/v1/StAmPs/SeArCh` traversed the generic Nginx `location /api/` prefix to the same Kestrel endpoint and **did not consume the local Nginx peer-rate bucket** or inherit its Nginx-specific 4KiB/error-log policy. This was not an authentication bypass and did not weaken Kestrel's independently enforced JSON body limit. [ADR 0109](../adr/0109-nginx-case-insensitive-sensitive-search-route.md) / [#144](https://github.com/KeyserDSoze/TemporalMark/issues/144) replace only the Nginx location selector with **anchored, case-insensitive normalized URI matching**:
+
+```nginx
+location ~* ^/api/v1/stamps/search$ {
+    # Same preexisting client_max_body_size 4k, error_log crit,
+    # limit_req, limit_req_status 429, error_page and proxy directives.
+}
+```
+
+Full `^` and `$` anchors ensure that prefix/suffix paths do not join the sensitive route, and the Nginx location lookup ignores query strings. The original URL/path is forwarded without a rewrite. The existing Nginx 2r/s/burst12 `$binary_remote_addr` zone, local 429 Retry-After 1/no-store internal handler, `proxy_intercept_errors off` for genuine PostgreSQL SQL-quota 429, single three-field access stream and `error_log crit` all remain. This adjustment is present in the **same web image** used by the OSS/Compose stack and described by Azure Terraform; actual managed ACA ingress is unverified.
+
+**Genuine RED:** tests-only [main `fe5032d`](https://github.com/KeyserDSoze/TemporalMark/commit/fe5032dd7dcd95d7f6af537fdcdffbadde161cd9), [Actions 44922360150](https://github.com/KeyserDSoze/TemporalMark/actions/runs/44922360150): existing lower-case live Nginx peer 429 passed, then new 48 mixed-case synthetic fake-JWT requests all bypassed the *proxy* quota and test failed exactly `Mixed-case search bypassed Nginx peer 429 despite matching Kestrel route`. Smallest correction [source `f5e953a`](https://github.com/KeyserDSoze/TemporalMark/commit/f5e953a1ccb9c57a4ec4aa7db2b7912f397b773c) changes one Nginx selector and updates both #136/#143 source-policy tests to demand the anchored case-insensitive matcher; the real `docker-smoke` probe now checks both lowercase and mixed-case bursts, fake XFF, no sensitive response/log fields, direct API and unrelated routes. No Terraform/SQL/role/migration/token change.
+
+**Operational caveats:** This Nginx regex policy applies to the normalized URI matching the exact path regardless of case; other URI aliases, route-normalization edge cases and intermediary rewrites still require independent tests and production topology review. The web-container peer limiter remains **per-instance and NAT/proxy-shared**, not distributed and not a guard on direct Kestrel or Azure managed ingress. Privacy/DPIA/edge/governance remains #115/#113 OPEN; legal WORM and eIDAS qualification remain #17/#13/#15 OPEN. Official [Nginx location matching](https://nginx.org/en/docs/http/ngx_http_core_module.html) and [ASP.NET Core 10 routing](https://learn.microsoft.com/en-us/aspnet/core/fundamentals/routing?view=aspnetcore-10.0).
