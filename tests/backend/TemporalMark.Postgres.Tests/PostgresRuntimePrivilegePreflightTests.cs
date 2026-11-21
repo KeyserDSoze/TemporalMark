@@ -420,6 +420,138 @@ public sealed class PostgresRuntimePrivilegePreflightTests
         Assert.Equal(20L, await MigrationCountAsync(owner));
     }
 
+    // #153 / ADR 0118: prevent a new public relation (including view and
+    // sequence) or omitted V004/runner ledger gaining runtime SQL rights.
+    // Each test proves baseline first, then grants exactly ONE privilege.
+    [Theory]
+    [InlineData("provisioning", "SELECT", "TABLE")]
+    [InlineData("provisioning", "SELECT (first_admin_subject)", "TABLE")]
+    [InlineData("provisioning", "INSERT", "TABLE")]
+    [InlineData("provisioning", "INSERT (id)", "TABLE")]
+    [InlineData("provisioning", "UPDATE (admin_proof_sha256)", "TABLE")]
+    [InlineData("provisioning", "REFERENCES (id)", "TABLE")]
+    [InlineData("provisioning", "DELETE", "TABLE")]
+    [InlineData("provisioning", "TRUNCATE", "TABLE")]
+    [InlineData("provisioning", "TRIGGER", "TABLE")]
+    [InlineData("ledger", "SELECT", "TABLE")]
+    [InlineData("ledger", "UPDATE (sha256)", "TABLE")]
+    [InlineData("new_table", "SELECT", "TABLE")]
+    [InlineData("new_table", "INSERT (secret)", "TABLE")]
+    [InlineData("new_view", "SELECT", "TABLE")]
+    [InlineData("new_sequence", "USAGE", "SEQUENCE")]
+    [InlineData("new_sequence", "SELECT", "SEQUENCE")]
+    [InlineData("new_sequence", "UPDATE", "SEQUENCE")]
+    public async Task UnexpectedPublicRelationOrSequenceGrantMustRejectEntraRuntimePreflight(
+        string fixedObjectSelector, string fixedPrivilege, string fixedGrantKind)
+    {
+        // Only compile-time literals choose the test object/grant. The login,
+        // password and future-object identifier are random safe ASCII hex.
+        var login = "tm_inventory_" + Guid.NewGuid().ToString("N");
+        var password = "test-" + Guid.NewGuid().ToString("N");
+        var objectName = fixedObjectSelector switch
+        {
+            "provisioning" => "organization_provisioning_events",
+            "ledger" => "schema_migrations",
+            _ => "tm_futureacl_" + Guid.NewGuid().ToString("N")
+        };
+        var generatedObject = fixedObjectSelector.StartsWith(
+            "new_", StringComparison.Ordinal);
+        var ddlType = fixedObjectSelector switch
+        {
+            "new_table" => "TABLE",
+            "new_view" => "VIEW",
+            "new_sequence" => "SEQUENCE",
+            _ => ""
+        };
+
+        var loginCreated = false;
+        var groupGranted = false;
+        var objectCreated = false;
+        var privilegeGranted = false;
+
+        await using var owner = Owner();
+        await owner.OpenAsync();
+        Assert.Equal(20L, await MigrationCountAsync(owner));
+        var testConnectionString = new NpgsqlConnectionStringBuilder(owner.ConnectionString)
+        {
+            Username = login,
+            Password = password,
+            Pooling = false
+        }.ConnectionString;
+
+        async Task RunAsOwnerAsync(string sql)
+        {
+            await using var command = new NpgsqlCommand(sql, owner);
+            await command.ExecuteNonQueryAsync();
+        }
+
+        try
+        {
+            await RunAsOwnerAsync($"CREATE ROLE {login} LOGIN INHERIT PASSWORD '{password}'");
+            loginCreated = true;
+            await RunAsOwnerAsync($"GRANT temporalmark_runtime_group TO {login}");
+            groupGranted = true;
+
+            // New objects have no data and no default runtime privileges:
+            // they test *future* schema drift without changing migrations.
+            if (generatedObject)
+            {
+                var ddl = fixedObjectSelector switch
+                {
+                    "new_table" => $"CREATE TABLE public.{objectName} (id integer, secret text)",
+                    "new_view" => $"CREATE VIEW public.{objectName} AS SELECT 1::integer AS id",
+                    "new_sequence" => $"CREATE SEQUENCE public.{objectName}",
+                    _ => throw new InvalidOperationException("Unexpected test object")
+                };
+                await RunAsOwnerAsync(ddl);
+                objectCreated = true;
+            }
+
+            await using (var baseline = new NpgsqlConnection(testConnectionString))
+            {
+                await baseline.OpenAsync();
+                await PostgresRuntimePrivilegePreflight.VerifyAsync(
+                    baseline, login, CancellationToken.None);
+            }
+
+            // Only test-owner GRANT on this synthetic LOGIN; never grant
+            // anything to the shared runtime group or mutate actual rows.
+            await RunAsOwnerAsync(
+                $"GRANT {fixedPrivilege} ON {fixedGrantKind} public.{objectName} TO {login}");
+            privilegeGranted = true;
+
+            await using (var afterGrant = new NpgsqlConnection(testConnectionString))
+            {
+                await afterGrant.OpenAsync();
+                var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                    PostgresRuntimePrivilegePreflight.VerifyAsync(
+                        afterGrant, login, CancellationToken.None));
+                Assert.Null(error.InnerException);
+                Assert.DoesNotContain(login, error.ToString());
+                Assert.DoesNotContain(password, error.ToString());
+                Assert.DoesNotContain(objectName, error.ToString());
+                Assert.DoesNotContain("ConnectionStrings", error.ToString());
+            }
+        }
+        finally
+        {
+            // Even on intentional RED: undo one GRANT, remove any fixture
+            // table/view/sequence, revoke membership and DROP the test login.
+            // Never execute table DML, nextval, setval or change migration data.
+            if (privilegeGranted)
+                await RunAsOwnerAsync(
+                    $"REVOKE {fixedPrivilege} ON {fixedGrantKind} public.{objectName} FROM {login}");
+            if (objectCreated)
+                await RunAsOwnerAsync($"DROP {ddlType} public.{objectName}");
+            if (groupGranted)
+                await RunAsOwnerAsync($"REVOKE temporalmark_runtime_group FROM {login}");
+            if (loginCreated)
+                await RunAsOwnerAsync($"DROP ROLE {login}");
+        }
+
+        Assert.Equal(20L, await MigrationCountAsync(owner));
+    }
+
     // #152 / ADR 0117: V017 unapproved MDS/CRL candidate tables and
     // append-only-by-trigger event ID sequence are migration-owner only.
     // No candidate data reads/writes and no nextval/currval/setval calls.
