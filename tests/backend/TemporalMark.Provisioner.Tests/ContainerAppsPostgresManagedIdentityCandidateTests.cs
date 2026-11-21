@@ -256,6 +256,75 @@ public sealed class ContainerAppsPostgresManagedIdentityCandidateTests
         Assert.DoesNotContain("SECRET-CANARY", error.ToString());
     }
 
+    // #138 / ADR 0103: these tests intentionally RED against the old
+    // TryGetProperty-last-wins parser. A credential response must be unambiguous.
+    [Theory]
+    [InlineData("access_token")]
+    [InlineData("expires_on")]
+    [InlineData("resource")]
+    [InlineData("token_type")]
+    [InlineData("client_id")]
+    public async Task RejectsExactDuplicateJsonPropertiesEvenWhenLastValueLooksApproved(string key)
+    {
+        var valid = Json(Now.AddMinutes(8).ToUnixTimeSeconds());
+        var ambiguous = valid.Insert(1, "\"" + key + "\":\"DECOY-SECRET-CANARY\",");
+        var fake = new FakeHandler((_, _) => Task.FromResult(Response(ambiguous)));
+        using var client = Create(fake);
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(
+            async () => await client.GetTokenAsync(Scope, CancellationToken.None));
+        Assert.Null(error.InnerException);
+        Assert.DoesNotContain("DECOY-SECRET-CANARY", error.ToString());
+        Assert.DoesNotContain(IdentityHeader, error.ToString());
+        Assert.Equal(1, fake.Count);
+    }
+
+    [Theory]
+    [InlineData("Access_Token")]
+    [InlineData("Expires_On")]
+    [InlineData("Resource")]
+    [InlineData("Token_Type")]
+    [InlineData("Client_Id")]
+    public async Task RejectsCaseVariantOfCanonicalTokenJsonProperty(string alternateName)
+    {
+        var valid = Json(Now.AddMinutes(8).ToUnixTimeSeconds());
+        var ambiguous = valid.Insert(1, "\"" + alternateName + "\":\"DECOY-SECRET-CANARY\",");
+        var fake = new FakeHandler((_, _) => Task.FromResult(Response(ambiguous)));
+        using var client = Create(fake);
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(
+            async () => await client.GetTokenAsync(Scope, CancellationToken.None));
+        Assert.Null(error.InnerException);
+        Assert.DoesNotContain("DECOY-SECRET-CANARY", error.ToString());
+        Assert.Equal(1, fake.Count);
+    }
+
+    [Fact]
+    public async Task RejectsEvenMatchingDuplicateValueRatherThanTrustingLastOccurrence()
+    {
+        var valid = Json(Now.AddMinutes(8).ToUnixTimeSeconds());
+        var ambiguous = valid.Insert(1, "\"token_type\":\"Bearer\",");
+        var fake = new FakeHandler((_, _) => Task.FromResult(Response(ambiguous)));
+        using var client = Create(fake);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            async () => await client.GetTokenAsync(Scope, CancellationToken.None));
+        Assert.Equal(1, fake.Count);
+    }
+
+    [Fact]
+    public async Task AllowsDistinctOptionalAzureMetadataWithoutWeakeningRequiredResponseChecks()
+    {
+        var valid = Json(Now.AddMinutes(8).ToUnixTimeSeconds());
+        var extended = valid.Insert(valid.Length - 1, ",\"unknown_future_field\":\"synthetic\"");
+        var fake = new FakeHandler((_, _) => Task.FromResult(Response(extended)));
+        using var client = Create(fake);
+
+        Assert.Equal("FAKE-OPAQUE-NOT-A-JWT",
+            await client.GetTokenAsync(Scope, CancellationToken.None));
+        Assert.Equal(1, fake.Count);
+    }
+
     [Fact]
     public async Task TransportExceptionsCannotLeakPlatformHeaderOrToken()
     {
