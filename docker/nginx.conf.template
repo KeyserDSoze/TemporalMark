@@ -8,6 +8,18 @@ server {
   index index.html;
   add_header X-Content-Type-Options nosniff always;
   add_header Referrer-Policy strict-origin-when-cross-origin always;
+  # #136 / ADR 0102: limit the sensitive exact imprint-search body
+  # BEFORE proxy buffering. The inherited server access_log remains minimal.
+  # Nginx would otherwise write a 413 request line (including an attacker
+  # controlled imprint/query) to stderr at error severity. Suppress only
+  # that location's subcritical error diagnostics; other routes unchanged.
+  location = /api/v1/stamps/search {
+    client_max_body_size 4k;
+    error_log /dev/stderr crit;
+    proxy_pass ${API_UPSTREAM};
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+  }
   location /api/ {
     proxy_pass ${API_UPSTREAM};
     proxy_set_header Host $host;
