@@ -125,6 +125,32 @@ public static class PostgresRuntimePrivilegePreflight
             AND NOT pg_catalog.has_table_privilege('public.organization_memberships', 'TRIGGER')
             AND NOT pg_catalog.has_table_privilege('public.organization_memberships', 'DELETE')
             AND NOT pg_catalog.has_table_privilege('public.organization_memberships', 'TRUNCATE')
+            -- #151 / ADR 0116: V010 reviewer decision replay proof and
+            -- V013 unsigned registration intent and pinned RP policy are
+            -- owner-controlled. Runtime SQL identities must not gain direct
+            -- table or individual-column access even via a mistaken GRANT.
+            -- No reviewer rows are read, no proof/nonce is consumed.
+            AND NOT pg_catalog.has_any_column_privilege('public.organization_reviewer_decision_proofs', 'SELECT')
+            AND NOT pg_catalog.has_any_column_privilege('public.organization_reviewer_decision_proofs', 'INSERT')
+            AND NOT pg_catalog.has_any_column_privilege('public.organization_reviewer_decision_proofs', 'UPDATE')
+            AND NOT pg_catalog.has_any_column_privilege('public.organization_reviewer_decision_proofs', 'REFERENCES')
+            AND NOT pg_catalog.has_table_privilege('public.organization_reviewer_decision_proofs', 'DELETE')
+            AND NOT pg_catalog.has_table_privilege('public.organization_reviewer_decision_proofs', 'TRUNCATE')
+            AND NOT pg_catalog.has_table_privilege('public.organization_reviewer_decision_proofs', 'TRIGGER')
+            AND NOT pg_catalog.has_any_column_privilege('public.reviewer_registration_intents', 'SELECT')
+            AND NOT pg_catalog.has_any_column_privilege('public.reviewer_registration_intents', 'INSERT')
+            AND NOT pg_catalog.has_any_column_privilege('public.reviewer_registration_intents', 'UPDATE')
+            AND NOT pg_catalog.has_any_column_privilege('public.reviewer_registration_intents', 'REFERENCES')
+            AND NOT pg_catalog.has_table_privilege('public.reviewer_registration_intents', 'DELETE')
+            AND NOT pg_catalog.has_table_privilege('public.reviewer_registration_intents', 'TRUNCATE')
+            AND NOT pg_catalog.has_table_privilege('public.reviewer_registration_intents', 'TRIGGER')
+            AND NOT pg_catalog.has_any_column_privilege('public.reviewer_registration_rp_policies', 'SELECT')
+            AND NOT pg_catalog.has_any_column_privilege('public.reviewer_registration_rp_policies', 'INSERT')
+            AND NOT pg_catalog.has_any_column_privilege('public.reviewer_registration_rp_policies', 'UPDATE')
+            AND NOT pg_catalog.has_any_column_privilege('public.reviewer_registration_rp_policies', 'REFERENCES')
+            AND NOT pg_catalog.has_table_privilege('public.reviewer_registration_rp_policies', 'DELETE')
+            AND NOT pg_catalog.has_table_privilege('public.reviewer_registration_rp_policies', 'TRUNCATE')
+            AND NOT pg_catalog.has_table_privilege('public.reviewer_registration_rp_policies', 'TRIGGER')
             -- #149 / ADR 0114: V006 pending enrollment and V012 unsigned
             -- reviewer challenge storage are migration-owner only. Even a
             -- per-column SELECT, INSERT, UPDATE or REFERENCES grant to the
