@@ -80,8 +80,10 @@ def main():
             "Nginx 414 request-line parsing leaked synthetic private data into logs")
     access = [line.split("tm_access ", 1)[-1].split()
               for line in logs.splitlines() if "tm_access " in line]
+    # Nginx may reject the request line before parsing its method; the
+    # genuine RED fixture emitted status=414 method=- duration=0.000.
     if not any(len(fields) == 3 and fields[0] == "status=414"
-               and fields[1] == "method=GET" for fields in access):
+               and fields[1] in ("method=-", "method=GET") for fields in access):
         raise AssertionError("Missing minimal Nginx 414 status access event")
     for fields in access:
         if len(fields) != 3 or not fields[0].startswith("status=") or \

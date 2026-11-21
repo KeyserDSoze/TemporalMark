@@ -8,6 +8,9 @@ server {
   index index.html;
   add_header X-Content-Type-Options nosniff always;
   add_header Referrer-Policy strict-origin-when-cross-origin always;
+  # #145 / ADR 0110: 414 may occur before location matching. Do not
+  # override caching of PWA/SPA/normal API requests with this policy.
+  add_header Cache-Control $tm_early_414_cache_control always;
   # #136 / ADR 0102: limit the sensitive exact imprint-search body
   # BEFORE proxy buffering. The inherited server access_log remains minimal.
   # Nginx would otherwise write a 413 request line (including an attacker

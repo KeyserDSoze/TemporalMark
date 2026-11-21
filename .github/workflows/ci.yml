@@ -40,6 +40,8 @@ jobs:
           # RED-first #101: final SHA status must never claim a skipped core job passed.
           # RED-first #117: enforce explicit Nginx access-only field allowlist.
           python3 -m unittest discover -s tests/integration -p 'test_nginx_access_privacy.py' -v
+          # #145 / ADR 0110: early Nginx 414 no-store, no global error-log suppression.
+          python3 -m unittest discover -s tests/integration -p 'test_nginx_early_414_privacy.py' -v
           # RED-first #136: scoped pre-auth 4KiB search POST Kestrel + Nginx body gate.
           python3 -m unittest discover -s tests/integration -p 'test_imprint_search_body_budget.py' -v
           # #143 / ADR 0108: local anonymous burst gate and fixed error privacy.
