@@ -75,6 +75,25 @@ public static class PostgresRuntimePrivilegePreflight
             AND NOT pg_catalog.has_table_privilege('public.tenant_audit_events', 'DELETE')
             AND NOT pg_catalog.has_table_privilege('public.tenant_audit_events', 'TRUNCATE')
             AND NOT pg_catalog.has_table_privilege('public.tenant_audit_events', 'TRIGGER')
+            -- #146 / ADR 0111: V019 shared tenant/actor search-quota state
+            -- is owner-only. A runtime LOGIN may EXECUTE the approved
+            -- SECURITY DEFINER admission function but must never directly
+            -- SELECT OIDC subjects or alter quota counters. Any-column
+            -- checks also cover table-wide and single-column misgrants.
+            AND NOT pg_catalog.has_any_column_privilege('public.imprint_search_rate_tenants', 'SELECT')
+            AND NOT pg_catalog.has_any_column_privilege('public.imprint_search_rate_tenants', 'INSERT')
+            AND NOT pg_catalog.has_any_column_privilege('public.imprint_search_rate_tenants', 'UPDATE')
+            AND NOT pg_catalog.has_any_column_privilege('public.imprint_search_rate_tenants', 'REFERENCES')
+            AND NOT pg_catalog.has_table_privilege('public.imprint_search_rate_tenants', 'DELETE')
+            AND NOT pg_catalog.has_table_privilege('public.imprint_search_rate_tenants', 'TRUNCATE')
+            AND NOT pg_catalog.has_table_privilege('public.imprint_search_rate_tenants', 'TRIGGER')
+            AND NOT pg_catalog.has_any_column_privilege('public.imprint_search_rate_principals', 'SELECT')
+            AND NOT pg_catalog.has_any_column_privilege('public.imprint_search_rate_principals', 'INSERT')
+            AND NOT pg_catalog.has_any_column_privilege('public.imprint_search_rate_principals', 'UPDATE')
+            AND NOT pg_catalog.has_any_column_privilege('public.imprint_search_rate_principals', 'REFERENCES')
+            AND NOT pg_catalog.has_table_privilege('public.imprint_search_rate_principals', 'DELETE')
+            AND NOT pg_catalog.has_table_privilege('public.imprint_search_rate_principals', 'TRUNCATE')
+            AND NOT pg_catalog.has_table_privilege('public.imprint_search_rate_principals', 'TRIGGER')
             AND NOT pg_catalog.has_table_privilege('public.organizations', 'INSERT')
             -- #142 / ADR 0107: a column-only UPDATE grant evades a table
             -- privilege check. Also deny REFERENCES and TRIGGER powers.
