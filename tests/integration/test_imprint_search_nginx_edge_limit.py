@@ -22,13 +22,17 @@ class NginxSearchEdgeBurstPolicy(unittest.TestCase):
         self.assertNotIn("$request_body", source)
         self.assertNotIn("$request_uri", source)
 
-    def test_exact_search_only_and_upstream_429_not_intercepted(self):
+    def test_anchored_case_insensitive_search_only_and_upstream_429_not_intercepted(self):
         conf = (ROOT / "docker/nginx.conf.template").read_text()
+        # #144 / ADR 0109: lowercase-only exact location misses mixed-case
+        # Kestrel route variants and silently skips the local peer gate.
         exact = re.search(
-            r"(?ms)^\s*location = /api/v1/stamps/search \{(.*?)^\s*\}",
+            r"(?ms)^\s*location ~\* \^/api/v1/stamps/search\$ \{(.*?)^\s*\}",
             conf,
         )
-        self.assertIsNotNone(exact)
+        self.assertIsNotNone(
+            exact, "Missing anchored case-insensitive search limiter location")
+        self.assertNotIn("location = /api/v1/stamps/search {", conf)
         block = exact.group(1)
         for required in (
             "client_max_body_size 4k;",

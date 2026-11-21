@@ -34,13 +34,17 @@ class SearchBodyBudgetPolicyTests(unittest.TestCase):
         # Kestrel body read for chunked/unknown-length requests.
         self.assertIn("Microsoft.AspNetCore.Mvc.RequestSizeLimitAttribute", source)
 
-    def test_nginx_exact_search_route_and_confidential_error_channel(self):
+    def test_nginx_case_insensitive_anchored_search_route_and_error_channel(self):
         source = NGINX.read_text()
+        # #144 / ADR 0109: Nginx must match the same case-insensitive
+        # API route that Kestrel accepts, and forbid prefix/suffix aliases.
         exact = re.search(
-            r"(?ms)^\s*location\s+=\s+/api/v1/stamps/search\s*\{(?P<body>.*?)^\s*\}",
+            r"(?ms)^\s*location\s+~\*\s+\^/api/v1/stamps/search\$\s*\{(?P<body>.*?)^\s*\}",
             source,
         )
-        self.assertIsNotNone(exact, "Missing exact search POST Nginx location")
+        self.assertIsNotNone(
+            exact, "Missing anchored case-insensitive search POST Nginx location")
+        self.assertNotIn("location = /api/v1/stamps/search {", source)
         body = exact.group("body")
         self.assertRegex(body, r"(?m)^\s*client_max_body_size\s+4k;\s*$")
         self.assertIn("proxy_pass ${API_UPSTREAM};", body)

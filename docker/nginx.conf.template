@@ -13,7 +13,7 @@ server {
   # Nginx would otherwise write a 413 request line (including an attacker
   # controlled imprint/query) to stderr at error severity. Suppress only
   # that location's subcritical error diagnostics; other routes unchanged.
-  location = /api/v1/stamps/search {
+  location ~* ^/api/v1/stamps/search$ {
     client_max_body_size 4k;
     error_log /dev/stderr crit;
     # #143/ADR 0108: pre-auth local per-peer gate. Never key off XFF,
