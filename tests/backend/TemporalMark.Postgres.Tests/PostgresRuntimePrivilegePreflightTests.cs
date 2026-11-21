@@ -420,6 +420,109 @@ public sealed class PostgresRuntimePrivilegePreflightTests
         Assert.Equal(20L, await MigrationCountAsync(owner));
     }
 
+    // #151 / ADR 0116: V010 replay-proof hashes and V013 owner-controlled
+    // unsigned registrar nonces/RP policy must never become runtime SQL ACLs.
+    // This test inspects GRANTs only; no customer rows or routines are touched.
+    [Theory]
+    [InlineData("organization_reviewer_decision_proofs", "SELECT")]
+    [InlineData("organization_reviewer_decision_proofs", "SELECT (token_sha256)")]
+    [InlineData("organization_reviewer_decision_proofs", "INSERT")]
+    [InlineData("organization_reviewer_decision_proofs", "INSERT (token_sha256)")]
+    [InlineData("organization_reviewer_decision_proofs", "UPDATE (decision)")]
+    [InlineData("organization_reviewer_decision_proofs", "REFERENCES (request_id)")]
+    [InlineData("organization_reviewer_decision_proofs", "DELETE")]
+    [InlineData("organization_reviewer_decision_proofs", "TRUNCATE")]
+    [InlineData("organization_reviewer_decision_proofs", "TRIGGER")]
+    [InlineData("reviewer_registration_intents", "SELECT")]
+    [InlineData("reviewer_registration_intents", "SELECT (nonce)")]
+    [InlineData("reviewer_registration_intents", "INSERT")]
+    [InlineData("reviewer_registration_intents", "INSERT (id)")]
+    [InlineData("reviewer_registration_intents", "UPDATE (nonce)")]
+    [InlineData("reviewer_registration_intents", "REFERENCES (id)")]
+    [InlineData("reviewer_registration_intents", "DELETE")]
+    [InlineData("reviewer_registration_intents", "TRUNCATE")]
+    [InlineData("reviewer_registration_intents", "TRIGGER")]
+    [InlineData("reviewer_registration_rp_policies", "SELECT")]
+    [InlineData("reviewer_registration_rp_policies", "SELECT (trusted_origin)")]
+    [InlineData("reviewer_registration_rp_policies", "INSERT")]
+    [InlineData("reviewer_registration_rp_policies", "INSERT (identity_issuer)")]
+    [InlineData("reviewer_registration_rp_policies", "UPDATE (trusted_origin)")]
+    [InlineData("reviewer_registration_rp_policies", "REFERENCES (rp_id)")]
+    [InlineData("reviewer_registration_rp_policies", "DELETE")]
+    [InlineData("reviewer_registration_rp_policies", "TRUNCATE")]
+    [InlineData("reviewer_registration_rp_policies", "TRIGGER")]
+    public async Task ReviewerReplayOrRegistrarPolicyOvergrantMustFailEntraRuntimePreflight(
+        string fixedTable, string fixedGrant)
+    {
+        // All table/column/privilege literals are fixed InlineData, never
+        // HTTP input. Distinct disposable LOGIN and password per test case.
+        var login = "tm_rproofacl_" + Guid.NewGuid().ToString("N");
+        var password = "test-" + Guid.NewGuid().ToString("N");
+        var loginCreated = false;
+        var runtimeGroupGranted = false;
+        var unsafeGrantApplied = false;
+
+        await using var owner = Owner();
+        await owner.OpenAsync();
+        Assert.Equal(20L, await MigrationCountAsync(owner));
+        var isolatedConnectionString = new NpgsqlConnectionStringBuilder(owner.ConnectionString)
+        {
+            Username = login,
+            Password = password,
+            Pooling = false // Avoid one persistent Npgsql pool per PG17 test role.
+        }.ConnectionString;
+
+        async Task OwnerExecuteAsync(string sql)
+        {
+            await using var command = new NpgsqlCommand(sql, owner);
+            await command.ExecuteNonQueryAsync();
+        }
+
+        try
+        {
+            await OwnerExecuteAsync($"CREATE ROLE {login} LOGIN INHERIT PASSWORD '{password}'");
+            loginCreated = true;
+            await OwnerExecuteAsync($"GRANT temporalmark_runtime_group TO {login}");
+            runtimeGroupGranted = true;
+
+            // The otherwise valid runtime SQL identity must pass baseline.
+            await using (var baseline = new NpgsqlConnection(isolatedConnectionString))
+            {
+                await baseline.OpenAsync();
+                await PostgresRuntimePrivilegePreflight.VerifyAsync(
+                    baseline, login, CancellationToken.None);
+            }
+
+            await OwnerExecuteAsync($"GRANT {fixedGrant} ON TABLE public.{fixedTable} TO {login}");
+            unsafeGrantApplied = true;
+            await using (var unsafeLogin = new NpgsqlConnection(isolatedConnectionString))
+            {
+                await unsafeLogin.OpenAsync();
+                var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                    PostgresRuntimePrivilegePreflight.VerifyAsync(
+                        unsafeLogin, login, CancellationToken.None));
+                Assert.Null(ex.InnerException);
+                Assert.DoesNotContain(login, ex.ToString());
+                Assert.DoesNotContain(password, ex.ToString());
+                Assert.DoesNotContain("ConnectionStrings", ex.ToString());
+            }
+        }
+        finally
+        {
+            // Cleanup executes even when the intentionally RED denial fails.
+            // Never modify shared runtime group ACLs or any migrated table rows.
+            if (unsafeGrantApplied)
+                await OwnerExecuteAsync(
+                    $"REVOKE {fixedGrant} ON TABLE public.{fixedTable} FROM {login}");
+            if (runtimeGroupGranted)
+                await OwnerExecuteAsync($"REVOKE temporalmark_runtime_group FROM {login}");
+            if (loginCreated)
+                await OwnerExecuteAsync($"DROP ROLE {login}");
+        }
+
+        Assert.Equal(20L, await MigrationCountAsync(owner));
+    }
+
     // #150 / ADR 0115: role attributes of an arbitrary SET-able group role
     // are NOT inherited onto current_user, yet SET ROLE can enable them.
     // Test catalog role reachability only; NEVER execute SET ROLE.
