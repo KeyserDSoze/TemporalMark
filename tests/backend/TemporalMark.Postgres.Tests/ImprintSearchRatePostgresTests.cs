@@ -50,60 +50,149 @@ public sealed class ImprintSearchRatePostgresTests
         return result;
     }
 
+    // The product SQL function chooses floor(extract(epoch from
+    // clock_timestamp())/60), never the app clock or transaction start time.
+    // Read this exact PostgreSQL server bucket immediately before AND after
+    // each entire test scenario, including its persisted counter assertions.
+    private static async Task<long> DatabaseEpochMinuteAsync()
+    {
+        await using var owner = OwnerConnection();
+        await owner.OpenAsync();
+        await using var cmd = new NpgsqlCommand(
+            "SELECT floor(extract(epoch FROM pg_catalog.clock_timestamp()) / 60)::bigint",
+            owner);
+        return Assert.IsType<long>(await cmd.ExecuteScalarAsync());
+    }
+
+    private static async Task<(int TenantHits, long PrincipalHits, int MaxPrincipalHits)>
+        RateTotalsAsync(Guid org)
+    {
+        // Only the separate migration owner may inspect internal quota tables;
+        // never enlarge the runtime SQL role to make test observations work.
+        await using var owner = OwnerConnection();
+        await owner.OpenAsync();
+        await using var cmd = new NpgsqlCommand("""
+            SELECT t.hits,
+                coalesce((
+                    SELECT sum(p.hits)
+                      FROM public.imprint_search_rate_principals AS p
+                     WHERE p.organization_id = t.organization_id
+                ), 0)::bigint,
+                coalesce((
+                    SELECT max(p.hits)
+                      FROM public.imprint_search_rate_principals AS p
+                     WHERE p.organization_id = t.organization_id
+                ), 0)::integer
+              FROM public.imprint_search_rate_tenants AS t
+             WHERE t.organization_id = @org
+            """, owner);
+        cmd.Parameters.AddWithValue("org", org);
+        await using var reader = await cmd.ExecuteReaderAsync();
+        Assert.True(await reader.ReadAsync());
+        var counts = (
+            TenantHits: reader.GetInt32(0),
+            PrincipalHits: reader.GetInt64(1),
+            MaxPrincipalHits: reader.GetInt32(2));
+        Assert.False(await reader.ReadAsync());
+        return counts;
+    }
+
+
     [Fact]
     public async Task TwelvePerPrincipalThenGenericDenialWithoutIncrement()
     {
-        var org = await TenantAsync();
-        for (var i = 0; i < 12; i++)
-            Assert.Equal((true, 0), await Consume(org, "verified-ci-admin"));
+        var verified = await SearchQuotaServerMinuteEvidence.RunAsync(
+            DatabaseEpochMinuteAsync,
+            async () =>
+            {
+                var org = await TenantAsync(); // NEW tenant on each bounded attempt.
+                var observed = new (bool Allowed, int Retry)[13];
+                for (var i = 0; i < observed.Length; i++)
+                    observed[i] = await Consume(org, "verified-ci-admin");
+                return new
+                {
+                    Admissions = observed,
+                    Totals = await RateTotalsAsync(org)
+                };
+            });
 
-        var rejected = await Consume(org, "verified-ci-admin");
-        Assert.False(rejected.Allowed);
-        Assert.InRange(rejected.Retry, 1, 60);
-
-        await using var conn = OwnerConnection();
-        await conn.OpenAsync();
-        await using var count = new NpgsqlCommand("""
-            SELECT hits FROM public.imprint_search_rate_principals
-            WHERE organization_id=@org AND actor_subject_id='verified-ci-admin'
-            """, conn);
-        count.Parameters.AddWithValue("org", org);
-        Assert.Equal(12, Assert.IsType<int>(await count.ExecuteScalarAsync()));
+        // No assertions are skipped: they apply to the one proven to stay
+        // within a single actual PostgreSQL clock_timestamp() epoch-minute.
+        Assert.All(verified.Admissions.Take(12),
+            result => Assert.Equal((true, 0), result));
+        Assert.False(verified.Admissions[12].Allowed);
+        Assert.InRange(verified.Admissions[12].Retry, 1, 60);
+        Assert.Equal(12, verified.Totals.TenantHits);
+        Assert.Equal(12L, verified.Totals.PrincipalHits);
+        Assert.Equal(12, verified.Totals.MaxPrincipalHits);
     }
+
 
     [Fact]
     public async Task TenantAggregateRestrictsRotatingPrincipalsButNotOtherTenants()
     {
-        var a = await TenantAsync();
-        var b = await TenantAsync();
-        foreach (var actor in new[] { "principal-1", "principal-2", "principal-3" })
-            for (var i = 0; i < 10; i++)
-                Assert.Equal((true, 0), await Consume(a, actor));
+        var verified = await SearchQuotaServerMinuteEvidence.RunAsync(
+            DatabaseEpochMinuteAsync,
+            async () =>
+            {
+                var a = await TenantAsync(); // FRESH tenants for every attempt.
+                var b = await TenantAsync();
+                var admitted = new (bool Allowed, int Retry)[30];
+                var index = 0;
+                foreach (var actor in new[] { "principal-1", "principal-2", "principal-3" })
+                    for (var i = 0; i < 10; i++)
+                        admitted[index++] = await Consume(a, actor);
 
-        var denied = await Consume(a, "new-fourth-principal");
-        Assert.False(denied.Allowed);
-        Assert.InRange(denied.Retry, 1, 60);
-        Assert.Equal((true, 0), await Consume(b, "principal-1"));
+                var denied = await Consume(a, "new-fourth-principal");
+                var otherTenant = await Consume(b, "principal-1");
+                return new
+                {
+                    Admitted = admitted,
+                    Denied = denied,
+                    OtherTenant = otherTenant,
+                    A = await RateTotalsAsync(a),
+                    B = await RateTotalsAsync(b)
+                };
+            });
+
+        Assert.All(verified.Admitted,
+            admission => Assert.Equal((true, 0), admission));
+        Assert.False(verified.Denied.Allowed); // 31st in SAME DB epoch-minute
+        Assert.InRange(verified.Denied.Retry, 1, 60);
+        Assert.Equal((true, 0), verified.OtherTenant);
+        Assert.Equal(30, verified.A.TenantHits);
+        Assert.Equal(30L, verified.A.PrincipalHits);
+        Assert.Equal(10, verified.A.MaxPrincipalHits);
+        Assert.Equal(1, verified.B.TenantHits);
+        Assert.Equal(1L, verified.B.PrincipalHits);
     }
+
 
     [Fact]
     public async Task SimultaneousSessionsNeverExceedSharedTenantBudget()
     {
-        var org = await TenantAsync();
-        // 72 distinct SQL sessions / 6 different authenticated principals.
-        // Every successful result is serialized on PostgreSQL's tenant lock.
-        var results = await Task.WhenAll(Enumerable.Range(0, 72).Select(i =>
-            Consume(org, "parallel-principal-" + i % 6)));
-        Assert.Equal(30, results.Count(x => x.Allowed));
-        Assert.All(results.Where(x => !x.Allowed), x => Assert.InRange(x.Retry, 1, 60));
+        var verified = await SearchQuotaServerMinuteEvidence.RunAsync(
+            DatabaseEpochMinuteAsync,
+            async () =>
+            {
+                var org = await TenantAsync();
+                // 72 separate SQL sessions with 6 authenticated principals
+                // share one PostgreSQL tenant transaction lock (not a .NET lock).
+                var admissions = await Task.WhenAll(Enumerable.Range(0, 72).Select(
+                    i => Consume(org, "parallel-principal-" + i % 6)));
+                return new
+                {
+                    Admissions = admissions,
+                    Totals = await RateTotalsAsync(org)
+                };
+            });
 
-        await using var conn = OwnerConnection();
-        await conn.OpenAsync();
-        await using var total = new NpgsqlCommand("""
-            SELECT sum(hits) FROM public.imprint_search_rate_principals WHERE organization_id=@org
-            """, conn);
-        total.Parameters.AddWithValue("org", org);
-        Assert.Equal(30L, Assert.IsType<long>(await total.ExecuteScalarAsync()));
+        Assert.Equal(30, verified.Admissions.Count(x => x.Allowed));
+        Assert.All(verified.Admissions.Where(x => !x.Allowed),
+            x => Assert.InRange(x.Retry, 1, 60));
+        Assert.Equal(30, verified.Totals.TenantHits);
+        Assert.Equal(30L, verified.Totals.PrincipalHits);
+        Assert.InRange(verified.Totals.MaxPrincipalHits, 1, 12);
     }
 
     [Fact]
