@@ -336,6 +336,10 @@ public sealed class PostgresRuntimePrivilegePreflightTests
     [InlineData("issue_reviewer_registration_intent(text,text,text,text,text)")]
     [InlineData("record_unapproved_mds_checkpoint_candidate(text,text,bigint,text,text,integer,text)")]
     [InlineData("purge_stale_imprint_search_rate_counters(integer)")]
+    // #148 / ADR 0113: additional reviewer-only SECURITY DEFINER routines
+    // from immutable V010 and V012. Neither is ever invoked in these tests.
+    [InlineData("reject_enrollment(uuid,text,text,text,text,text,char(64),char(64),text)")]
+    [InlineData("issue_reviewer_decision_challenge(uuid,text,text,text,text,text,char(64),text,text)")]
     public async Task DirectPrivilegedFunctionExecuteGrantMustNotPassEntraRuntimePreflight(
         string fixedFunctionIdentity)
     {
