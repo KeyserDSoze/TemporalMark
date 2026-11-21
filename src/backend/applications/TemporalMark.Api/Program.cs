@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.HttpLogging;
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.IdentityModel.Tokens;
 using Npgsql;
 using TemporalMark.Business.Registry;
@@ -201,6 +202,40 @@ if (entraRegistryCandidate is not null)
         throw new InvalidOperationException("Registry PostgreSQL Entra startup denied");
     }
 }
+// #136 / ADR 0102: exact sensitive search route ONLY, including direct ACA
+// access that bypasses on-prem Nginx. This early pre-auth request budget
+// prevents oversized declared JSON from reaching JWT/model binding and makes
+// Kestrel enforce the byte count on reads for chunked/unknown-length bodies.
+// No request body, tenant, JWT, searched digest or URI is logged or reflected.
+const long ImprintSearchBodyLimitBytes = 4096;
+app.Use(async (HttpContext context, RequestDelegate next) =>
+{
+    if (HttpMethods.IsPost(context.Request.Method) &&
+        string.Equals(context.Request.Path.Value, "/api/v1/stamps/search",
+            StringComparison.OrdinalIgnoreCase))
+    {
+        var maxBody = context.Features.Get<IHttpMaxRequestBodySizeFeature>();
+        if (maxBody is null || maxBody.IsReadOnly)
+        {
+            // Cannot safely override Kestrel's normal much larger default:
+            // deny without attempting authentication, JSON or PostgreSQL.
+            context.Response.Headers.CacheControl = "no-store";
+            context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
+            return;
+        }
+
+        maxBody.MaxRequestBodySize = ImprintSearchBodyLimitBytes;
+        if (context.Request.ContentLength > ImprintSearchBodyLimitBytes)
+        {
+            context.Response.Headers.CacheControl = "no-store";
+            context.Response.StatusCode = StatusCodes.Status413PayloadTooLarge;
+            return;
+        }
+    }
+
+    await next(context);
+});
+
 app.UseCors("web");
 app.UseAuthentication();
 app.UseAuthorization();
@@ -302,7 +337,11 @@ api.MapPost("/stamps/search", async Task<IResult> (
         // Do not echo the caller's fingerprint or return raw evidence.
         return Results.BadRequest(new { error = error.Message });
     }
-});
+})
+// Defense in depth: endpoint-scoped metadata also pins the body-read limit
+// before minimal API JSON binding, regardless of Content-Length presence.
+.WithMetadata(new Microsoft.AspNetCore.Mvc.RequestSizeLimitAttribute(
+    ImprintSearchBodyLimitBytes));
 
 api.MapGet("/stamps", async Task<IResult> (
     ClaimsPrincipal user, ITenantAuthorization access, TimestampRegistryService registry,
