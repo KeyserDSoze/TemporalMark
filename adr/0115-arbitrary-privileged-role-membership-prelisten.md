@@ -1,0 +1,29 @@
+# ADR 0115 — Reject transitive SET ROLE access to arbitrary elevated PostgreSQL role attributes in Entra candidate API prelisten
+
+Status: **Accepted for scoped test-driven SQL runtime security [#150](https://github.com/KeyserDSoze/TemporalMark/issues/150)**, 2026-11-21. Parent #128/#18 Azure Entra SQL and CAB, #14 tenancy, #38 independently signed reviewer proof, #50 registrar bypass, #17 WORM evidence, #13/#15 trust/legal remain OPEN. No live Azure SQL grant, production change, migration rewrite or qualified certification.
+
+## Existing baseline and authority
+
+Reviewed ADR 0009, 0099, 0100 and 0114, `docs/POSTGRES_RUNTIME_PRIVILEGE_PREFLIGHT.md`, `docs/API_POSTGRES_ENTRA_PRELISTEN_CANDIDATE.md`, `docs/OPERATOR_PROVISIONING.md`, `docs/DATABASE_MIGRATIONS.md`, `docs/ROADMAP.md`, `docs/THREAT_MODEL.md`, PostgreSQL17 Docker Compose owner/runtime fixture and `src/backend/infrastructures/TemporalMark.Infrastructure/Postgres/PostgresRuntimePrivilegePreflight.cs` with its real `PostgresRuntimePrivilegePreflightTests`. The current *explicit opt-in Production* `ContainerAppsEntraCandidate` prelisten checks that **current** SQL LOGIN has no `rolsuper`, `rolcreatedb`, `rolcreaterole`, `rolreplication`, `rolbypassrls` and rejects membership in named `pg_monitor`, `pg_read_all_data`, `pg_write_all_data`, server file/program and `azure_pg_admin` roles. It does **not** deny membership in some previously unknown separate `NOLOGIN` role with these elevated attributes. If the runtime SQL login can `SET ROLE` to that role, permission checks change to the selected role, evading the narrow current-role attribute test.
+
+Official [PostgreSQL 17 role membership](https://www.postgresql.org/docs/17/role-membership.html) and [SET ROLE](https://www.postgresql.org/docs/17/sql-set-role.html) explicitly say inherited object permissions and `SET ROLE` membership are distinct; powerful role attributes are not ordinary inherited object privileges, but `SET ROLE` to a privileged membership can enable them. Official [system privilege inquiry](https://www.postgresql.org/docs/17/functions-info.html) defines `pg_has_role(..., 'MEMBER')` as transitive direct/indirect membership irrespective of current inheritance/SET options, and `pg_has_role(..., 'SET')` as reachability. [Role attributes](https://www.postgresql.org/docs/17/role-attributes.html) documents the five catalog attributes. Denying **any** membership to a role with these attributes is an intentionally conservative startup authorization policy, including memberships which presently have SET FALSE, because grant-option drift and future role administration can change usability. This is a **hypothetical misgrant guard**, not evidence of an existing Azure bug.
+
+## Decision / mandatory TDD
+
+1. ADR **first** on `main` before changing tests or source. Commit **7 RED-only xUnit cases** into existing real PostgreSQL 17 preflight fixture: five direct memberships in new isolated `NOLOGIN` roles with exactly one of `SUPERUSER`, `CREATEDB`, `CREATEROLE`, `REPLICATION`, `BYPASSRLS`, plus nested `CREATEDB` and `BYPASSRLS` membership through a disposable NOLOGIN bridge. Unique randomly generated per-case privileged-role/bridge/LOGIN names, `Pooling=false`. For each: baseline SQL LOGIN has only `temporalmark_runtime_group` and passes; then `GRANT ... WITH SET TRUE` only in test roles; check direct/transitive `pg_has_role(...,'SET')` is true but **never execute SET ROLE**; demand generic denied prelisten with no inner exception or leaked login, role or password. Always revoke these test grants/memberships and DROP roles in `finally`, including intentional RED; preserve 20 applied migration rows, no review or tenant table reads/writes. Genuine GitHub PostgreSQL 17 RED must yield **7 expected missing-denial xUnit failures, 166 prior passes, 173 total** rather than a fixture/build/connection failure.
+2. After observed RED only, add a single static `AND NOT EXISTS` to the original **one read-only already-open PostgreSQL session** SQL prelisten:
+   ```sql
+   AND NOT EXISTS (
+       SELECT 1 FROM pg_catalog.pg_roles elevated
+       WHERE (elevated.rolsuper OR elevated.rolcreatedb
+              OR elevated.rolcreaterole OR elevated.rolreplication
+              OR elevated.rolbypassrls)
+         AND pg_catalog.pg_has_role(elevated.oid, 'MEMBER')
+   )
+   ```
+   Keep existing specific built-in-role memberships, SQL ACLs, group restrictions and expected current_user/session_user, migration owner boundaries, normal `consume_imprint_search_rate` EXECUTE. This is a read-only catalog lookup without arbitrary role names from input.
+3. Update this ADR and operator/Entra/preflight docs, THREAT_MODEL, ROADMAP, DATABASE_MIGRATIONS. Verify exact final docs-inclusive `main` CI backend/frontend/terraform/docker-smoke **4/4**, ci-verdict and combined `temporalmark/ci-4-core-jobs=success`, real PostgreSQL 17 **173/173**, 20 historical migration checksums, full logical backup restore, Keycloak real signed reviewer/registrar TOTP/PKCE and tenant HTTP 401/403, Nginx privacy/413/414/429. Only then close **#150** and comment on parent #128; other parents stay open.
+
+## Limits and stop line
+
+The rule cannot prevent privilege changes **after** the one-time startup check, database-owner DDL/grant bypass, broken operational custody, arbitrary unlisted PostgreSQL built-in roles with no privileged attribute, actual Entra UAI SQL credential mapping, pooled login revocation or impersonation. The condition tests *membership*, not whether the attacker actually issued `SET ROLE`; tests never exercise dangerous elevated privileges. Only the explicit Production `ContainerAppsEntraCandidate` API mode runs this check. Default on-prem and existing Azure Password mode, privileged CLIs, migration files and Azure Terraform remain unchanged. No eIDAS/QTSP, WORM custody or independent WebAuthn reviewer approval follows from this development SQL hardening.
