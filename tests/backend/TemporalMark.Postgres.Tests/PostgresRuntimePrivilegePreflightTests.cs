@@ -420,6 +420,108 @@ public sealed class PostgresRuntimePrivilegePreflightTests
         Assert.Equal(20L, await MigrationCountAsync(owner));
     }
 
+    // #152 / ADR 0117: V017 unapproved MDS/CRL candidate tables and
+    // append-only-by-trigger event ID sequence are migration-owner only.
+    // No candidate data reads/writes and no nextval/currval/setval calls.
+    [Theory]
+    [InlineData("mds_unapproved_candidate_checkpoints", "SELECT", false)]
+    [InlineData("mds_unapproved_candidate_checkpoints", "SELECT (signed_evidence_sha256)", false)]
+    [InlineData("mds_unapproved_candidate_checkpoints", "INSERT", false)]
+    [InlineData("mds_unapproved_candidate_checkpoints", "INSERT (candidate_kind)", false)]
+    [InlineData("mds_unapproved_candidate_checkpoints", "UPDATE (candidate_serial)", false)]
+    [InlineData("mds_unapproved_candidate_checkpoints", "REFERENCES (issuer_key_sha256)", false)]
+    [InlineData("mds_unapproved_candidate_checkpoints", "DELETE", false)]
+    [InlineData("mds_unapproved_candidate_checkpoints", "TRUNCATE", false)]
+    [InlineData("mds_unapproved_candidate_checkpoints", "TRIGGER", false)]
+    [InlineData("mds_unapproved_candidate_events", "SELECT", false)]
+    [InlineData("mds_unapproved_candidate_events", "SELECT (signed_evidence_sha256)", false)]
+    [InlineData("mds_unapproved_candidate_events", "INSERT", false)]
+    [InlineData("mds_unapproved_candidate_events", "INSERT (candidate_kind)", false)]
+    [InlineData("mds_unapproved_candidate_events", "UPDATE (candidate_serial)", false)]
+    [InlineData("mds_unapproved_candidate_events", "REFERENCES (event_id)", false)]
+    [InlineData("mds_unapproved_candidate_events", "DELETE", false)]
+    [InlineData("mds_unapproved_candidate_events", "TRUNCATE", false)]
+    [InlineData("mds_unapproved_candidate_events", "TRIGGER", false)]
+    [InlineData("mds_unapproved_candidate_events_event_id_seq", "USAGE", true)]
+    [InlineData("mds_unapproved_candidate_events_event_id_seq", "SELECT", true)]
+    [InlineData("mds_unapproved_candidate_events_event_id_seq", "UPDATE", true)]
+    public async Task UnapprovedMdsCandidateTableOrSequenceOvergrantMustRejectRuntimePreflight(
+        string fixedObjectName, string fixedPrivilege, bool isSequence)
+    {
+        // Object/privilege SQL snippets are only fixed compile-time InlineData.
+        // Never use a shared LOGIN, shared group grant or migrated table data.
+        var role = "tm_mdsacl_" + Guid.NewGuid().ToString("N");
+        var password = "test-" + Guid.NewGuid().ToString("N");
+        var roleCreated = false;
+        var runtimeMembershipGranted = false;
+        var extraGrantApplied = false;
+        var sqlObjectType = isSequence ? "SEQUENCE" : "TABLE";
+
+        await using var owner = Owner();
+        await owner.OpenAsync();
+        Assert.Equal(20L, await MigrationCountAsync(owner));
+
+        var testConnectionString = new NpgsqlConnectionStringBuilder(owner.ConnectionString)
+        {
+            Username = role,
+            Password = password,
+            Pooling = false // Prevent temporary LOGIN pools exhausting PG17 slots.
+        }.ConnectionString;
+
+        async Task OwnerExecuteAsync(string sql)
+        {
+            await using var command = new NpgsqlCommand(sql, owner);
+            await command.ExecuteNonQueryAsync();
+        }
+
+        try
+        {
+            await OwnerExecuteAsync($"CREATE ROLE {role} LOGIN INHERIT PASSWORD '{password}'");
+            roleCreated = true;
+            await OwnerExecuteAsync($"GRANT temporalmark_runtime_group TO {role}");
+            runtimeMembershipGranted = true;
+
+            await using (var baseline = new NpgsqlConnection(testConnectionString))
+            {
+                await baseline.OpenAsync();
+                await PostgresRuntimePrivilegePreflight.VerifyAsync(
+                    baseline, role, CancellationToken.None);
+            }
+
+            // Grant exactly one effective table/column or sequence privilege,
+            // never touch shared group nor use the sequence or read candidates.
+            await OwnerExecuteAsync(
+                $"GRANT {fixedPrivilege} ON {sqlObjectType} public.{fixedObjectName} TO {role}");
+            extraGrantApplied = true;
+
+            await using (var overprivileged = new NpgsqlConnection(testConnectionString))
+            {
+                await overprivileged.OpenAsync();
+                var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                    PostgresRuntimePrivilegePreflight.VerifyAsync(
+                        overprivileged, role, CancellationToken.None));
+                Assert.Null(error.InnerException);
+                Assert.DoesNotContain(role, error.ToString());
+                Assert.DoesNotContain(password, error.ToString());
+                Assert.DoesNotContain("ConnectionStrings", error.ToString());
+            }
+        }
+        finally
+        {
+            // Cleanup even when expected RED assertion fails. No persisted
+            // candidate mutation, sequence movement or leaked SQL test LOGIN.
+            if (extraGrantApplied)
+                await OwnerExecuteAsync(
+                    $"REVOKE {fixedPrivilege} ON {sqlObjectType} public.{fixedObjectName} FROM {role}");
+            if (runtimeMembershipGranted)
+                await OwnerExecuteAsync($"REVOKE temporalmark_runtime_group FROM {role}");
+            if (roleCreated)
+                await OwnerExecuteAsync($"DROP ROLE {role}");
+        }
+
+        Assert.Equal(20L, await MigrationCountAsync(owner));
+    }
+
     // #151 / ADR 0116: V010 replay-proof hashes and V013 owner-controlled
     // unsigned registrar nonces/RP policy must never become runtime SQL ACLs.
     // This test inspects GRANTs only; no customer rows or routines are touched.
