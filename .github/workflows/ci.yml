@@ -40,6 +40,8 @@ jobs:
           # RED-first #101: final SHA status must never claim a skipped core job passed.
           # RED-first #117: enforce explicit Nginx access-only field allowlist.
           python3 -m unittest discover -s tests/integration -p 'test_nginx_access_privacy.py' -v
+          # RED-first #136: scoped pre-auth 4KiB search POST Kestrel + Nginx body gate.
+          python3 -m unittest discover -s tests/integration -p 'test_imprint_search_body_budget.py' -v
           # RED-first #119: API/Kestrel request logging must remain content-free.
           python3 -m unittest discover -s tests/integration -p 'test_api_diagnostic_privacy.py' -v
           # RED-first #121: exact Keycloak callback allowlist and collision-resilient bind.
@@ -170,6 +172,10 @@ jobs:
         env:
           TEMPORALMARK_CI_NGINX_ACCESS_PRIVACY: "1"
         run: python3 tests/integration/nginx-access-privacy.py
+      - name: Real API and Nginx 4KiB imprint-search 413/body privacy boundary (#136)
+        env:
+          TEMPORALMARK_CI_SEARCH_BODY_BUDGET: "1"
+        run: python3 tests/integration/imprint-search-body-budget.py
       - name: Real API container normal request log confidentiality (#119)
         env:
           TEMPORALMARK_CI_API_LOG_PRIVACY: "1"
