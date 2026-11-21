@@ -18,3 +18,7 @@ PostgreSQL 17 official [system privilege functions](https://www.postgresql.org/d
 ## Closure
 
 Close only scoped #142 after independently verifying exact final docs-inclusive current `main` SHA has backend/frontend/terraform/docker-smoke **4/4 success**, `ci-verdict` and combined `temporalmark/ci-4-core-jobs=success`; real PostgreSQL eight new negatives + unchanged 20 migrations, dump/restore, signed Keycloak TOTP/PKCE and tenant A/B API 401/403 must pass. Keep #128/#18/#14/#17/#115/#113/#13/#15 OPEN.
+
+## TDD fixture note after first real RED
+
+The eight new missing-denial tests all produced the expected RED assertions on [test-only main 7059298](https://github.com/KeyserDSoze/TemporalMark/commit/70592980ac4568f1be0e2d02195537143aebbef0), [Actions 44915914633](https://github.com/KeyserDSoze/TemporalMark/actions/runs/44915914633). The overall real PostgreSQL suite also showed **four unrelated connection-slot failures** (`53300`) due to each disposable login leaving an Npgsql pool per random username. The implementation [fa3a581](https://github.com/KeyserDSoze/TemporalMark/commit/fa3a581c1521104e0ccd38b62391b1737e084a27) therefore also sets `Pooling=false` **only on disposable test-role connection strings**, both new #142 and pre-existing #141, to prevent CI pool accumulation. No application connection pooling/configuration, local SQL role, schema, migration or production database was changed. Final docs-inclusive CI gate still required; this finding is not evidence of a production SQL connection capacity issue.
