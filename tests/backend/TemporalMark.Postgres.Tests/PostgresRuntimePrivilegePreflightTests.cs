@@ -47,6 +47,94 @@ public sealed class PostgresRuntimePrivilegePreflightTests
         Assert.Equal(20L, await MigrationCountAsync(owner));
     }
 
+    // #141 / ADR 0106: genuine PG17 tests, without touching the shared runtime
+    // group or any migrated table. Each independently generated login has
+    // correct runtime membership first, and gets exactly ONE extra grant.
+    // A wrong ACL must fail pre-listen instead of being misclassified WORM.
+    [Theory]
+    [InlineData("timestamp_registry", "UPDATE")]
+    [InlineData("timestamp_registry", "DELETE")]
+    [InlineData("timestamp_registry", "TRUNCATE")]
+    [InlineData("timestamp_registry", "TRIGGER")]
+    [InlineData("timestamp_registry", "REFERENCES")]
+    [InlineData("timestamp_registry", "UPDATE (validation_state)")]
+    [InlineData("timestamp_registry", "REFERENCES (id)")]
+    [InlineData("tenant_audit_events", "UPDATE")]
+    [InlineData("tenant_audit_events", "DELETE")]
+    [InlineData("tenant_audit_events", "TRUNCATE")]
+    [InlineData("tenant_audit_events", "TRIGGER")]
+    [InlineData("tenant_audit_events", "REFERENCES")]
+    [InlineData("tenant_audit_events", "UPDATE (action)")]
+    [InlineData("tenant_audit_events", "REFERENCES (id)")]
+    public async Task AdditionalEvidenceMutationGrantMustRejectOtherwiseSafeRuntimeLogin(
+        string tableName, string privilege)
+    {
+        // SQL identifiers and privilege names are fixed InlineData literals;
+        // the per-test role/password use only safely generated ASCII hex.
+        var role = "tm_acl_" + Guid.NewGuid().ToString("N");
+        var password = "test-" + Guid.NewGuid().ToString("N");
+        var roleCreated = false;
+        var groupGranted = false;
+        var extraGranted = false;
+        await using var owner = Owner();
+        await owner.OpenAsync();
+        Assert.Equal(20L, await MigrationCountAsync(owner));
+        var connectionString = new NpgsqlConnectionStringBuilder(owner.ConnectionString)
+        {
+            Username = role,
+            Password = password
+        }.ConnectionString;
+
+        async Task ExecOwnerAsync(string commandText)
+        {
+            await using var command = new NpgsqlCommand(commandText, owner);
+            await command.ExecuteNonQueryAsync();
+        }
+
+        try
+        {
+            await ExecOwnerAsync($"CREATE ROLE {role} LOGIN INHERIT PASSWORD '{password}'");
+            roleCreated = true;
+            await ExecOwnerAsync($"GRANT temporalmark_runtime_group TO {role}");
+            groupGranted = true;
+
+            // Baseline proves this disposable role is a valid runtime identity:
+            // a denial after the extra grant is actually attributable to it.
+            await using (var approved = new NpgsqlConnection(connectionString))
+            {
+                await approved.OpenAsync();
+                await PostgresRuntimePrivilegePreflight.VerifyAsync(
+                    approved, role, CancellationToken.None);
+            }
+
+            await ExecOwnerAsync($"GRANT {privilege} ON TABLE public.{tableName} TO {role}");
+            extraGranted = true;
+            await using (var unsafeSession = new NpgsqlConnection(connectionString))
+            {
+                await unsafeSession.OpenAsync();
+                var denial = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                    PostgresRuntimePrivilegePreflight.VerifyAsync(
+                        unsafeSession, role, CancellationToken.None));
+                Assert.Null(denial.InnerException);
+                Assert.DoesNotContain(role, denial.ToString());
+                Assert.DoesNotContain(password, denial.ToString());
+            }
+        }
+        finally
+        {
+            // Teardown runs on both RED failures and GREEN. Do not leak any
+            // extra grant/role into a later test or a shared runtime login.
+            if (extraGranted)
+                await ExecOwnerAsync($"REVOKE {privilege} ON TABLE public.{tableName} FROM {role}");
+            if (groupGranted)
+                await ExecOwnerAsync($"REVOKE temporalmark_runtime_group FROM {role}");
+            if (roleCreated)
+                await ExecOwnerAsync($"DROP ROLE {role}");
+        }
+
+        Assert.Equal(20L, await MigrationCountAsync(owner));
+    }
+
     [Fact]
     public async Task DatabaseOwnerOrSuperuserIsRejectedEvenIfConfiguredAsExpectedLogin()
     {
