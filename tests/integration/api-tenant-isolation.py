@@ -9,6 +9,7 @@ from __future__ import annotations
 import base64
 from datetime import datetime, timedelta, timezone
 import hashlib
+import http.client
 import io
 import json
 import os
@@ -494,6 +495,49 @@ def assert_search_rate_store_permission_failure_is_closed(token: str):
                 search_imprint(token, DIGEST_B.hex()), 200)
 
 
+def assert_search_body_budget_with_signed_chunked_jwt(token: str):
+    """#136: prove the actual read-limit, not only a declared Content-Length.
+
+    The already signed real Keycloak JWT is supplied in a CI-only request
+    without Content-Length, so an oversized valid JSON body must be rejected
+    by Kestrel DURING its model-binding read, with no match or audit data.
+    This sends a separate synthetic disposable fixture, never a user file.
+    """
+    body = json.dumps({
+        "digestSha256Hex": DIGEST_A.hex(),
+        "fromUtc": FROM,
+        "toUtcExclusive": TO,
+        "offset": 0,
+        "limit": 1,
+        "padding": "SYNTHETIC_CHUNKED_PAD_136" * 240,
+    }, separators=(",", ":")).encode("utf-8")
+    if len(body) <= 4096:
+        raise AssertionError("Invalid signed Keycloak chunked CI request fixture")
+
+    conn = http.client.HTTPConnection("127.0.0.1", 8080, timeout=25)
+    try:
+        conn.putrequest("POST", "/api/v1/stamps/search")
+        conn.putheader("Content-Type", "application/json")
+        conn.putheader("Transfer-Encoding", "chunked")
+        conn.putheader("Authorization", "Bearer " + token)
+        conn.endheaders()
+        conn.send(("%x\r\n" % len(body)).encode("ascii") + body +
+                  b"\r\n0\r\n\r\n")
+        response = conn.getresponse()
+        status = response.status
+        result = response.read(8192)
+    finally:
+        conn.close()
+
+    if status != 413:
+        raise AssertionError(
+            f"Signed Keycloak chunked oversize returned HTTP {status} instead of 413")
+    if any(s in result for s in (
+            DIGEST_A.hex().encode("ascii"), b"hasMore",
+            b"organizationId", STAMP_A.encode("ascii"))):
+        raise AssertionError("Chunked 413 disclosed document or tenant metadata")
+
+
 def main():
     if os.environ.get("TEMPORALMARK_CI_API_ISOLATION") != "1":
         raise AssertionError("Explicit CI-only fixture gate required")
@@ -524,6 +568,10 @@ def main():
             raise AssertionError(f"Disposable signed {label} token lacks intended scope")
         if claims.get("exp", 0) <= time.time() + 15:
             raise AssertionError(f"Disposable signed {label} token is already near expiry")
+
+    # Genuine signed JWT and unknown-length chunked JSON: Kestrel, not
+    # Content-Length or the Nginx frontend, must enforce its body read cap.
+    assert_search_body_budget_with_signed_chunked_jwt(a_token)
 
     must_status("B token before organization membership", api("/me", token=b_token), 403)
     must_status("A real DB admin before canary insert", api("/me", token=a_token), 200)
