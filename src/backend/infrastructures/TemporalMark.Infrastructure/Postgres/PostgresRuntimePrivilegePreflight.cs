@@ -110,6 +110,26 @@ public static class PostgresRuntimePrivilegePreflight
             AND NOT pg_catalog.has_table_privilege('public.organization_memberships', 'TRIGGER')
             AND NOT pg_catalog.has_table_privilege('public.organization_memberships', 'DELETE')
             AND NOT pg_catalog.has_table_privilege('public.organization_memberships', 'TRUNCATE')
+            -- #149 / ADR 0114: V006 pending enrollment and V012 unsigned
+            -- reviewer challenge storage are migration-owner only. Even a
+            -- per-column SELECT, INSERT, UPDATE or REFERENCES grant to the
+            -- API runtime login is unsafe. Neither table is needed directly
+            -- by the normal API SQL identity; reviewer and provisioning
+            -- SQL routines retain their separate privileges.
+            AND NOT pg_catalog.has_any_column_privilege('public.organization_enrollment_requests', 'SELECT')
+            AND NOT pg_catalog.has_any_column_privilege('public.organization_enrollment_requests', 'INSERT')
+            AND NOT pg_catalog.has_any_column_privilege('public.organization_enrollment_requests', 'UPDATE')
+            AND NOT pg_catalog.has_any_column_privilege('public.organization_enrollment_requests', 'REFERENCES')
+            AND NOT pg_catalog.has_table_privilege('public.organization_enrollment_requests', 'DELETE')
+            AND NOT pg_catalog.has_table_privilege('public.organization_enrollment_requests', 'TRUNCATE')
+            AND NOT pg_catalog.has_table_privilege('public.organization_enrollment_requests', 'TRIGGER')
+            AND NOT pg_catalog.has_any_column_privilege('public.organization_decision_challenges', 'SELECT')
+            AND NOT pg_catalog.has_any_column_privilege('public.organization_decision_challenges', 'INSERT')
+            AND NOT pg_catalog.has_any_column_privilege('public.organization_decision_challenges', 'UPDATE')
+            AND NOT pg_catalog.has_any_column_privilege('public.organization_decision_challenges', 'REFERENCES')
+            AND NOT pg_catalog.has_table_privilege('public.organization_decision_challenges', 'DELETE')
+            AND NOT pg_catalog.has_table_privilege('public.organization_decision_challenges', 'TRUNCATE')
+            AND NOT pg_catalog.has_table_privilege('public.organization_decision_challenges', 'TRIGGER')
             -- #147 / ADR 0112: group-membership restrictions are NOT
             -- equivalent to effective FUNCTION EXECUTE grants. Reject an
             -- accidental direct/inherited/PUBLIC runtime grant of enrollment,
