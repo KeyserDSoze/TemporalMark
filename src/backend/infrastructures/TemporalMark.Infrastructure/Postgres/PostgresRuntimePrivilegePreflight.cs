@@ -125,6 +125,48 @@ public static class PostgresRuntimePrivilegePreflight
             AND NOT pg_catalog.has_table_privilege('public.organization_memberships', 'TRIGGER')
             AND NOT pg_catalog.has_table_privilege('public.organization_memberships', 'DELETE')
             AND NOT pg_catalog.has_table_privilege('public.organization_memberships', 'TRUNCATE')
+            -- #153 / ADR 0118: future-fail-closed privilege inventory.
+            -- Only four known application relations may have any runtime
+            -- table/column ACL; each is independently checked above/below.
+            -- A new owner-only public table/view/foreign/partitioned/
+            -- materialized view or ANY public sequence must never silently
+            -- become accessible to this SQL API LOGIN after a migration.
+            -- This scans only PostgreSQL catalog ACLs, never tenant rows.
+            AND NOT EXISTS (
+                SELECT 1
+                  FROM pg_catalog.pg_class AS candidate
+                  JOIN pg_catalog.pg_namespace AS n
+                    ON n.oid = candidate.relnamespace
+                 WHERE n.nspname = 'public'
+                   AND (
+                       (
+                           candidate.relkind = 'S'
+                           AND (
+                               pg_catalog.has_sequence_privilege(candidate.oid, 'USAGE')
+                               OR pg_catalog.has_sequence_privilege(candidate.oid, 'SELECT')
+                               OR pg_catalog.has_sequence_privilege(candidate.oid, 'UPDATE')
+                           )
+                       )
+                       OR (
+                           candidate.relkind IN ('r', 'p', 'v', 'm', 'f')
+                           AND candidate.relname NOT IN (
+                               'organizations',
+                               'organization_memberships',
+                               'timestamp_registry',
+                               'tenant_audit_events'
+                           )
+                           AND (
+                               pg_catalog.has_any_column_privilege(candidate.oid, 'SELECT')
+                               OR pg_catalog.has_any_column_privilege(candidate.oid, 'INSERT')
+                               OR pg_catalog.has_any_column_privilege(candidate.oid, 'UPDATE')
+                               OR pg_catalog.has_any_column_privilege(candidate.oid, 'REFERENCES')
+                               OR pg_catalog.has_table_privilege(candidate.oid, 'DELETE')
+                               OR pg_catalog.has_table_privilege(candidate.oid, 'TRUNCATE')
+                               OR pg_catalog.has_table_privilege(candidate.oid, 'TRIGGER')
+                           )
+                       )
+                   )
+            )
             -- #152 / ADR 0117: V017 owner-only UNAPPROVED FIDO MDS/CRL
             -- candidate checkpoint/history and IDENTITY event sequence.
             -- No normal API runtime table, column or sequence permissions.
