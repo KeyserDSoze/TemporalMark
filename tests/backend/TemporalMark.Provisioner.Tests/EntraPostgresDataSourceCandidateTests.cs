@@ -105,6 +105,89 @@ public sealed class EntraPostgresDataSourceCandidateTests
                 cancelled.Token));
     }
 
+    // #140 / ADR 0105: RED-first independent Npgsql password-provider
+    // boundary, even if the caller-supplied Entra token provider is faulty.
+    [Theory]
+    [InlineData("TOKEN\r\nSECRET-CANARY")]
+    [InlineData("TOKEN\u0000SECRET-CANARY")]
+    [InlineData("TOKEN\tSECRET-CANARY")]
+    [InlineData("TOKEN DEL\u007FSECRET-CANARY")]
+    [InlineData("ÉNTRA-SECRET-CANARY")]
+    [InlineData("TOKEN\u200DSECRET-CANARY")]
+    [InlineData(" TOKEN-SECRET-CANARY")]
+    [InlineData("TOKEN-SECRET-CANARY ")]
+    public async Task RejectsNonPrintableOrNonAsciiTokenBeforeNpgsqlSeesIt(string malformed)
+    {
+        var attempts = 0;
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(
+            async () => await EntraPostgresDataSourceCandidate.RequestTokenAsync(
+                (scope, _) =>
+                {
+                    attempts++;
+                    Assert.Equal(EntraPostgresDataSourceCandidate.PostgreSqlEntraScope, scope);
+                    return ValueTask.FromResult(malformed);
+                }, CancellationToken.None));
+
+        Assert.Equal(1, attempts);
+        Assert.Null(error.InnerException);
+        Assert.DoesNotContain("SECRET-CANARY", error.ToString());
+        Assert.DoesNotContain(malformed, error.ToString());
+    }
+
+    [Fact]
+    public async Task RejectsOversizedOpaqueTokenWithoutEchoingAnyBearer()
+    {
+        var oversized = "SYNTHETIC-TOKEN-SECRET-CANARY-" + new string('X', 16001);
+        var attempts = 0;
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(
+            async () => await EntraPostgresDataSourceCandidate.RequestTokenAsync(
+                (_, _) =>
+                {
+                    attempts++;
+                    return ValueTask.FromResult(oversized);
+                }, CancellationToken.None));
+
+        Assert.Equal(1, attempts);
+        Assert.Null(error.InnerException);
+        Assert.DoesNotContain("SYNTHETIC-TOKEN-SECRET-CANARY", error.ToString());
+    }
+
+    [Fact]
+    public async Task ExactlySixteenThousandPrintableTokenCharactersRemainAllowed()
+    {
+        var boundaryToken = new string('A', 16000);
+        var attempts = 0;
+        var returned = await EntraPostgresDataSourceCandidate.RequestTokenAsync(
+            (scope, _) =>
+            {
+                attempts++;
+                Assert.Equal(EntraPostgresDataSourceCandidate.PostgreSqlEntraScope, scope);
+                return ValueTask.FromResult(boundaryToken);
+            }, CancellationToken.None);
+
+        Assert.Equal(1, attempts);
+        Assert.Equal(boundaryToken, returned);
+    }
+
+    [Fact]
+    public async Task CancellationDuringCooperativeTokenSupplierCannotForwardToken()
+    {
+        using var cancelled = new CancellationTokenSource();
+        var attempts = 0;
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            async () => await EntraPostgresDataSourceCandidate.RequestTokenAsync(
+                (scope, _) =>
+                {
+                    attempts++;
+                    Assert.Equal(EntraPostgresDataSourceCandidate.PostgreSqlEntraScope, scope);
+                    cancelled.Cancel();
+                    // A badly implemented supplier ignores its cancellation,
+                    // then successfully returns a bearer. Never pass it to SQL.
+                    return ValueTask.FromResult("SYNTHETIC-IGNORED-CANCELLATION");
+                }, cancelled.Token));
+        Assert.Equal(1, attempts);
+    }
+
     [Fact]
     public async Task SupplierTokenCannotOverridePinnedScopeOrCallerCancellation()
     {
