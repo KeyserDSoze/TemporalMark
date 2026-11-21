@@ -82,7 +82,10 @@ public sealed class PostgresRuntimePrivilegePreflightTests
         var connectionString = new NpgsqlConnectionStringBuilder(owner.ConnectionString)
         {
             Username = role,
-            Password = password
+            Password = password,
+            // Every test generates a unique username. Never retain a pooled
+            // backend session after teardown; PG17 runner has finite slots.
+            Pooling = false
         }.ConnectionString;
 
         async Task ExecOwnerAsync(string commandText)
@@ -164,7 +167,10 @@ public sealed class PostgresRuntimePrivilegePreflightTests
         var loginConnectionString = new NpgsqlConnectionStringBuilder(owner.ConnectionString)
         {
             Username = role,
-            Password = password
+            Password = password,
+            // Every test generates a unique username. Never retain a pooled
+            // backend session after teardown; PG17 runner has finite slots.
+            Pooling = false
         }.ConnectionString;
 
         async Task RunOwnerAsync(string sql)

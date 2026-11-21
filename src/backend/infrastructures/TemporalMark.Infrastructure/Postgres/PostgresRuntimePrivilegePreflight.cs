@@ -76,11 +76,19 @@ public static class PostgresRuntimePrivilegePreflight
             AND NOT pg_catalog.has_table_privilege('public.tenant_audit_events', 'TRUNCATE')
             AND NOT pg_catalog.has_table_privilege('public.tenant_audit_events', 'TRIGGER')
             AND NOT pg_catalog.has_table_privilege('public.organizations', 'INSERT')
-            AND NOT pg_catalog.has_table_privilege('public.organizations', 'UPDATE')
+            -- #142 / ADR 0107: a column-only UPDATE grant evades a table
+            -- privilege check. Also deny REFERENCES and TRIGGER powers.
+            AND NOT pg_catalog.has_any_column_privilege('public.organizations', 'UPDATE')
+            AND NOT pg_catalog.has_any_column_privilege('public.organizations', 'REFERENCES')
+            AND NOT pg_catalog.has_table_privilege('public.organizations', 'TRIGGER')
             AND NOT pg_catalog.has_table_privilege('public.organizations', 'DELETE')
             AND NOT pg_catalog.has_table_privilege('public.organizations', 'TRUNCATE')
             AND NOT pg_catalog.has_table_privilege('public.organization_memberships', 'INSERT')
-            AND NOT pg_catalog.has_table_privilege('public.organization_memberships', 'UPDATE')
+            -- #142 / ADR 0107: a column-only UPDATE grant evades a table
+            -- privilege check. Also deny REFERENCES and TRIGGER powers.
+            AND NOT pg_catalog.has_any_column_privilege('public.organization_memberships', 'UPDATE')
+            AND NOT pg_catalog.has_any_column_privilege('public.organization_memberships', 'REFERENCES')
+            AND NOT pg_catalog.has_table_privilege('public.organization_memberships', 'TRIGGER')
             AND NOT pg_catalog.has_table_privilege('public.organization_memberships', 'DELETE')
             AND NOT pg_catalog.has_table_privilege('public.organization_memberships', 'TRUNCATE')
             AND NOT pg_catalog.has_function_privilege(
