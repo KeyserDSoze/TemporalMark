@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using TemporalMark.Infrastructure.Postgres;
@@ -348,6 +349,135 @@ public sealed class ContainerAppsPostgresManagedIdentityCandidateTests
         await Assert.ThrowsAnyAsync<OperationCanceledException>(
             async () => await client.GetTokenAsync(Scope, cancelled.Token));
         Assert.Equal(0, fake.Count);
+    }
+
+
+    // #139 / ADR 0104: a fast 200/JSON header can precede a forever-stalling
+    // response stream. HttpClient.Timeout with ResponseHeadersRead alone does
+    // NOT bound the subsequent content read; these tests were committed RED.
+    private sealed class NeverFinishingJsonStream : Stream
+    {
+        public int ReadAttempts { get; private set; }
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position
+        {
+            get => throw new NotSupportedException();
+            set => throw new NotSupportedException();
+        }
+        public override void Flush() => throw new NotSupportedException();
+        public override int Read(byte[] buffer, int offset, int count) =>
+            throw new NotSupportedException();
+        public override async ValueTask<int> ReadAsync(
+            Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            ReadAttempts++;
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            return 0;
+        }
+        public override Task<int> ReadAsync(byte[] buffer, int offset, int count,
+            CancellationToken cancellationToken) =>
+            ReadAsync(buffer.AsMemory(offset, count), cancellationToken).AsTask();
+        public override long Seek(long offset, SeekOrigin origin) =>
+            throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) =>
+            throw new NotSupportedException();
+    }
+
+    private static HttpResponseMessage StallingJsonBody(NeverFinishingJsonStream stream)
+    {
+        var response = new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StreamContent(stream)
+        };
+        response.Content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
+        return response;
+    }
+
+    [Fact]
+    public async Task StalledBodyAfterSuccessfulHeadersFailsClosedWithinOneTotalDeadline()
+    {
+        var stream = new NeverFinishingJsonStream();
+        var fake = new FakeHandler((_, _) => Task.FromResult(StallingJsonBody(stream)));
+        using var candidate = ContainerAppsPostgresManagedIdentityCandidate.CreateForTests(
+            fake, Endpoint, IdentityHeader, IdentityId, new Clock(),
+            TimeSpan.FromMilliseconds(60));
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(
+            async () => await candidate.GetTokenAsync(Scope, CancellationToken.None));
+        Assert.Null(error.InnerException);
+        Assert.DoesNotContain(IdentityHeader, error.ToString());
+        Assert.DoesNotContain("access_token", error.ToString());
+        Assert.Equal(1, fake.Count);
+        Assert.True(stream.ReadAttempts > 0);
+    }
+
+    [Fact]
+    public async Task StalledHeadersUseSameOverallDeadlineWithoutRetry()
+    {
+        var fake = new FakeHandler(async (_, ct) =>
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, ct);
+            return Response("UNREACHABLE-SECRET-CANARY");
+        });
+        using var candidate = ContainerAppsPostgresManagedIdentityCandidate.CreateForTests(
+            fake, Endpoint, IdentityHeader, IdentityId, new Clock(),
+            TimeSpan.FromMilliseconds(60));
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(
+            async () => await candidate.GetTokenAsync(Scope, CancellationToken.None));
+        Assert.Null(error.InnerException);
+        Assert.DoesNotContain("UNREACHABLE-SECRET-CANARY", error.ToString());
+        Assert.Equal(1, fake.Count);
+    }
+
+    [Fact]
+    public async Task ExplicitCallerCancellationDuringBodyStillPropagates()
+    {
+        var stream = new NeverFinishingJsonStream();
+        var fake = new FakeHandler((_, _) => Task.FromResult(StallingJsonBody(stream)));
+        using var candidate = ContainerAppsPostgresManagedIdentityCandidate.CreateForTests(
+            fake, Endpoint, IdentityHeader, IdentityId, new Clock(),
+            TimeSpan.FromSeconds(2));
+        using var caller = new CancellationTokenSource();
+        caller.CancelAfter(TimeSpan.FromMilliseconds(60));
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            async () => await candidate.GetTokenAsync(Scope, caller.Token));
+        Assert.Equal(1, fake.Count);
+        Assert.True(stream.ReadAttempts > 0);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    [InlineData(11000)]
+    public void RejectsNonPositiveOrRelaxedTestOnlyDeadlines(int milliseconds)
+    {
+        var fake = new FakeHandler((_, _) =>
+            throw new InvalidOperationException("SHOULD-NOT-CONNECT"));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            ContainerAppsPostgresManagedIdentityCandidate.CreateForTests(
+                fake, Endpoint, IdentityHeader, IdentityId, new Clock(),
+                TimeSpan.FromMilliseconds(milliseconds)));
+        Assert.Equal(0, fake.Count);
+    }
+
+    [Fact]
+    public async Task ShortTestDeadlineStillAcceptsImmediatelyCompleteCorrectTokenJson()
+    {
+        var fake = new FakeHandler((_, _) =>
+            Task.FromResult(Response(Json(Now.AddMinutes(8).ToUnixTimeSeconds()))));
+        using var candidate = ContainerAppsPostgresManagedIdentityCandidate.CreateForTests(
+            fake, Endpoint, IdentityHeader, IdentityId, new Clock(),
+            TimeSpan.FromSeconds(1));
+
+        Assert.Equal("FAKE-OPAQUE-NOT-A-JWT",
+            await candidate.GetTokenAsync(Scope, CancellationToken.None));
+        Assert.Equal(1, fake.Count);
     }
 
     [Fact]
