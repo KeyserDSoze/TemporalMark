@@ -110,6 +110,26 @@ public static class PostgresRuntimePrivilegePreflight
             AND NOT pg_catalog.has_table_privilege('public.organization_memberships', 'TRIGGER')
             AND NOT pg_catalog.has_table_privilege('public.organization_memberships', 'DELETE')
             AND NOT pg_catalog.has_table_privilege('public.organization_memberships', 'TRUNCATE')
+            -- #147 / ADR 0112: group-membership restrictions are NOT
+            -- equivalent to effective FUNCTION EXECUTE grants. Reject an
+            -- accidental direct/inherited/PUBLIC runtime grant of enrollment,
+            -- independent approval, sensitive reviewer scope read, legacy
+            -- registrar intent or owner-only diagnostics/maintenance. Keep
+            -- normal V019 consume_imprint_search_rate EXECUTE permitted.
+            AND NOT pg_catalog.has_function_privilege(
+                'public.request_enrollment(uuid,text,text,text,text,char(64),char(64))', 'EXECUTE')
+            AND NOT pg_catalog.has_function_privilege(
+                'public.approve_enrollment(uuid,text,text,text,text,text,char(64))', 'EXECUTE')
+            AND NOT pg_catalog.has_function_privilege(
+                'public.complete_enrollment(uuid,text,text,text,text,char(64),char(64))', 'EXECUTE')
+            AND NOT pg_catalog.has_function_privilege(
+                'public.read_pending_enrollment(uuid,text,text)', 'EXECUTE')
+            AND NOT pg_catalog.has_function_privilege(
+                'public.issue_reviewer_registration_intent(text,text,text,text,text)', 'EXECUTE')
+            AND NOT pg_catalog.has_function_privilege(
+                'public.record_unapproved_mds_checkpoint_candidate(text,text,bigint,text,text,integer,text)', 'EXECUTE')
+            AND NOT pg_catalog.has_function_privilege(
+                'public.purge_stale_imprint_search_rate_counters(integer)', 'EXECUTE')
             AND NOT pg_catalog.has_function_privilege(
                 'public.bootstrap_organization(uuid,text,text)', 'EXECUTE')
             AND NOT pg_catalog.has_function_privilege(
