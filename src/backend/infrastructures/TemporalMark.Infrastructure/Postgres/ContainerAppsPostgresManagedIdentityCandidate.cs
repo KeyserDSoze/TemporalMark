@@ -9,8 +9,9 @@ namespace TemporalMark.Infrastructure.Postgres;
 
 /// <summary>
 /// #131 / ADR 0097: detached, strictly local Azure Container Apps managed
-/// identity token supplier for the #130 Entra Npgsql candidate. Not wired into
-/// the actual API, provisioning CLI, SQL migration runner or Terraform.
+/// identity token supplier for the #130 Entra Npgsql candidate. Available only
+/// via explicit nondefault #134 API Entra opt-in; not selected by current
+/// Terraform or wired to provisioning CLI / SQL migration runner.
 /// </summary>
 public sealed class ContainerAppsPostgresManagedIdentityCandidate : IDisposable
 {
@@ -19,17 +20,23 @@ public sealed class ContainerAppsPostgresManagedIdentityCandidate : IDisposable
     private const string Failure = "Azure Container Apps PostgreSQL managed identity token unavailable";
     private const int MaxResponseBytes = 32768;
     private const int MaxTokenLength = 16000;
+    // #139 / ADR 0104: one deadline for response headers AND complete body.
+    private static readonly TimeSpan TokenResponseDeadline = TimeSpan.FromSeconds(10);
 
     private readonly HttpClient client;
     private readonly Uri endpoint;
     private readonly string platformIdentityHeader;
     private readonly Guid approvedUserAssignedClientId;
     private readonly TimeProvider clock;
+    private readonly TimeSpan responseDeadline;
 
     private ContainerAppsPostgresManagedIdentityCandidate(
         HttpClient client, string endpointUrl, string identityHeader,
-        Guid clientId, TimeProvider? timeProvider)
+        Guid clientId, TimeProvider? timeProvider, TimeSpan responseDeadline)
     {
+        if (responseDeadline <= TimeSpan.Zero || responseDeadline > TokenResponseDeadline)
+            throw new ArgumentOutOfRangeException(nameof(responseDeadline),
+                "A strictly bounded token response deadline is required");
         try
         {
             endpoint = new Uri(endpointUrl, UriKind.Absolute);
@@ -70,6 +77,7 @@ public sealed class ContainerAppsPostgresManagedIdentityCandidate : IDisposable
         platformIdentityHeader = identityHeader;
         approvedUserAssignedClientId = clientId;
         clock = timeProvider ?? TimeProvider.System;
+        this.responseDeadline = responseDeadline;
     }
 
     /// <summary>
@@ -82,12 +90,13 @@ public sealed class ContainerAppsPostgresManagedIdentityCandidate : IDisposable
     {
         var client = new HttpClient(CreateHardenedHandler(), disposeHandler: true)
         {
-            Timeout = TimeSpan.FromSeconds(10)
+            Timeout = TokenResponseDeadline
         };
         try
         {
             return new ContainerAppsPostgresManagedIdentityCandidate(
-                client, endpointUrl, identityHeader, userAssignedClientId, timeProvider);
+                client, endpointUrl, identityHeader, userAssignedClientId,
+                timeProvider, TokenResponseDeadline);
         }
         catch
         {
@@ -102,17 +111,19 @@ public sealed class ContainerAppsPostgresManagedIdentityCandidate : IDisposable
     /// </summary>
     internal static ContainerAppsPostgresManagedIdentityCandidate CreateForTests(
         HttpMessageHandler handler, string endpointUrl, string identityHeader,
-        Guid userAssignedClientId, TimeProvider? timeProvider = null)
+        Guid userAssignedClientId, TimeProvider? timeProvider = null,
+        TimeSpan? testResponseDeadline = null)
     {
         ArgumentNullException.ThrowIfNull(handler);
         var client = new HttpClient(handler, disposeHandler: true)
         {
-            Timeout = TimeSpan.FromSeconds(10)
+            Timeout = TokenResponseDeadline
         };
         try
         {
             return new ContainerAppsPostgresManagedIdentityCandidate(
-                client, endpointUrl, identityHeader, userAssignedClientId, timeProvider);
+                client, endpointUrl, identityHeader, userAssignedClientId,
+                timeProvider, testResponseDeadline ?? TokenResponseDeadline);
         }
         catch
         {
@@ -173,6 +184,11 @@ public sealed class ContainerAppsPostgresManagedIdentityCandidate : IDisposable
                 nameof(scope));
         cancellationToken.ThrowIfCancellationRequested();
 
+        // The HttpClient.Timeout above covers only headers under ResponseHeadersRead.
+        // One monotonic linked cancellation budget covers headers + streaming body;
+        // it is never reset per read. External cancellation retains its own identity.
+        using var requestBudget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        requestBudget.CancelAfter(responseDeadline);
         try
         {
             var uri = new UriBuilder(endpoint)
@@ -188,14 +204,14 @@ public sealed class ContainerAppsPostgresManagedIdentityCandidate : IDisposable
             request.VersionPolicy = HttpVersionPolicy.RequestVersionExact;
 
             using var response = await client.SendAsync(
-                request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+                request, HttpCompletionOption.ResponseHeadersRead, requestBudget.Token);
             if (response.StatusCode != HttpStatusCode.OK ||
                 response.Content is null ||
                 response.Content.Headers.ContentLength > MaxResponseBytes ||
                 response.Content.Headers.ContentType?.MediaType != "application/json")
                 throw new InvalidOperationException(Failure);
 
-            var bytes = await ReadBoundedResponseAsync(response.Content, cancellationToken);
+            var bytes = await ReadBoundedResponseAsync(response.Content, requestBudget.Token);
             using var document = JsonDocument.Parse(bytes);
             var root = document.RootElement;
             if (root.ValueKind != JsonValueKind.Object ||
