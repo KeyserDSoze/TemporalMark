@@ -125,6 +125,27 @@ public static class PostgresRuntimePrivilegePreflight
             AND NOT pg_catalog.has_table_privilege('public.organization_memberships', 'TRIGGER')
             AND NOT pg_catalog.has_table_privilege('public.organization_memberships', 'DELETE')
             AND NOT pg_catalog.has_table_privilege('public.organization_memberships', 'TRUNCATE')
+            -- #152 / ADR 0117: V017 owner-only UNAPPROVED FIDO MDS/CRL
+            -- candidate checkpoint/history and IDENTITY event sequence.
+            -- No normal API runtime table, column or sequence permissions.
+            -- A sequence GRANT is independent of any table GRANT.
+            AND NOT pg_catalog.has_any_column_privilege('public.mds_unapproved_candidate_checkpoints', 'SELECT')
+            AND NOT pg_catalog.has_any_column_privilege('public.mds_unapproved_candidate_checkpoints', 'INSERT')
+            AND NOT pg_catalog.has_any_column_privilege('public.mds_unapproved_candidate_checkpoints', 'UPDATE')
+            AND NOT pg_catalog.has_any_column_privilege('public.mds_unapproved_candidate_checkpoints', 'REFERENCES')
+            AND NOT pg_catalog.has_table_privilege('public.mds_unapproved_candidate_checkpoints', 'DELETE')
+            AND NOT pg_catalog.has_table_privilege('public.mds_unapproved_candidate_checkpoints', 'TRUNCATE')
+            AND NOT pg_catalog.has_table_privilege('public.mds_unapproved_candidate_checkpoints', 'TRIGGER')
+            AND NOT pg_catalog.has_any_column_privilege('public.mds_unapproved_candidate_events', 'SELECT')
+            AND NOT pg_catalog.has_any_column_privilege('public.mds_unapproved_candidate_events', 'INSERT')
+            AND NOT pg_catalog.has_any_column_privilege('public.mds_unapproved_candidate_events', 'UPDATE')
+            AND NOT pg_catalog.has_any_column_privilege('public.mds_unapproved_candidate_events', 'REFERENCES')
+            AND NOT pg_catalog.has_table_privilege('public.mds_unapproved_candidate_events', 'DELETE')
+            AND NOT pg_catalog.has_table_privilege('public.mds_unapproved_candidate_events', 'TRUNCATE')
+            AND NOT pg_catalog.has_table_privilege('public.mds_unapproved_candidate_events', 'TRIGGER')
+            AND NOT pg_catalog.has_sequence_privilege('public.mds_unapproved_candidate_events_event_id_seq', 'USAGE')
+            AND NOT pg_catalog.has_sequence_privilege('public.mds_unapproved_candidate_events_event_id_seq', 'SELECT')
+            AND NOT pg_catalog.has_sequence_privilege('public.mds_unapproved_candidate_events_event_id_seq', 'UPDATE')
             -- #151 / ADR 0116: V010 reviewer decision replay proof and
             -- V013 unsigned registration intent and pinned RP policy are
             -- owner-controlled. Runtime SQL identities must not gain direct
