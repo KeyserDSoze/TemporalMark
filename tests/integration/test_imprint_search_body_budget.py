@@ -70,7 +70,7 @@ class SearchBodyBudgetPolicyTests(unittest.TestCase):
         workflow = CI.read_text()
         self.assertIn("test_imprint_search_body_budget.py", workflow)
         self.assertIn("imprint-search-body-budget.py", workflow)
-        self.assertIn("TEMPORALMARK_CI_SEARCH_BODY_BUDGET=1", workflow)
+        self.assertIn('TEMPORALMARK_CI_SEARCH_BODY_BUDGET: "1"', workflow)
         self.assertIn("api-tenant-isolation.py", workflow)
         signed = SIGNED.read_text()
         self.assertIn("assert_search_body_budget_with_signed_chunked_jwt(", signed)
