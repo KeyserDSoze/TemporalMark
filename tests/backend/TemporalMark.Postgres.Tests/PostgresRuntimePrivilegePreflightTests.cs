@@ -324,6 +324,95 @@ public sealed class PostgresRuntimePrivilegePreflightTests
         Assert.Equal(20L, await MigrationCountAsync(owner));
     }
 
+    // #147 / ADR 0112: PostgreSQL role membership alone cannot detect
+    // one mistaken direct EXECUTE GRANT on a provisioner/approver/registrar
+    // SECURITY DEFINER function or an explicitly owner-only routine.
+    // These tests inspect rights only: NEVER invoke a privileged routine.
+    [Theory]
+    [InlineData("request_enrollment(uuid,text,text,text,text,char(64),char(64))")]
+    [InlineData("approve_enrollment(uuid,text,text,text,text,text,char(64))")]
+    [InlineData("complete_enrollment(uuid,text,text,text,text,char(64),char(64))")]
+    [InlineData("read_pending_enrollment(uuid,text,text)")]
+    [InlineData("issue_reviewer_registration_intent(text,text,text,text,text)")]
+    [InlineData("record_unapproved_mds_checkpoint_candidate(text,text,bigint,text,text,integer,text)")]
+    [InlineData("purge_stale_imprint_search_rate_counters(integer)")]
+    public async Task DirectPrivilegedFunctionExecuteGrantMustNotPassEntraRuntimePreflight(
+        string fixedFunctionIdentity)
+    {
+        // The function identities are fixed test InlineData from migrations.
+        // Distinct generated SQL role/password use only ASCII hex; NEVER add
+        // function permissions to shared runtime/approver/provisioner groups.
+        var role = "tm_funcacl_" + Guid.NewGuid().ToString("N");
+        var password = "test-" + Guid.NewGuid().ToString("N");
+        var created = false;
+        var membershipGranted = false;
+        var executeGranted = false;
+
+        await using var owner = Owner();
+        await owner.OpenAsync();
+        Assert.Equal(20L, await MigrationCountAsync(owner));
+        var connectionString = new NpgsqlConnectionStringBuilder(owner.ConnectionString)
+        {
+            Username = role,
+            Password = password,
+            // Unique disposable test credentials must not retain connection
+            // pool slots across the PG17 integration suite.
+            Pooling = false
+        }.ConnectionString;
+
+        async Task RunOwnerAsync(string sql)
+        {
+            await using var command = new NpgsqlCommand(sql, owner);
+            await command.ExecuteNonQueryAsync();
+        }
+
+        try
+        {
+            await RunOwnerAsync($"CREATE ROLE {role} LOGIN INHERIT PASSWORD '{password}'");
+            created = true;
+            await RunOwnerAsync($"GRANT temporalmark_runtime_group TO {role}");
+            membershipGranted = true;
+
+            await using (var baseline = new NpgsqlConnection(connectionString))
+            {
+                await baseline.OpenAsync();
+                // Prove this generated runtime LOGIN passes current preflight
+                // before any extra privilege, preventing false-positive RED.
+                await PostgresRuntimePrivilegePreflight.VerifyAsync(
+                    baseline, role, CancellationToken.None);
+            }
+
+            await RunOwnerAsync(
+                $"GRANT EXECUTE ON FUNCTION public.{fixedFunctionIdentity} TO {role}");
+            executeGranted = true;
+
+            await using (var elevated = new NpgsqlConnection(connectionString))
+            {
+                await elevated.OpenAsync();
+                var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                    PostgresRuntimePrivilegePreflight.VerifyAsync(
+                        elevated, role, CancellationToken.None));
+                Assert.Null(error.InnerException);
+                Assert.DoesNotContain(role, error.ToString());
+                Assert.DoesNotContain(password, error.ToString());
+            }
+        }
+        finally
+        {
+            // Teardown is mandatory even when old source fails RED; do not
+            // leave function grants or LOGIN roles for later tests.
+            if (executeGranted)
+                await RunOwnerAsync(
+                    $"REVOKE EXECUTE ON FUNCTION public.{fixedFunctionIdentity} FROM {role}");
+            if (membershipGranted)
+                await RunOwnerAsync($"REVOKE temporalmark_runtime_group FROM {role}");
+            if (created)
+                await RunOwnerAsync($"DROP ROLE {role}");
+        }
+
+        Assert.Equal(20L, await MigrationCountAsync(owner));
+    }
+
     [Fact]
     public async Task DatabaseOwnerOrSuperuserIsRejectedEvenIfConfiguredAsExpectedLogin()
     {
