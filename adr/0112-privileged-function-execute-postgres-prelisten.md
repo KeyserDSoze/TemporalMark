@@ -1,0 +1,35 @@
+# ADR 0112 — Deny mis-granted direct runtime EXECUTE on privileged SQL functions before the Entra API listens
+
+Status: **Accepted for scoped opt-in PostgreSQL API hardening [#147](https://github.com/KeyserDSoze/TemporalMark/issues/147)**, 2026-11-21. Parent Azure Entra #128, tenancy #14, registrar #50, ingress/privacy #115/#113, production CAB #18, custody #17 and qualification #13/#15 remain OPEN. No Azure apply, live SQL principal or legal claim.
+
+## Reviewed decisions, code and official SQL semantics
+
+Reviewed ADR 0001 (portable modular .NET 10), ADR 0099 (read-only already-authenticated Npgsql session/one SQL prelisten inspection), ADR 0100 (mandatory in **explicit Production-only** `ContainerAppsEntraCandidate` API mode; default Password mode and privileged CLIs untouched), ADR 0106/0107 (table and column privileges on evidence and tenant invariants), ADR 0111 (V019 quota state direct ACL denial); `docs/COMPLIANCE.md`, `docs/POSTGRES_RUNTIME_PRIVILEGE_PREFLIGHT.md`, `docs/API_POSTGRES_ENTRA_PRELISTEN_CANDIDATE.md`, `docs/DATABASE_MIGRATIONS.md`, `docs/THREAT_MODEL.md` and `docs/ROADMAP.md`; existing `PostgresRuntimePrivilegePreflight.cs` and true PostgreSQL17 disposable login tests; immutable migrations V004, V006, V009, V013, V015, V016, V017 and V020; issue #50 registrar release blocker.
+
+Official [PostgreSQL 17 GRANT](https://www.postgresql.org/docs/17/sql-grant.html) distinguishes **role membership** from **direct EXECUTE GRANT on FUNCTION**. The current preflight rejects provisioner/approver/registrar *group membership* and EXECUTE on two legacy bootstrap functions, but cannot catch an operator inadvertently granting a function directly to the runtime LOGIN. Official [PostgreSQL 17 access inquiry functions](https://www.postgresql.org/docs/17/functions-info.html) provide `pg_catalog.has_function_privilege` for the actual current session (direct, inherited or PUBLIC privilege). No SQL execution of these functions is needed to detect the unsafe ACL.
+
+## Functions and trust boundaries
+
+The SQL runtime may legitimately `EXECUTE public.consume_imprint_search_rate(uuid,text)` (shared authenticated quota). It must **not** directly execute these existing seven functions:
+
+| Migration | Exact typed function identity | Intended boundary |
+|---|---|---|
+| V006 | `public.request_enrollment(uuid,text,text,text,text,char(64),char(64))` | SECURITY DEFINER enrollment request, provisioner SQL credential only |
+| V006 | `public.approve_enrollment(uuid,text,text,text,text,text,char(64))` | SECURITY DEFINER independent approval, approver SQL credential only |
+| V006 | `public.complete_enrollment(uuid,text,text,text,text,char(64),char(64))` | SECURITY DEFINER enrolled organization completion, provisioner only |
+| V009 | `public.read_pending_enrollment(uuid,text,text)` | SECURITY DEFINER sensitive pending-request/subject read, approver only |
+| V013–V016 | `public.issue_reviewer_registration_intent(text,text,text,text,text)` | legacy SECURITY DEFINER unconsumable intent, V015 EXECUTE revoked and V016 non-owner INSERT trigger; further runtime EXECUTE is forbidden (existing interlocks still independent) |
+| V017 | `public.record_unapproved_mds_checkpoint_candidate(text,text,bigint,text,text,integer,text)` | owner-only SECURITY INVOKER staging of **unapproved** MDS/CRL metadata; EXECUTE alone does not confer table DML |
+| V020 | `public.purge_stale_imprint_search_rate_counters(integer)` | owner-only SECURITY INVOKER quota subject minimization; EXECUTE alone does not confer direct DELETE, already forbidden under ADR 0111 |
+
+An accidentally granted direct EXECUTE on a SECURITY DEFINER function could bypass the intended separate operator SQL role boundary even when group membership is correct. Granting an owner-only SECURITY INVOKER function is a distinct ACL drift indication, but **not** by itself proof of state modification or permission escalation. This is a **prelisten posture check**, not an assertion that misgrants currently exist in Azure.
+
+## Decision / TDD sequence
+
+1. **RED first, after this ADR on main**: add exactly seven real PG17 xUnit `InlineData` negatives in existing `PostgresRuntimePrivilegePreflightTests`. Each creates a **unique disposable LOGIN** with only `temporalmark_runtime_group`, establishes the unchanged baseline `VerifyAsync(...)` passes, then has the test-only SQL migration owner `GRANT EXECUTE ON FUNCTION <fixed typed identity> TO <generated login>` and expects the existing preflight to throw its fixed generic `InvalidOperationException` without any inner exception or username/password. The test MUST NOT call the function or change application data. `finally` always REVOKEs the extra function grant, runtime membership and DROP LOGIN even on RED, and checks all 20 migrations remain. Use `Pooling=false` only on the per-test disposable login. Prove actual GitHub Actions real PostgreSQL RED 7 missing-denial assertions after 139 existing passes, not compilation/network failure.
+2. Only **after observed RED** add seven fixed `AND NOT pg_catalog.has_function_privilege('public.<typed signature>', 'EXECUTE')` conditions to the existing **single read-only SQL SELECT** over the already authenticated runtime Npgsql connection. No SQL migration, role/GRANT mutation, function definition, HTTP flow, NuGet library, active Azure Terraform or default OSS password-mode changes. Preserve previous org/membership/evidence/audit/V019 table ACL checks, both bootstrap denies and function **EXECUTE allowance** for `public.consume_imprint_search_rate(uuid,text)`. Continue generic/no-inner failure and cancellation.
+3. Update preflight/Entra, tenancy/registrar and DB runbooks, THREAT_MODEL and ROADMAP with actual TDD evidence, operator instructions and the nondefault scope. Validate **exact final docs-inclusive main SHA**: backend/frontend/terraform/docker-smoke **4/4 SUCCESS**, fifth ci-verdict and combined `temporalmark/ci-4-core-jobs=success`, real PG17 **146/146** and 20 unchanged migration checksums, dump/restore, signed browser Keycloak MFA/PKCE + tenant A/B 401/403, existing Nginx privacy/413/414/429.
+
+## Stop lines
+
+This single **point-in-time**, opt-in API startup check does not continuously prevent a DBA from granting privileges after listening, inspect future schema, certify table/function ownership, ensure all application entry points use the gate, replace independent current IdP signature/human approval, actually deploy Azure Entra SQL role or remediate Terraform historical admin passwords. SQL function owners and true production administrators must still validate grants and their change-control history. The evidence/data/clock/HSM/TSU, WORM retention, GDPR-DPIA, qualified timestamp, QTSP and legal certificate stop lines remain unresolved in #17/#13/#15/#18. No claims of production qualification, Azure staging verification or globally distributed quota.
