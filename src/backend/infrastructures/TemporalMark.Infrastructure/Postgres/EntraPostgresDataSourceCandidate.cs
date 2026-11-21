@@ -110,11 +110,19 @@ public static class EntraPostgresDataSourceCandidate
         try
         {
             var token = await requestEntraToken(PostgreSqlEntraScope, cancellationToken);
-            if (string.IsNullOrWhiteSpace(token))
+            // A supplier may ignore cancellation and still return a credential.
+            // Never give it to Npgsql after the caller has revoked this request.
+            cancellationToken.ThrowIfCancellationRequested();
+
+            // #140 / ADR 0105: the generic Npgsql boundary must remain safe
+            // even when a future supplier bypasses the concrete ACA checks.
+            // Never normalize, print or forward an unbounded/unsafe bearer.
+            if (string.IsNullOrEmpty(token) || token.Length > 16000 ||
+                token.Any(c => c < '!' || c > '~'))
                 throw new InvalidOperationException(Failure);
 
-            // A credential library must validate actual expiry, issuer, token
-            // audience and permissions. Here only empty credentials are denied.
+            // Opaque token syntax is not evidence of a trusted issuer, scope,
+            // expiry, SQL role, revocation state or a live Azure deployment.
             return token;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
