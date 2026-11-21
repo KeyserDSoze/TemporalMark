@@ -221,6 +221,109 @@ public sealed class PostgresRuntimePrivilegePreflightTests
         Assert.Equal(20L, await MigrationCountAsync(owner));
     }
 
+    // #146 / ADR 0111: V019 SQL quota tables are owned by the migration
+    // principal; the API runtime may EXECUTE the approved SECURITY DEFINER
+    // quota function, but MUST NOT directly SELECT PII actor subjects or
+    // alter the quota state. PG17 also supports column-only ACL misgrants.
+    // Every test role first passes the candidate preflight and receives
+    // exactly one unsafe privilege that must become a generic startup denial.
+    [Theory]
+    [InlineData("imprint_search_rate_tenants", "SELECT")]
+    [InlineData("imprint_search_rate_tenants", "SELECT (organization_id)")]
+    [InlineData("imprint_search_rate_tenants", "INSERT")]
+    [InlineData("imprint_search_rate_tenants", "INSERT (organization_id)")]
+    [InlineData("imprint_search_rate_tenants", "UPDATE (hits)")]
+    [InlineData("imprint_search_rate_tenants", "DELETE")]
+    [InlineData("imprint_search_rate_tenants", "TRUNCATE")]
+    [InlineData("imprint_search_rate_tenants", "REFERENCES (organization_id)")]
+    [InlineData("imprint_search_rate_tenants", "TRIGGER")]
+    [InlineData("imprint_search_rate_principals", "SELECT")]
+    [InlineData("imprint_search_rate_principals", "SELECT (actor_subject_id)")]
+    [InlineData("imprint_search_rate_principals", "INSERT")]
+    [InlineData("imprint_search_rate_principals", "INSERT (actor_subject_id)")]
+    [InlineData("imprint_search_rate_principals", "UPDATE (hits)")]
+    [InlineData("imprint_search_rate_principals", "DELETE")]
+    [InlineData("imprint_search_rate_principals", "TRUNCATE")]
+    [InlineData("imprint_search_rate_principals", "REFERENCES (organization_id)")]
+    [InlineData("imprint_search_rate_principals", "TRIGGER")]
+    public async Task AdditionalDirectQuotaTableGrantMustNotPassEntraRuntimePreflight(
+        string tableName, string privilege)
+    {
+        // SQL identifiers/privileges are fixed test InlineData, and unique
+        // disposable LOGIN names/passwords contain only safe ASCII hex.
+        var role = "tm_quotaacl_" + Guid.NewGuid().ToString("N");
+        var password = "test-" + Guid.NewGuid().ToString("N");
+        var roleCreated = false;
+        var memberGranted = false;
+        var overGrantApplied = false;
+
+        await using var owner = Owner();
+        await owner.OpenAsync();
+        Assert.Equal(20L, await MigrationCountAsync(owner));
+        var loginConnectionString = new NpgsqlConnectionStringBuilder(owner.ConnectionString)
+        {
+            Username = role,
+            Password = password,
+            // The unique login must not leave one Npgsql pool per test
+            // consuming real PostgreSQL 17 CI connection slots.
+            Pooling = false
+        }.ConnectionString;
+
+        async Task RunOwnerAsync(string sql)
+        {
+            await using var command = new NpgsqlCommand(sql, owner);
+            await command.ExecuteNonQueryAsync();
+        }
+
+        try
+        {
+            await RunOwnerAsync($"CREATE ROLE {role} LOGIN INHERIT PASSWORD '{password}'");
+            roleCreated = true;
+            await RunOwnerAsync($"GRANT temporalmark_runtime_group TO {role}");
+            memberGranted = true;
+
+            // Without any extra direct quota table ACL, the role is an
+            // otherwise-valid runtime principal: the baseline must PASS.
+            await using (var baseline = new NpgsqlConnection(loginConnectionString))
+            {
+                await baseline.OpenAsync();
+                await PostgresRuntimePrivilegePreflight.VerifyAsync(
+                    baseline, role, CancellationToken.None);
+            }
+
+            // Grant exactly ONE table-wide or single-column privilege, never
+            // to the common runtime group; no quota counters are modified.
+            await RunOwnerAsync($"GRANT {privilege} ON TABLE public.{tableName} TO {role}");
+            overGrantApplied = true;
+
+            await using (var overprivileged = new NpgsqlConnection(loginConnectionString))
+            {
+                await overprivileged.OpenAsync();
+                var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                    PostgresRuntimePrivilegePreflight.VerifyAsync(
+                        overprivileged, role, CancellationToken.None));
+                Assert.Null(error.InnerException);
+                Assert.DoesNotContain(role, error.ToString());
+                Assert.DoesNotContain(password, error.ToString());
+                Assert.DoesNotContain("ConnectionStrings", error.ToString());
+            }
+        }
+        finally
+        {
+            // Teardown even during expected RED. Test-only owner GRANT is
+            // reverted before membership/drop, preserving V001–V020 bytes,
+            // shared runtime role privileges and live quota counter rows.
+            if (overGrantApplied)
+                await RunOwnerAsync($"REVOKE {privilege} ON TABLE public.{tableName} FROM {role}");
+            if (memberGranted)
+                await RunOwnerAsync($"REVOKE temporalmark_runtime_group FROM {role}");
+            if (roleCreated)
+                await RunOwnerAsync($"DROP ROLE {role}");
+        }
+
+        Assert.Equal(20L, await MigrationCountAsync(owner));
+    }
+
     [Fact]
     public async Task DatabaseOwnerOrSuperuserIsRejectedEvenIfConfiguredAsExpectedLogin()
     {
