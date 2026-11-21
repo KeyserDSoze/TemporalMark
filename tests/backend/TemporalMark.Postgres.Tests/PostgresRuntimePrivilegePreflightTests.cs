@@ -513,10 +513,10 @@ public sealed class PostgresRuntimePrivilegePreflightTests
 
                 var definition = procedure
                     ? $"CREATE PROCEDURE {identity} LANGUAGE plpgsql SECURITY DEFINER " +
-                      "SET search_path=pg_catalog,pg_temp AS $ BEGIN NULL; END; $"
+                      "SET search_path=pg_catalog,pg_temp AS 'BEGIN NULL; END;'"
                     : $"CREATE FUNCTION {identity} RETURNS integer LANGUAGE sql " +
                       (positiveInvoker ? "SECURITY INVOKER " : "SECURITY DEFINER ") +
-                      "SET search_path=pg_catalog,pg_temp AS $ SELECT 1::integer $";
+                      "SET search_path=pg_catalog,pg_temp AS 'SELECT 1::integer'";
                 await RunOwnerAsync(definition);
                 routineCreated = true;
                 if (directOnly)
