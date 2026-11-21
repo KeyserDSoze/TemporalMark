@@ -100,7 +100,27 @@ def main():
     for result in blocked:
         validate_429(result)
 
-    # Exact web proxy route only; direct Kestrel and unrelated paths unaffected.
+    # #144 / ADR 0109: ASP.NET Core route matching is case-insensitive.
+    # A mixed-case suffix still reaches Kestrel through the generic Nginx
+    # /api/ prefix, but must NOT bypass the Nginx rate/privacy boundaries.
+    # Give it an independent 48-request barrage so the assertion cannot
+    # pass only because the previous lower-case bucket was already full.
+    # Keep changing *untrusted* XFF while all sockets share one TCP peer.
+    mixed_case = "/api/v1/StAmPs/SeArCh?query=" + CANARIES[0]
+    with concurrent.futures.ThreadPoolExecutor(max_workers=16) as pool:
+        mixed_futures = [pool.submit(fetch, WEB, mixed_case, "POST", BODY,
+                                     i + 120) for i in range(48)]
+        mixed_outcomes = [future.result(timeout=30) for future in mixed_futures]
+    if any(result[0] not in (401, 429) for result in mixed_outcomes):
+        raise AssertionError("Unexpected mixed-case anonymous search response")
+    mixed_blocked = [result for result in mixed_outcomes if result[0] == 429]
+    if not mixed_blocked:
+        raise AssertionError(
+            "Mixed-case search bypassed Nginx peer 429 despite matching Kestrel route")
+    for result in mixed_blocked:
+        validate_429(result)
+
+    # Scoped web proxy search route only; direct Kestrel and unrelated paths unaffected.
     assert_code("direct API bypasses web-only limit", fetch(API, path, "POST", BODY), 401)
     assert_code("other API POST", fetch(WEB, "/api/v1/stamps/issue", "POST", BODY), 401)
     assert_code("web health", fetch(WEB, "/healthz", auth=False), 200)
@@ -120,9 +140,9 @@ def main():
                 not fields[2].startswith("duration="):
             raise AssertionError("Unexpected Nginx access field beyond privacy allowlist")
 
-    print("PASS: shared real Nginx throttles anonymous POST search by real peer "
-          "to 429, fixed Retry-After/no-store; forged XFF, canary response/log "
-          "leaks and unrelated-route regression denied")
+    print("PASS: shared real Nginx throttles lowercase AND mixed-case anonymous "
+          "POST search by real peer to 429, fixed Retry-After/no-store; forged "
+          "XFF, canary response/log leaks and unrelated-route regression denied")
 
 
 if __name__ == "__main__":
