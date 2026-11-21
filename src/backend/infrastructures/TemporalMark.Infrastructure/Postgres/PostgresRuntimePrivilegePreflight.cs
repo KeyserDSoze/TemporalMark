@@ -124,6 +124,13 @@ public static class PostgresRuntimePrivilegePreflight
                 'public.complete_enrollment(uuid,text,text,text,text,char(64),char(64))', 'EXECUTE')
             AND NOT pg_catalog.has_function_privilege(
                 'public.read_pending_enrollment(uuid,text,text)', 'EXECUTE')
+            -- #148 / ADR 0113: reviewer-only V010 terminal rejection and
+            -- V012 unsigned challenge issuance are SECURITY DEFINER too.
+            -- Deny direct/inherited/PUBLIC EXECUTE on the API runtime login.
+            AND NOT pg_catalog.has_function_privilege(
+                'public.reject_enrollment(uuid,text,text,text,text,text,char(64),char(64),text)', 'EXECUTE')
+            AND NOT pg_catalog.has_function_privilege(
+                'public.issue_reviewer_decision_challenge(uuid,text,text,text,text,text,char(64),text,text)', 'EXECUTE')
             AND NOT pg_catalog.has_function_privilege(
                 'public.issue_reviewer_registration_intent(text,text,text,text,text)', 'EXECUTE')
             AND NOT pg_catalog.has_function_privilege(
