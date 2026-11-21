@@ -182,6 +182,11 @@ jobs:
         env:
           TEMPORALMARK_CI_API_LOG_PRIVACY: "1"
         run: python3 tests/integration/api-diagnostic-privacy.py
+      # #145 / ADR 0110: parsing-time Nginx 414 precedes location guards.
+      - name: Real Nginx pre-location 414 no-store and error privacy (#145)
+        env:
+          TEMPORALMARK_CI_NGINX_EARLY_414: "1"
+        run: python3 tests/integration/nginx-early-414-privacy.py
       # #143 / ADR 0108: RED-first live Nginx anonymous search burst.
       - name: Real Nginx pre-auth search peer burst 429 and log privacy (#143)
         env:
