@@ -135,6 +135,86 @@ public sealed class PostgresRuntimePrivilegePreflightTests
         Assert.Equal(20L, await MigrationCountAsync(owner));
     }
 
+    // #142 / ADR 0107: organizational invariants require more than denying
+    // table-level UPDATE. Each distinct test login must pass baseline first;
+    // only that disposable login receives one deliberately unsafe grant.
+    [Theory]
+    [InlineData("organizations", "UPDATE (display_name)")]
+    [InlineData("organizations", "REFERENCES")]
+    [InlineData("organizations", "REFERENCES (id)")]
+    [InlineData("organizations", "TRIGGER")]
+    [InlineData("organization_memberships", "UPDATE (role)")]
+    [InlineData("organization_memberships", "REFERENCES")]
+    [InlineData("organization_memberships", "REFERENCES (organization_id)")]
+    [InlineData("organization_memberships", "TRIGGER")]
+    public async Task ColumnMutationOrReferenceOrTriggerGrantMustNotPassTenantPreflight(
+        string tableName, string privilege)
+    {
+        // Table/column names come only from fixed compile-time InlineData,
+        // and generated role/password contain only safe ASCII hex characters.
+        var role = "tm_orgacl_" + Guid.NewGuid().ToString("N");
+        var password = "test-" + Guid.NewGuid().ToString("N");
+        var roleCreated = false;
+        var membershipGranted = false;
+        var unsafeGrantCreated = false;
+        await using var owner = Owner();
+        await owner.OpenAsync();
+        Assert.Equal(20L, await MigrationCountAsync(owner));
+
+        var loginConnectionString = new NpgsqlConnectionStringBuilder(owner.ConnectionString)
+        {
+            Username = role,
+            Password = password
+        }.ConnectionString;
+
+        async Task RunOwnerAsync(string sql)
+        {
+            await using var command = new NpgsqlCommand(sql, owner);
+            await command.ExecuteNonQueryAsync();
+        }
+
+        try
+        {
+            await RunOwnerAsync($"CREATE ROLE {role} LOGIN INHERIT PASSWORD '{password}'");
+            roleCreated = true;
+            await RunOwnerAsync($"GRANT temporalmark_runtime_group TO {role}");
+            membershipGranted = true;
+
+            await using (var baseline = new NpgsqlConnection(loginConnectionString))
+            {
+                await baseline.OpenAsync();
+                await PostgresRuntimePrivilegePreflight.VerifyAsync(
+                    baseline, role, CancellationToken.None);
+            }
+
+            await RunOwnerAsync($"GRANT {privilege} ON TABLE public.{tableName} TO {role}");
+            unsafeGrantCreated = true;
+            await using (var overprivileged = new NpgsqlConnection(loginConnectionString))
+            {
+                await overprivileged.OpenAsync();
+                var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                    PostgresRuntimePrivilegePreflight.VerifyAsync(
+                        overprivileged, role, CancellationToken.None));
+                Assert.Null(exception.InnerException);
+                Assert.DoesNotContain(role, exception.ToString());
+                Assert.DoesNotContain(password, exception.ToString());
+            }
+        }
+        finally
+        {
+            // Teardown even when a RED assertion fails. No grants to shared
+            // production-like groups and no table or migration DML/DDL.
+            if (unsafeGrantCreated)
+                await RunOwnerAsync($"REVOKE {privilege} ON TABLE public.{tableName} FROM {role}");
+            if (membershipGranted)
+                await RunOwnerAsync($"REVOKE temporalmark_runtime_group FROM {role}");
+            if (roleCreated)
+                await RunOwnerAsync($"DROP ROLE {role}");
+        }
+
+        Assert.Equal(20L, await MigrationCountAsync(owner));
+    }
+
     [Fact]
     public async Task DatabaseOwnerOrSuperuserIsRejectedEvenIfConfiguredAsExpectedLogin()
     {
