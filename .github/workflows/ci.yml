@@ -42,6 +42,8 @@ jobs:
           python3 -m unittest discover -s tests/integration -p 'test_nginx_access_privacy.py' -v
           # RED-first #136: scoped pre-auth 4KiB search POST Kestrel + Nginx body gate.
           python3 -m unittest discover -s tests/integration -p 'test_imprint_search_body_budget.py' -v
+          # #143 / ADR 0108: local anonymous burst gate and fixed error privacy.
+          python3 -m unittest discover -s tests/integration -p 'test_imprint_search_nginx_edge_limit.py' -v
           # RED-first #119: API/Kestrel request logging must remain content-free.
           python3 -m unittest discover -s tests/integration -p 'test_api_diagnostic_privacy.py' -v
           # RED-first #121: exact Keycloak callback allowlist and collision-resilient bind.
