@@ -420,6 +420,170 @@ public sealed class PostgresRuntimePrivilegePreflightTests
         Assert.Equal(20L, await MigrationCountAsync(owner));
     }
 
+    // #154 / ADR 0119: the already-reviewed V008 approval overload and
+    // any future owner-privileged SECURITY DEFINER code must not be executable
+    // through the ordinary runtime SQL LOGIN, even via PUBLIC default grants.
+    // The positive SECURITY INVOKER control proves the guard is targeted.
+    [Theory]
+    [InlineData("existing_approval")]
+    [InlineData("existing_admin_invariant")]
+    [InlineData("existing_replay_trigger")]
+    [InlineData("future_function_public")]
+    [InlineData("future_function_direct")]
+    [InlineData("future_procedure_public")]
+    [InlineData("future_procedure_direct")]
+    [InlineData("future_private_schema")]
+    [InlineData("future_invoker_public")]
+    public async Task UnexpectedSecurityDefinerRoutineExecuteMustRejectRuntimeBeforeListen(
+        string fixedScenario)
+    {
+        // All SQL identifiers are fixed literals or generated ASCII hex.
+        // Only the test owner ever does DDL/GRANT; NO function is invoked.
+        var suffix = Guid.NewGuid().ToString("N");
+        var login = "tm_definer_" + suffix;
+        var password = "test-" + Guid.NewGuid().ToString("N");
+        var routineName = "tm_futuredef_" + suffix;
+        var schemaName = fixedScenario == "future_private_schema"
+            ? "tm_prvschema_" + suffix
+            : "public";
+        var newRoutine = fixedScenario.StartsWith("future_", StringComparison.Ordinal);
+        var procedure = fixedScenario.StartsWith("future_procedure_", StringComparison.Ordinal);
+        var positiveInvoker = fixedScenario == "future_invoker_public";
+        var directOnly = fixedScenario.EndsWith("_direct", StringComparison.Ordinal)
+                         || fixedScenario == "future_private_schema";
+        var routineType = procedure ? "PROCEDURE" : "FUNCTION";
+        var identity = fixedScenario switch
+        {
+            "existing_approval" =>
+                "public.approve_enrollment(uuid,text,text,text,text,text,char(64),text,text,bigint)",
+            "existing_admin_invariant" =>
+                "public.assert_tenant_has_active_admin(uuid)",
+            "existing_replay_trigger" =>
+                "public.record_enrollment_decision_proof()",
+            _ => schemaName + "." + routineName + "()"
+        };
+        var loginCreated = false;
+        var groupGranted = false;
+        var schemaCreated = false;
+        var schemaUsageGranted = false;
+        var routineCreated = false;
+        var directExecuteGranted = false;
+
+        await using var owner = Owner();
+        await owner.OpenAsync();
+        Assert.Equal(20L, await MigrationCountAsync(owner));
+        var connectionString = new NpgsqlConnectionStringBuilder(owner.ConnectionString)
+        {
+            Username = login,
+            Password = password,
+            Pooling = false
+        }.ConnectionString;
+
+        async Task RunOwnerAsync(string sql)
+        {
+            await using var cmd = new NpgsqlCommand(sql, owner);
+            await cmd.ExecuteNonQueryAsync();
+        }
+
+        try
+        {
+            await RunOwnerAsync($"CREATE ROLE {login} LOGIN INHERIT PASSWORD '{password}'");
+            loginCreated = true;
+            await RunOwnerAsync($"GRANT temporalmark_runtime_group TO {login}");
+            groupGranted = true;
+
+            // Baseline first, before the synthetic definer routine exists or
+            // an independently restricted existing routine is granted.
+            await using (var baseline = new NpgsqlConnection(connectionString))
+            {
+                await baseline.OpenAsync();
+                await PostgresRuntimePrivilegePreflight.VerifyAsync(
+                    baseline, login, CancellationToken.None);
+            }
+
+            if (newRoutine)
+            {
+                if (fixedScenario == "future_private_schema")
+                {
+                    await RunOwnerAsync($"CREATE SCHEMA {schemaName}");
+                    schemaCreated = true;
+                    await RunOwnerAsync($"GRANT USAGE ON SCHEMA {schemaName} TO {login}");
+                    schemaUsageGranted = true;
+                }
+
+                var definition = procedure
+                    ? $"CREATE PROCEDURE {identity} LANGUAGE plpgsql SECURITY DEFINER " +
+                      "SET search_path=pg_catalog,pg_temp AS $ BEGIN NULL; END; $"
+                    : $"CREATE FUNCTION {identity} RETURNS integer LANGUAGE sql " +
+                      (positiveInvoker ? "SECURITY INVOKER " : "SECURITY DEFINER ") +
+                      "SET search_path=pg_catalog,pg_temp AS $ SELECT 1::integer $";
+                await RunOwnerAsync(definition);
+                routineCreated = true;
+                if (directOnly)
+                    await RunOwnerAsync(
+                        $"REVOKE ALL ON {routineType} {identity} FROM PUBLIC");
+            }
+
+            if (!newRoutine || directOnly)
+            {
+                await RunOwnerAsync(
+                    $"GRANT EXECUTE ON {routineType} {identity} TO {login}");
+                directExecuteGranted = true;
+            }
+
+            await using (var afterGrant = new NpgsqlConnection(connectionString))
+            {
+                await afterGrant.OpenAsync();
+                // Prove actual effective EXECUTE on this PG17 session without
+                // calling a security definer, trigger or procedure.
+                await using (var privilege = new NpgsqlCommand(
+                    "SELECT pg_catalog.has_function_privilege(" +
+                    "@routine::pg_catalog.regprocedure, 'EXECUTE')", afterGrant))
+                {
+                    privilege.Parameters.AddWithValue("routine", identity);
+                    Assert.True(Assert.IsType<bool>(await privilege.ExecuteScalarAsync()));
+                }
+
+                if (positiveInvoker)
+                {
+                    await PostgresRuntimePrivilegePreflight.VerifyAsync(
+                        afterGrant, login, CancellationToken.None);
+                }
+                else
+                {
+                    var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                        PostgresRuntimePrivilegePreflight.VerifyAsync(
+                            afterGrant, login, CancellationToken.None));
+                    Assert.Null(error.InnerException);
+                    Assert.DoesNotContain(login, error.ToString());
+                    Assert.DoesNotContain(password, error.ToString());
+                    Assert.DoesNotContain(routineName, error.ToString());
+                    Assert.DoesNotContain("ConnectionStrings", error.ToString());
+                }
+            }
+        }
+        finally
+        {
+            // Do this on genuine RED too. No caller approval, token, tenant
+            // row or SQL function/procedure was executed by these tests.
+            if (directExecuteGranted)
+                await RunOwnerAsync(
+                    $"REVOKE EXECUTE ON {routineType} {identity} FROM {login}");
+            if (routineCreated)
+                await RunOwnerAsync($"DROP {routineType} {identity}");
+            if (schemaUsageGranted)
+                await RunOwnerAsync($"REVOKE USAGE ON SCHEMA {schemaName} FROM {login}");
+            if (schemaCreated)
+                await RunOwnerAsync($"DROP SCHEMA {schemaName}");
+            if (groupGranted)
+                await RunOwnerAsync($"REVOKE temporalmark_runtime_group FROM {login}");
+            if (loginCreated)
+                await RunOwnerAsync($"DROP ROLE {login}");
+        }
+
+        Assert.Equal(20L, await MigrationCountAsync(owner));
+    }
+
     // #153 / ADR 0118: prevent a new public relation (including view and
     // sequence) or omitted V004/runner ledger gaining runtime SQL rights.
     // Each test proves baseline first, then grants exactly ONE privilege.
