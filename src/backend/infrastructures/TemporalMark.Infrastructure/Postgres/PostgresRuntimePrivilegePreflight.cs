@@ -33,6 +33,21 @@ public static class PostgresRuntimePrivilegePreflight
                   AND NOT r.rolreplication
                   AND NOT r.rolbypassrls
             )
+            -- #150 / ADR 0115: PostgreSQL role attributes are NOT
+            -- inherited onto current_user, but SET ROLE may activate an
+            -- arbitrary directly/indirectly granted privileged NOLOGIN role.
+            -- Deny membership rather than only named administrative groups.
+            AND NOT EXISTS (
+                SELECT 1 FROM pg_catalog.pg_roles elevated
+                WHERE (
+                    elevated.rolsuper
+                    OR elevated.rolcreatedb
+                    OR elevated.rolcreaterole
+                    OR elevated.rolreplication
+                    OR elevated.rolbypassrls
+                )
+                  AND pg_catalog.pg_has_role(elevated.oid, 'MEMBER')
+            )
             AND pg_catalog.pg_has_role('temporalmark_runtime_group', 'MEMBER')
             AND NOT pg_catalog.pg_has_role('temporalmark_provisioner_group', 'MEMBER')
             AND NOT pg_catalog.pg_has_role('temporalmark_approver_group', 'MEMBER')
