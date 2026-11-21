@@ -199,6 +199,7 @@ public sealed class ContainerAppsPostgresManagedIdentityCandidate : IDisposable
             using var document = JsonDocument.Parse(bytes);
             var root = document.RootElement;
             if (root.ValueKind != JsonValueKind.Object ||
+                !HasUniqueTopLevelPropertyNames(root) ||
                 ReadString(root, "resource") != Resource ||
                 ReadString(root, "token_type") != "Bearer" ||
                 !Guid.TryParse(ReadString(root, "client_id"), out var responseClientId) ||
@@ -229,6 +230,21 @@ public sealed class ContainerAppsPostgresManagedIdentityCandidate : IDisposable
             // could echo header/bearer into JSON, HTTP or transport errors.
             throw new InvalidOperationException(Failure);
         }
+    }
+
+    // #138 / ADR 0103: JsonElement.TryGetProperty chooses the last value
+    // when a JSON object repeats a name. Deny ambiguous credential payloads
+    // before reading any field, including case-variant aliases, without
+    // printing or preserving untrusted names or token values in exceptions.
+    private static bool HasUniqueTopLevelPropertyNames(JsonElement root)
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var property in root.EnumerateObject())
+        {
+            if (!seen.Add(property.Name))
+                return false;
+        }
+        return true;
     }
 
     private static string? ReadString(JsonElement root, string name) =>
