@@ -324,6 +324,102 @@ public sealed class PostgresRuntimePrivilegePreflightTests
         Assert.Equal(20L, await MigrationCountAsync(owner));
     }
 
+    // #149 / ADR 0114: V006 reviewer enrollment requests and V012 unsigned
+    // decision challenge rows must stay inaccessible to the API runtime.
+    // Never read or mutate domain data: test GRANT inspection only.
+    [Theory]
+    [InlineData("organization_enrollment_requests", "SELECT")]
+    [InlineData("organization_enrollment_requests", "SELECT (operator_subject)")]
+    [InlineData("organization_enrollment_requests", "INSERT")]
+    [InlineData("organization_enrollment_requests", "INSERT (id)")]
+    [InlineData("organization_enrollment_requests", "UPDATE (approved_utc)")]
+    [InlineData("organization_enrollment_requests", "DELETE")]
+    [InlineData("organization_enrollment_requests", "TRUNCATE")]
+    [InlineData("organization_enrollment_requests", "REFERENCES (id)")]
+    [InlineData("organization_enrollment_requests", "TRIGGER")]
+    [InlineData("organization_decision_challenges", "SELECT")]
+    [InlineData("organization_decision_challenges", "SELECT (nonce)")]
+    [InlineData("organization_decision_challenges", "INSERT")]
+    [InlineData("organization_decision_challenges", "INSERT (id)")]
+    [InlineData("organization_decision_challenges", "UPDATE (nonce)")]
+    [InlineData("organization_decision_challenges", "DELETE")]
+    [InlineData("organization_decision_challenges", "TRUNCATE")]
+    [InlineData("organization_decision_challenges", "REFERENCES (id)")]
+    [InlineData("organization_decision_challenges", "TRIGGER")]
+    public async Task ReviewerEnrollmentOrChallengeTableOvergrantMustFailEntraRuntimePreflight(
+        string fixedTable, string fixedPrivilege)
+    {
+        // Identifiers/privileges are fixed InlineData, not caller input.
+        // Per-case LOGIN/password are generated ASCII and never persisted.
+        var role = "tm_reviewacl_" + Guid.NewGuid().ToString("N");
+        var password = "test-" + Guid.NewGuid().ToString("N");
+        var roleCreated = false;
+        var membershipGranted = false;
+        var grantApplied = false;
+
+        await using var owner = Owner();
+        await owner.OpenAsync();
+        Assert.Equal(20L, await MigrationCountAsync(owner));
+        var testConnectionString = new NpgsqlConnectionStringBuilder(owner.ConnectionString)
+        {
+            Username = role,
+            Password = password,
+            // Avoid PG17 slot exhaustion from one Npgsql pool per generated LOGIN.
+            Pooling = false
+        }.ConnectionString;
+
+        async Task OwnerExecuteAsync(string sql)
+        {
+            await using var cmd = new NpgsqlCommand(sql, owner);
+            await cmd.ExecuteNonQueryAsync();
+        }
+
+        try
+        {
+            await OwnerExecuteAsync($"CREATE ROLE {role} LOGIN INHERIT PASSWORD '{password}'");
+            roleCreated = true;
+            await OwnerExecuteAsync($"GRANT temporalmark_runtime_group TO {role}");
+            membershipGranted = true;
+
+            // Confirm baseline valid SQL runtime identity before the extra GRANT.
+            await using (var baseline = new NpgsqlConnection(testConnectionString))
+            {
+                await baseline.OpenAsync();
+                await PostgresRuntimePrivilegePreflight.VerifyAsync(
+                    baseline, role, CancellationToken.None);
+            }
+
+            await OwnerExecuteAsync($"GRANT {fixedPrivilege} ON TABLE public.{fixedTable} TO {role}");
+            grantApplied = true;
+
+            await using (var overprivileged = new NpgsqlConnection(testConnectionString))
+            {
+                await overprivileged.OpenAsync();
+                var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                    PostgresRuntimePrivilegePreflight.VerifyAsync(
+                        overprivileged, role, CancellationToken.None));
+                Assert.Null(ex.InnerException);
+                Assert.DoesNotContain(role, ex.ToString());
+                Assert.DoesNotContain(password, ex.ToString());
+                Assert.DoesNotContain("ConnectionStrings", ex.ToString());
+            }
+        }
+        finally
+        {
+            // Even on intentional RED, cleanup cannot leave an unsafe SQL
+            // grant, pool or test-only role in the shared PG17 fixture.
+            if (grantApplied)
+                await OwnerExecuteAsync(
+                    $"REVOKE {fixedPrivilege} ON TABLE public.{fixedTable} FROM {role}");
+            if (membershipGranted)
+                await OwnerExecuteAsync($"REVOKE temporalmark_runtime_group FROM {role}");
+            if (roleCreated)
+                await OwnerExecuteAsync($"DROP ROLE {role}");
+        }
+
+        Assert.Equal(20L, await MigrationCountAsync(owner));
+    }
+
     // #147 / ADR 0112: PostgreSQL role membership alone cannot detect
     // one mistaken direct EXECUTE GRANT on a provisioner/approver/registrar
     // SECURITY DEFINER function or an explicitly owner-only routine.
