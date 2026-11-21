@@ -163,4 +163,75 @@ public sealed class ImprintSearchRatePostgresTests
             """, conn);
         Assert.True(Assert.IsType<bool>(await check.ExecuteScalarAsync()));
     }
+
+    [Fact]
+    public async Task PreviousDatabaseEpochMinuteExhaustionPermitsFreshMinuteWithoutWaiting()
+    {
+        var org = await TenantAsync();
+        const string actor = "old-minute-actor";
+        Assert.Equal((true, 0), await Consume(org, actor));
+
+        // Simulation of the SAME state a real PostgreSQL epoch-minute rollover
+        // leaves behind. Only the test migration owner can seed rate tables;
+        // ordinary runtime continues through V019 SECURITY DEFINER. No pg_sleep,
+        // app clock, time mocking, schema change or SQL grant is involved.
+        await using var owner = OwnerConnection();
+        await owner.OpenAsync();
+        await using var tx = await owner.BeginTransactionAsync();
+        DateTime oldTenantWindow;
+        DateTime oldActorWindow;
+        await using (var tenant = new NpgsqlCommand("""
+            UPDATE public.imprint_search_rate_tenants
+               SET window_start = pg_catalog.to_timestamp((
+                       floor(extract(epoch FROM pg_catalog.clock_timestamp()) / 60) * 60
+                   )::double precision) - interval '1 minute',
+                   hits = 30
+             WHERE organization_id = @org
+             RETURNING window_start
+            """, owner, tx))
+        {
+            tenant.Parameters.AddWithValue("org", org);
+            oldTenantWindow = Assert.IsType<DateTime>(await tenant.ExecuteScalarAsync());
+        }
+        await using (var principal = new NpgsqlCommand("""
+            UPDATE public.imprint_search_rate_principals
+               SET window_start = pg_catalog.to_timestamp((
+                       floor(extract(epoch FROM pg_catalog.clock_timestamp()) / 60) * 60
+                   )::double precision) - interval '1 minute',
+                   hits = 12
+             WHERE organization_id = @org AND actor_subject_id = @actor
+             RETURNING window_start
+            """, owner, tx))
+        {
+            principal.Parameters.AddWithValue("org", org);
+            principal.Parameters.AddWithValue("actor", actor);
+            oldActorWindow = Assert.IsType<DateTime>(await principal.ExecuteScalarAsync());
+        }
+        await tx.CommitAsync();
+
+        // Being exhausted in the PREVIOUS fixed minute must not impose a
+        // rolling 60-second ban on the very first request of the NEXT minute.
+        Assert.Equal((true, 0), await Consume(org, actor));
+
+        await using var evidence = new NpgsqlCommand("""
+            SELECT t.hits, p.hits, t.window_start, p.window_start
+              FROM public.imprint_search_rate_tenants AS t
+              JOIN public.imprint_search_rate_principals AS p
+                ON p.organization_id = t.organization_id
+             WHERE t.organization_id = @org AND p.actor_subject_id = @actor
+            """, owner);
+        evidence.Parameters.AddWithValue("org", org);
+        evidence.Parameters.AddWithValue("actor", actor);
+        await using var row = await evidence.ExecuteReaderAsync();
+        Assert.True(await row.ReadAsync());
+        Assert.Equal(1, row.GetInt32(0));
+        Assert.Equal(1, row.GetInt32(1));
+        var newTenantWindow = row.GetDateTime(2);
+        var newActorWindow = row.GetDateTime(3);
+        Assert.True(newTenantWindow > oldTenantWindow);
+        Assert.True(newActorWindow > oldActorWindow);
+        Assert.Equal(newTenantWindow, newActorWindow);
+        Assert.False(await row.ReadAsync());
+    }
+
 }
