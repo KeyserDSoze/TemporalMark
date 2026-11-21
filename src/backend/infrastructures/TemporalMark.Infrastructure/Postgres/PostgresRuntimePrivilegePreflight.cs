@@ -5,9 +5,10 @@ using Npgsql;
 namespace TemporalMark.Infrastructure.Postgres;
 
 /// <summary>
-/// #133 / ADR 0099: optional, detached and strictly read-only privilege
-/// preflight for an ALREADY OPEN PostgreSQL runtime connection. Not wired
-/// into API startup, privileged CLIs or Azure Entra token acquisition.
+/// #133 / ADR 0099 + #141 / ADR 0106: read-only privilege preflight
+/// on an ALREADY OPEN PostgreSQL runtime connection. Mandatory before HTTP
+/// listening only in explicit #134 ContainerAppsEntraCandidate API mode;
+/// never selected by default Password mode, privileged CLIs or Terraform.
 /// PostgreSQL must independently authenticate the session first.
 /// </summary>
 public static class PostgresRuntimePrivilegePreflight
@@ -56,6 +57,24 @@ public static class PostgresRuntimePrivilegePreflight
             AND pg_catalog.has_table_privilege('public.organization_memberships', 'SELECT')
             AND pg_catalog.has_table_privilege('public.timestamp_registry', 'INSERT')
             AND pg_catalog.has_table_privilege('public.tenant_audit_events', 'INSERT')
+            -- #141 / ADR 0106: these are append-only pilot evidence
+            -- surfaces. Prevent a mis-granted runtime SQL principal from
+            -- passing pre-listen with destructive rights. UPDATE/REFERENCES
+            -- can be granted per column, so table-only ACL checks miss them.
+            AND NOT pg_catalog.has_any_column_privilege(
+                'public.timestamp_registry', 'UPDATE')
+            AND NOT pg_catalog.has_any_column_privilege(
+                'public.timestamp_registry', 'REFERENCES')
+            AND NOT pg_catalog.has_table_privilege('public.timestamp_registry', 'DELETE')
+            AND NOT pg_catalog.has_table_privilege('public.timestamp_registry', 'TRUNCATE')
+            AND NOT pg_catalog.has_table_privilege('public.timestamp_registry', 'TRIGGER')
+            AND NOT pg_catalog.has_any_column_privilege(
+                'public.tenant_audit_events', 'UPDATE')
+            AND NOT pg_catalog.has_any_column_privilege(
+                'public.tenant_audit_events', 'REFERENCES')
+            AND NOT pg_catalog.has_table_privilege('public.tenant_audit_events', 'DELETE')
+            AND NOT pg_catalog.has_table_privilege('public.tenant_audit_events', 'TRUNCATE')
+            AND NOT pg_catalog.has_table_privilege('public.tenant_audit_events', 'TRIGGER')
             AND NOT pg_catalog.has_table_privilege('public.organizations', 'INSERT')
             AND NOT pg_catalog.has_table_privilege('public.organizations', 'UPDATE')
             AND NOT pg_catalog.has_table_privilege('public.organizations', 'DELETE')
