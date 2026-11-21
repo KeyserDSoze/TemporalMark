@@ -420,6 +420,129 @@ public sealed class PostgresRuntimePrivilegePreflightTests
         Assert.Equal(20L, await MigrationCountAsync(owner));
     }
 
+    // #150 / ADR 0115: role attributes of an arbitrary SET-able group role
+    // are NOT inherited onto current_user, yet SET ROLE can enable them.
+    // Test catalog role reachability only; NEVER execute SET ROLE.
+    [Theory]
+    [InlineData("SUPERUSER", false)]
+    [InlineData("CREATEDB", false)]
+    [InlineData("CREATEROLE", false)]
+    [InlineData("REPLICATION", false)]
+    [InlineData("BYPASSRLS", false)]
+    [InlineData("CREATEDB", true)]
+    [InlineData("BYPASSRLS", true)]
+    public async Task ElevatedNoLoginRoleMembershipMustFailEntraRuntimePreflight(
+        string fixedElevatedAttribute, bool useIntermediateGroup)
+    {
+        // All role identifiers use generated ASCII hex; the elevated attribute
+        // is one of seven compile-time InlineData literals, never external input.
+        var discriminator = Guid.NewGuid().ToString("N");
+        var login = "tm_privlogin_" + discriminator;
+        var elevatedRole = "tm_privrole_" + discriminator;
+        var bridgeRole = "tm_privbridge_" + discriminator;
+        var password = "test-" + Guid.NewGuid().ToString("N");
+        var loginCreated = false;
+        var runtimeGroupGranted = false;
+        var elevatedCreated = false;
+        var bridgeCreated = false;
+        var elevatedGranted = false;
+        var bridgeGranted = false;
+
+        await using var owner = Owner();
+        await owner.OpenAsync();
+        Assert.Equal(20L, await MigrationCountAsync(owner));
+        var testConnectionString = new NpgsqlConnectionStringBuilder(owner.ConnectionString)
+        {
+            Username = login,
+            Password = password,
+            // Unique SQL LOGIN per case must not consume permanent PG17 pool slots.
+            Pooling = false
+        }.ConnectionString;
+
+        async Task OwnerExecuteAsync(string sql)
+        {
+            await using var command = new NpgsqlCommand(sql, owner);
+            await command.ExecuteNonQueryAsync();
+        }
+
+        try
+        {
+            await OwnerExecuteAsync($"CREATE ROLE {login} LOGIN INHERIT PASSWORD '{password}'");
+            loginCreated = true;
+            await OwnerExecuteAsync($"GRANT temporalmark_runtime_group TO {login}");
+            runtimeGroupGranted = true;
+
+            // Before privileged membership, this is an independently valid
+            // least-privilege API runtime LOGIN and must pass the current gate.
+            await using (var baseline = new NpgsqlConnection(testConnectionString))
+            {
+                await baseline.OpenAsync();
+                await PostgresRuntimePrivilegePreflight.VerifyAsync(
+                    baseline, login, CancellationToken.None);
+            }
+
+            // CI-only PostgreSQL superuser owns these ephemeral roles; never
+            // change actual runtime, provisioner, reviewer or migrated grants.
+            await OwnerExecuteAsync($"CREATE ROLE {elevatedRole} NOLOGIN {fixedElevatedAttribute}");
+            elevatedCreated = true;
+
+            if (useIntermediateGroup)
+            {
+                await OwnerExecuteAsync($"CREATE ROLE {bridgeRole} NOLOGIN");
+                bridgeCreated = true;
+                await OwnerExecuteAsync($"GRANT {bridgeRole} TO {login} WITH SET TRUE");
+                bridgeGranted = true;
+            }
+
+            // Grant exactly one SET-able privileged role, directly or via a
+            // single NOLOGIN bridge. No actual SET ROLE or privileged operation.
+            var holder = useIntermediateGroup ? bridgeRole : login;
+            await OwnerExecuteAsync($"GRANT {elevatedRole} TO {holder} WITH SET TRUE");
+            elevatedGranted = true;
+
+            await using (var overprivileged = new NpgsqlConnection(testConnectionString))
+            {
+                await overprivileged.OpenAsync();
+                // PG17 catalog inquiry proves the dangerous role is reachable.
+                await using (var reachability = new NpgsqlCommand(
+                    "SELECT pg_catalog.pg_has_role(@elevated, 'SET')", overprivileged))
+                {
+                    reachability.Parameters.AddWithValue("elevated", elevatedRole);
+                    Assert.True(Assert.IsType<bool>(await reachability.ExecuteScalarAsync()));
+                }
+
+                var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                    PostgresRuntimePrivilegePreflight.VerifyAsync(
+                        overprivileged, login, CancellationToken.None));
+                Assert.Null(ex.InnerException);
+                Assert.DoesNotContain(login, ex.ToString());
+                Assert.DoesNotContain(elevatedRole, ex.ToString());
+                Assert.DoesNotContain(bridgeRole, ex.ToString());
+                Assert.DoesNotContain(password, ex.ToString());
+            }
+        }
+        finally
+        {
+            // Run on expected RED and unexpected failure. Revoke individual
+            // test-only role grants before dropping role hierarchy.
+            if (elevatedGranted)
+                await OwnerExecuteAsync(
+                    $"REVOKE {elevatedRole} FROM {(useIntermediateGroup ? bridgeRole : login)}");
+            if (bridgeGranted)
+                await OwnerExecuteAsync($"REVOKE {bridgeRole} FROM {login}");
+            if (runtimeGroupGranted)
+                await OwnerExecuteAsync($"REVOKE temporalmark_runtime_group FROM {login}");
+            if (bridgeCreated)
+                await OwnerExecuteAsync($"DROP ROLE {bridgeRole}");
+            if (elevatedCreated)
+                await OwnerExecuteAsync($"DROP ROLE {elevatedRole}");
+            if (loginCreated)
+                await OwnerExecuteAsync($"DROP ROLE {login}");
+        }
+
+        Assert.Equal(20L, await MigrationCountAsync(owner));
+    }
+
     // #147 / ADR 0112: PostgreSQL role membership alone cannot detect
     // one mistaken direct EXECUTE GRANT on a provisioner/approver/registrar
     // SECURITY DEFINER function or an explicitly owner-only routine.
