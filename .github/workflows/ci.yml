@@ -118,7 +118,7 @@ jobs:
         run: python3 tests/integration/generate_nuget_sbom.py generate --output-dir "$RUNNER_TEMP/temporalmark-nuget-sbom"
       - name: Verify NuGet restore CycloneDX inventory
         run: python3 tests/integration/generate_nuget_sbom.py verify --output-dir "$RUNNER_TEMP/temporalmark-nuget-sbom"
-      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: nuget-restored-cyclonedx
           path: ${{ runner.temp }}/temporalmark-nuget-sbom/*.json
@@ -152,7 +152,7 @@ jobs:
       - name: Verify npm lockfile CycloneDX inventories
         run: |
           python3 tests/integration/generate_npm_sbom.py verify --output-dir "$RUNNER_TEMP/temporalmark-npm-sbom"
-      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: npm-lockfile-cyclonedx
           path: ${{ runner.temp }}/temporalmark-npm-sbom/*.json
@@ -266,7 +266,7 @@ jobs:
         env:
           TEMPORALMARK_CI_API_ISOLATION: "1"
         run: python3 tests/integration/api-tenant-isolation.py
-      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: failure()
         with:
           name: authenticated-browser-failure
