@@ -251,6 +251,75 @@ class OfflinePeriodExportTests(unittest.TestCase):
             self.assertIn("FAILED", errors.getvalue())
             self.assertNotIn(str(path), errors.getvalue())
 
+    # #165 / ADR 0123: stock zipfile can read an ordinary ZIP with
+    # unreferenced bytes *inside* the physical member range. The current
+    # seekable .NET v1 layout should leave no inter-member or final gap.
+    @staticmethod
+    def _insert_opaque_gap_after_member(raw: bytes, member_name: str) -> bytes:
+        opaque = b"PRIVATE-UNREFERENCED-INTERNAL-GAP-165"
+        assert raw[-22:-18] == b"PK\x05\x06"
+        original_central = struct.unpack_from("<I", raw, len(raw) - 22 + 16)[0]
+        with zipfile.ZipFile(io.BytesIO(raw), "r") as archive:
+            target = archive.getinfo(member_name)
+            members = archive.infolist()
+            assert archive.start_dir == original_central
+            local = target.header_offset
+        assert raw[local:local + 4] == b"PK\x03\x04"
+        local_name, local_extra = struct.unpack_from("<HH", raw, local + 26)
+        insert_at = local + 30 + local_name + local_extra + target.compress_size
+        assert 0 < insert_at <= original_central
+
+        changed = bytearray(raw[:insert_at] + opaque + raw[insert_at:])
+        new_central = original_central + len(opaque)
+        new_eocd = len(changed) - 22
+        struct.pack_into("<I", changed, new_eocd + 16, new_central)
+        cursor = new_central
+        for _ in members:
+            assert changed[cursor:cursor + 4] == b"PK\x01\x02"
+            name_len, extra_len, comment_len = struct.unpack_from(
+                "<HHH", changed, cursor + 28)
+            offset = struct.unpack_from("<I", changed, cursor + 42)[0]
+            if offset >= insert_at:  # later local headers physically moved
+                struct.pack_into("<I", changed, cursor + 42,
+                                 offset + len(opaque))
+            cursor += 46 + name_len + extra_len + comment_len
+        assert cursor == new_eocd
+        return bytes(changed)
+
+    def test_internal_unreferenced_zip_gaps_are_denied_despite_intact_members(self):
+        for base, after, count in (
+            (build_zip(), "manifest.json", 1),
+            (build_zip(), record()["responseFile"], 1),
+            (build_zip(manifest([])), "manifest.json", 0),
+        ):
+            with self.subTest(after=after, receipts=count):
+                self.assertEqual(count, check(base))
+                changed = self._insert_opaque_gap_after_member(base, after)
+                with zipfile.ZipFile(io.BytesIO(changed), "r") as archive:
+                    self.assertEqual("temporalmark-period-export-v1",
+                                     json.loads(archive.read("manifest.json"))["format"])
+                    if count:
+                        self.assertEqual(DER, archive.read(record()["responseFile"]))
+                    self.assertEqual(count + 1, len(archive.infolist()))
+                with self.assertRaises(verifier.ExportVerificationError):
+                    check(changed)
+
+    def test_internal_gap_cli_is_generic_and_does_not_echo_payload_or_path(self):
+        changed = self._insert_opaque_gap_after_member(
+            build_zip(), record()["responseFile"])
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "private-internal-gap-export.zip"
+            path.write_bytes(changed)
+            output, errors = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+                status = verifier.main([str(path)])
+            self.assertEqual(1, status)
+            self.assertEqual("", output.getvalue())
+            self.assertIn("FAILED", errors.getvalue())
+            self.assertNotIn(str(path), errors.getvalue())
+            self.assertNotIn(ORG, errors.getvalue())
+            self.assertNotIn("PRIVATE-UNREFERENCED", errors.getvalue())
+
     # #164 / ADR 0122: local CRC/length DWORDs are ignored by Python's
     # ordinary ZipFile.read(), even when they contradict the central directory.
     # Keep the central directory, manifest, original DER and hashes untouched.
