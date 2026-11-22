@@ -6,6 +6,9 @@ namespace TemporalMark.Business.Registry;
 
 public sealed class ExportTooLargeException() : Exception("The period exceeds synchronous export limits. Split the time interval.");
 
+/// <summary>Existing pilot receipt cannot be delivered within its single-file cap.</summary>
+public sealed class ReceiptTooLargeException() : InvalidOperationException("Stored receipt exceeds pilot download limits.");
+
 public sealed record RegistrySummary(Guid OrganizationId, long Count, DateTimeOffset FromUtc, DateTimeOffset ToUtcExclusive);
 
 public sealed record RegistryDailySummary(
@@ -33,6 +36,12 @@ public sealed class TimestampRegistryService(ITimestampRegistry registry)
         if (record is null) return null;
         if (record.OrganizationId != organizationId)
             throw new InvalidOperationException("Repository returned a record outside authorized tenant.");
+        // Use the same conservative per-receipt pilot budget as synchronous
+        // ZIP export and the strict offline v1 checker. Legacy rows with
+        // matching hashes can still be oversized; refuse before SHA hashing.
+        // Tenant scoping MUST precede this check to avoid size disclosure.
+        if (record.ResponseDer.Length > ExportReceiptDerLimitBytes)
+            throw new ReceiptTooLargeException();
         record.Validate();
         // Only Unverified has an implemented issuance/verification workflow.
         // Never deliver a claimed qualification or incident state from an
