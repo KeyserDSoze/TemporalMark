@@ -138,12 +138,50 @@ def archive_bytes(source: object) -> int:
     return end
 
 
+def require_exact_v1_zip_envelope(
+        zipped: zipfile.ZipFile, archive_size: int, member_count: int) -> None:
+    """Reject prefix/trailer/ZIP64/multi-disk ambiguity in *v1* (ADR 0120).
+
+    Generic Python zipfile intentionally accepts ZIP appended to other bytes.
+    The current .NET memory-backed v1 producer writes a single ordinary ZIP
+    with its first local member at byte zero and a final zero-comment
+    22-byte classic EOCD. Inspect ONLY 4+22 fixed bytes before decompression.
+    This is NOT a ZIP signature or complete-period custody proof.
+    """
+    require(archive_size >= 4 + 30 + 46 + 22 and
+            1 <= member_count <= MAX_COUNT + 1)
+    require(zipped.fp is not None)
+    zipped.fp.seek(0)
+    require(zipped.fp.read(4) == b"PK\x03\x04")
+
+    # An EOCD with any trailing overlay cannot occupy the final 22 bytes.
+    # The v1 format has no ZIP comments or ZIP64/multi-disk footer.
+    zipped.fp.seek(archive_size - 22)
+    footer = zipped.fp.read(22)
+    require(len(footer) == 22)
+    (signature, this_disk, central_disk, entries_this_disk, entries_total,
+     central_size, central_offset, comment_size) = struct.unpack(
+         "<4s4H2LH", footer)
+    require(signature == b"PK\x05\x06")
+    require(this_disk == 0 and central_disk == 0)
+    require(entries_this_disk == entries_total == member_count)
+    require(comment_size == 0)
+    require(central_offset >= 30 and central_size >= 46 * member_count)
+    # No unclaimed gap, hidden attachment, shifted central directory or
+    # self-extracting prefix may exist in this intentionally narrow profile.
+    require(central_offset + central_size == archive_size - 22)
+
+
 def verify_archive(source: object) -> int:
     """Return count if a current v1 ZIP is locally self-consistent only."""
     try:
-        require(archive_bytes(source) <= MAX_ARCHIVE)
+        size = archive_bytes(source)
+        require(size <= MAX_ARCHIVE)
         with zipfile.ZipFile(source, "r") as zipped:
             infos = zipped.infolist()
+            # Check the full physical v1 container before reading any
+            # manifest JSON or TSR; zipfile alone tolerates ZIP overlays.
+            require_exact_v1_zip_envelope(zipped, size, len(infos))
             require(1 <= len(infos) <= MAX_COUNT + 1)
             names = [item.filename for item in infos]
             require(len(names) == len(set(names)))
