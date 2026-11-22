@@ -20,3 +20,11 @@ References: [Python zipfile docs](https://docs.python.org/3/library/zipfile.html
 ## Limit
 
 A jointly rewritten **unsigned** manifest/DER can still pass. This is a narrow binary ZIP profile consistency test, not external RFC3161/CMS signature validation, qualified service historical Trusted List proof, absolute period completeness, independently signed custody, WORM/legal retention or CAB/AgID qualification. Non-seekable/streaming data-descriptor ZIP variants need a **new independently reviewed format/ADR** before interoperability is claimed. Parent issues #17/#15/#13/#61/#64/#18, and security #38/#50, remain OPEN.
+
+
+## TDD evidence — 2026-11-22
+
+- Accepted ADR committed **first** on `main`: [`a89d43c`](https://github.com/KeyserDSoze/TemporalMark/commit/a89d43cac6db9acfc33c8857413c5174c3fdd1d9).
+- **Tests only**, no verifier source change, committed [`c491e4d`](https://github.com/KeyserDSoze/TemporalMark/commit/c491e4df60d21b6932c880f52eee56f9deaeeecf). [Real GitHub Actions RED 45005035684](https://github.com/KeyserDSoze/TemporalMark/actions/runs/45005035684/attempts/1) backend Python suite ran **32 unittest methods, 8 genuine missing-denial assertion failures, 24 passes**: six local-only CRC32/compressed/uncompressed-size changes across manifest/token, one generic CLI failure test, one non-v1 data-descriptor flag. `zipfile` read the unchanged valid manifest and DER in each altered fixture. No import/syntax errors or bad fixtures. Terraform/frontend succeeded; Docker was skipped after backend RED, as intended.
+- Only after RED, minimal source [`26aa416`](https://github.com/KeyserDSoze/TemporalMark/commit/26aa416968fd3b1b736060420114a97c0267b22a) now unpacks three 32-bit fields from the **same already-read 30-byte** local header and binds them to central ZipInfo values; explicitly denies bit 3, preserving all prior gates. No new I/O, dependencies, cloud divergence, DB/API change or legal assertion.
+- **Final docs-inclusive `main` GREEN and issue closure must be verified separately.** Do not infer a pass from the implementation commit alone. The release blockers #17/#15/#13/#61/#64/#18/#38/#50 remain open.
