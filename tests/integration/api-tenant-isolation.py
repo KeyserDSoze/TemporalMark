@@ -650,6 +650,61 @@ def assert_oversized_legacy_registry_page_is_denied(a_token: str, b_token: str):
 
 
 
+
+def assert_oversized_legacy_period_export_preserves_413_and_no_audit(a_token: str, b_token: str):
+    """#173 / ADR 0131: real PG17 + signed Keycloak export failure audit.
+
+    This runs strictly AFTER the normal tenant/export tests and the A-only
+    SHA-consistent oversized legacy DER fixture, never on a real tenant.
+    """
+    period_url = "/stamps/export?" + urllib.parse.urlencode({
+        "fromUtc": FROM, "toUtcExclusive": TO
+    })
+    command = [
+        "docker", "compose", "-f", "docker/compose.yml",
+        "exec", "-T", "postgres", "psql", "-X", "-q",
+        "-v", "ON_ERROR_STOP=1", "-U", "temporalmark",
+        "-d", "temporalmark", "-t", "-A"
+    ]
+    sql = f"""SELECT count(*) FROM public.tenant_audit_events
+        WHERE organization_id = '{ORG_A}' AND action = 'period_export_prepared'
+        AND period_from_utc = '{FROM}'::timestamptz
+        AND period_to_utc_exclusive = '{TO}'::timestamptz;"""
+
+    def count_prepared():
+        checked = subprocess.run(command, input=sql, text=True,
+                                 capture_output=True, timeout=35, check=False)
+        if checked.returncode != 0 or not checked.stdout.strip().isdigit():
+            raise AssertionError("CI-only period export prepared-event count query failed")
+        return int(checked.stdout.strip())
+
+    before = count_prepared()
+    status, headers, body = api(period_url, token=a_token)
+    if status != 413:
+        raise AssertionError(
+            f"Oversized A-only legacy DER did not retain HTTP 413 on ZIP export (HTTP {status}; body withheld)")
+    if len(body) > 4096 or any(private in body for private in (
+        ORG_A.encode("ascii"), OVERSIZED_LEGACY_STAMP.encode("ascii"),
+        b"CI_ONLY_OVERSIZE", DIGEST_A.hex().encode("ascii"))):
+        raise AssertionError("Oversized period-export denial leaked evidence identifiers")
+    if count_prepared() != before:
+        raise AssertionError("Rejected oversized period ZIP incorrectly appended an export-prepared audit event")
+
+    # B's legitimate single-receipt export must remain successful, private
+    # and unmodified while A's oversized legacy row is present.
+    _, raw = must_status("Foreign tenant valid ZIP still succeeds",
+                         api(period_url, token=b_token), 200)
+    with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+        entries = [name for name in archive.namelist() if name.endswith(".tsr")]
+        if entries != ["tokens/" + STAMP_B.replace("-", "") + ".tsr"]:
+            raise AssertionError("B ZIP export contained foreign or missing receipt paths")
+        if archive.read(entries[0]) != DER_B:
+            raise AssertionError("B ZIP returned altered original retained DER")
+        if json.loads(archive.read("manifest.json")).get("count") != 1:
+            raise AssertionError("B ZIP manifest is incomplete")
+    print("PASS: A SHA-consistent oversized legacy ZIP remains HTTP 413 with zero new prepared-export audits; B retained ZIP 200 and original DER")
+
+
 def main():
     if os.environ.get("TEMPORALMARK_CI_API_ISOLATION") != "1":
         raise AssertionError("Explicit CI-only fixture gate required")
@@ -736,6 +791,7 @@ def main():
     assert_search_rate_store_permission_failure_is_closed(b_token)
     assert_oversized_legacy_receipt_is_not_downloaded(a_token, b_token)
     assert_oversized_legacy_registry_page_is_denied(a_token, b_token)
+    assert_oversized_legacy_period_export_preserves_413_and_no_audit(a_token, b_token)
     print("PASS: real Keycloak-signed JWT 401/403; two isolated PostgreSQL tenants; "
           "real API list/summary/UTC daily/document-SHA256-search/TSR/ZIP/audit; header/query/body spoofing; "
           "inactive membership; no qualified issuance")
