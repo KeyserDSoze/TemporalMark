@@ -251,6 +251,71 @@ class OfflinePeriodExportTests(unittest.TestCase):
             self.assertIn("FAILED", errors.getvalue())
             self.assertNotIn(str(path), errors.getvalue())
 
+    # #164 / ADR 0122: local CRC/length DWORDs are ignored by Python's
+    # ordinary ZipFile.read(), even when they contradict the central directory.
+    # Keep the central directory, manifest, original DER and hashes untouched.
+    @staticmethod
+    def _change_only_local_crc_or_size(raw: bytes, name: str,
+                                       local_field_offset: int) -> bytes:
+        assert local_field_offset in (14, 18, 22)
+        modified = bytearray(raw)
+        with zipfile.ZipFile(io.BytesIO(raw), "r") as archive:
+            local_offset = archive.getinfo(name).header_offset
+        assert modified[local_offset:local_offset + 4] == b"PK\x03\x04"
+        assert struct.unpack_from("<I", modified,
+                                  local_offset + local_field_offset)[0] != 0
+        struct.pack_into("<I", modified, local_offset + local_field_offset, 0)
+        return bytes(modified)
+
+    def test_local_crc_and_sizes_must_match_central_before_any_decompression(self):
+        base = build_zip()
+        self.assertEqual(1, check(base))
+        for name in ("manifest.json", record()["responseFile"]):
+            for offset, field in ((14, "crc32"), (18, "compressed size"),
+                                  (22, "uncompressed size")):
+                with self.subTest(member=name, local_field=field):
+                    altered = self._change_only_local_crc_or_size(base, name, offset)
+                    # These are six genuine missing-denial fixtures:
+                    # stock zipfile still reads the original, CRC-clean members.
+                    with zipfile.ZipFile(io.BytesIO(altered), "r") as archive:
+                        self.assertEqual(DER, archive.read(record()["responseFile"]))
+                        self.assertEqual("temporalmark-period-export-v1",
+                                         json.loads(archive.read("manifest.json"))["format"])
+                    with self.assertRaises(verifier.ExportVerificationError):
+                        check(altered)
+
+    def test_mismatched_local_crc_cli_failure_never_leaks_private_values(self):
+        altered = self._change_only_local_crc_or_size(
+            build_zip(), "manifest.json", 14)
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "tenant-secret-export.zip"
+            path.write_bytes(altered)
+            output, errors = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+                exit_code = verifier.main([str(path)])
+            self.assertEqual(1, exit_code)
+            self.assertEqual("", output.getvalue())
+            self.assertIn("FAILED", errors.getvalue())
+            self.assertNotIn(str(path), errors.getvalue())
+            self.assertNotIn(ORG, errors.getvalue())
+
+    def test_data_descriptor_flag_not_in_current_seekable_v1_profile(self):
+        # A one-member valid zero-record archive makes the central-header
+        # mutation unambiguous. Both flags match: ADR 0078 doesn't deny it.
+        base = build_zip(manifest([]))
+        self.assertEqual(0, check(base))
+        altered = bytearray(base)
+        central_offset = altered.rfind(b"PK\x01\x02")
+        self.assertGreater(central_offset, 0)
+        self.assertEqual(b"PK\x03\x04", altered[:4])
+        struct.pack_into("<H", altered, 6, 0x0008)
+        struct.pack_into("<H", altered, central_offset + 8, 0x0008)
+        with zipfile.ZipFile(io.BytesIO(altered), "r") as archive:
+            self.assertEqual("temporalmark-period-export-v1",
+                             json.loads(archive.read("manifest.json"))["format"])
+        with self.assertRaises(verifier.ExportVerificationError):
+            check(bytes(altered))
+
     @staticmethod
     def _change_only_local_header_short(raw: bytes, name: str,
                                        field_offset: int, value: int) -> bytes:
