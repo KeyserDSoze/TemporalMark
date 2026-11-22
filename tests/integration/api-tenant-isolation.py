@@ -609,9 +609,12 @@ def assert_oversized_legacy_receipt_is_not_downloaded(a_token: str, b_token: str
         WHERE organization_id = '{ORG_A}'
           AND receipt_id = '{OVERSIZED_LEGACY_STAMP}'
           AND action = 'receipt_download_prepared';"""
+    # -q alone preserves psql's table header/footer: even a zero count
+    # prints multiple lines. Request an unaligned, tuples-only scalar so
+    # zero versus positive audit counts are distinguished correctly.
     checked = subprocess.run(
-        command, input=count_sql, text=True, capture_output=True, timeout=35,
-        check=False)
+        command + ["-t", "-A"], input=count_sql, text=True,
+        capture_output=True, timeout=35, check=False)
     if checked.returncode != 0 or checked.stdout.strip() != "0":
         raise AssertionError("Rejected oversized receipt incorrectly prepared a download audit event")
     print("PASS: SHA-consistent oversized legacy DER owner GET 409/no-store, foreign GET 404, zero prepared-download audits")
