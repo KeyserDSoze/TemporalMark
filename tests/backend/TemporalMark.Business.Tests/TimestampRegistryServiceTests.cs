@@ -16,6 +16,71 @@ public sealed class TimestampRegistryServiceTests
         new DateTimeOffset(2026, 11, 1, 0, 0, 0, TimeSpan.Zero),
         new DateTimeOffset(2026, 12, 1, 0, 0, 0, TimeSpan.Zero));
 
+    // #156 / ADR 0121: only Unverified is supported by actual issuance.
+    // An otherwise valid, tenant-owned record must not declare a future
+    // qualification or incident status on any registry read boundary.
+    [Theory]
+    [InlineData(TimestampValidationState.VerifiedNonQualified, "page")]
+    [InlineData(TimestampValidationState.VerifiedNonQualified, "search")]
+    [InlineData(TimestampValidationState.VerifiedNonQualified, "receipt")]
+    [InlineData(TimestampValidationState.VerifiedNonQualified, "export")]
+    [InlineData(TimestampValidationState.VerifiedQualifiedExternal, "page")]
+    [InlineData(TimestampValidationState.VerifiedQualifiedExternal, "search")]
+    [InlineData(TimestampValidationState.VerifiedQualifiedExternal, "receipt")]
+    [InlineData(TimestampValidationState.VerifiedQualifiedExternal, "export")]
+    [InlineData(TimestampValidationState.VerifiedQualifiedOwn, "page")]
+    [InlineData(TimestampValidationState.VerifiedQualifiedOwn, "search")]
+    [InlineData(TimestampValidationState.VerifiedQualifiedOwn, "receipt")]
+    [InlineData(TimestampValidationState.VerifiedQualifiedOwn, "export")]
+    [InlineData(TimestampValidationState.AffectedByIncident, "page")]
+    [InlineData(TimestampValidationState.AffectedByIncident, "search")]
+    [InlineData(TimestampValidationState.AffectedByIncident, "receipt")]
+    [InlineData(TimestampValidationState.AffectedByIncident, "export")]
+    public async Task PilotRegistryReadRejectsUnsupportedVerificationStatus(
+        TimestampValidationState unsupportedState, string readBoundary)
+    {
+        var record = MakeRecord(TenantA) with { ValidationState = unsupportedState };
+        // The existing domain validator deliberately permits future states:
+        // prove every failing test is about the missing pilot read gate,
+        // not corrupt bytes, checksum, tenant or issuance timestamp.
+        record.Validate();
+        Assert.Equal(
+            Convert.ToHexString(SHA256.HashData(record.ResponseDer)),
+            record.TokenSha256Hex);
+
+        var registry = new FakeRegistry([record]);
+        var service = new TimestampRegistryService(registry);
+        Func<Task> read = readBoundary switch
+        {
+            "page" => async () =>
+            {
+                _ = await service.PageAsync(TenantA, Period, 0, 25, default);
+            },
+            "search" => async () =>
+            {
+                _ = await service.SearchByDocumentSha256Async(
+                    TenantA, Period, new string('0', 64), 0, 25, default);
+            },
+            "receipt" => async () =>
+            {
+                _ = await service.DownloadReceiptAsync(TenantA, record.Id, default);
+            },
+            "export" => async () =>
+            {
+                _ = await service.ExportZipAsync(TenantA, Period, default);
+            },
+            _ => throw new InvalidOperationException("Unexpected fixed test route")
+        };
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(read);
+        // The caller must not learn an unsupported qualified-state label,
+        // token digest, tenant ID or issuer name via exception details.
+        Assert.DoesNotContain(unsupportedState.ToString(), error.ToString());
+        Assert.DoesNotContain(TenantA.ToString(), error.ToString());
+        Assert.DoesNotContain(record.ProviderId, error.ToString());
+        Assert.DoesNotContain(record.TokenSha256Hex, error.ToString());
+    }
+
     [Fact]
     public async Task DownloadReceiptRejectsCrossTenantLeak()
     {
