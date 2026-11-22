@@ -398,7 +398,22 @@ api.MapGet("/stamps/{id:guid}/receipt", async Task<IResult> (
 {
     var tenant = await TenantAdminAsync(user, access, ct);
     if (!tenant.HasValue) return Results.Forbid();
-    var der = await registry.DownloadReceiptAsync(tenant.Value, id, ct);
+    byte[]? der;
+    try
+    {
+        der = await registry.DownloadReceiptAsync(tenant.Value, id, ct);
+    }
+    catch (ReceiptTooLargeException)
+    {
+        // A legacy row can have a valid stored hash yet exceed this pilot's
+        // single-receipt delivery budget. Do not disclose its DER or create
+        // a misleading ReceiptDownloadPrepared event for the failed read.
+        // HTTP 409 is intentional: 413 applies to *request* content size.
+        http.Response.Headers.CacheControl = "no-store";
+        return Results.Problem(
+            title: "Stored receipt is unavailable under pilot download limits.",
+            statusCode: StatusCodes.Status409Conflict);
+    }
     if (der is null) return Results.NotFound();
     // Fail closed on audit persistence failure before responding with receipt bytes.
     await audit.PrepareReceiptDownloadAsync(tenant.Value, user.FindFirstValue("sub")!, id, ct);
