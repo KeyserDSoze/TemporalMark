@@ -119,6 +119,7 @@ public sealed class TimestampRegistryService(ITimestampRegistry registry)
         // All *including* the lookahead entry must be integrity checked
         // before any metadata or hasMore indicator is returned.
         ValidateReturnedRecords(results, organizationId, period);
+        RequireAscendingRegistryOrder(results);
         if (results.Any(row => row.HashAlgorithmOid != sha256Oid ||
                                !string.Equals(row.DigestBase64, canonicalBase64,
                                    StringComparison.Ordinal)))
@@ -135,9 +136,13 @@ public sealed class TimestampRegistryService(ITimestampRegistry registry)
         if (offset < 0 || limit < 1 || limit > 200)
             throw new ArgumentOutOfRangeException(nameof(limit), "Use 1..200 records per page and offset >= 0.");
         var records = await registry.PageAsync(organizationId, period, offset, limit, cancellationToken);
-        // Do not surface record metadata unless the underlying retained DER
-        // and hash are self-consistent and each listed ID is unique.
+        // A buggy repository must never expand a tenant's requested page.
+        if (records.Count > limit)
+            throw new InvalidOperationException("Repository exceeded authorized page result bounds.");
+        // Do not surface metadata until DER integrity, tenant, UTC, pilot
+        // status, unique IDs and deterministic database order all pass.
         ValidateReturnedRecords(records, organizationId, period);
+        RequireAscendingRegistryOrder(records);
         return records;
     }
 
@@ -276,6 +281,26 @@ public sealed class TimestampRegistryService(ITimestampRegistry registry)
                 length > ExportTotalDerLimitBytes - totalBytes)
                 throw new ExportTooLargeException();
             totalBytes += length;
+        }
+    }
+
+    /// <summary>
+    /// Bind the repository's documented (issued_utc, id) SQL ordering at
+    /// the read boundary, including search's limit+1 lookahead. A broken
+    /// adapter must not yield misleading page navigation or hasMore.
+    /// </summary>
+    private static void RequireAscendingRegistryOrder(IReadOnlyList<TimestampRecord> records)
+    {
+        for (var index = 1; index < records.Count; index++)
+        {
+            var previous = records[index - 1];
+            var current = records[index];
+            // Validation of UTC offset, nonempty IDs and unique IDs occurs
+            // in ValidateReturnedRecords before this helper is invoked.
+            if (previous.IssuedUtc > current.IssuedUtc ||
+                (previous.IssuedUtc == current.IssuedUtc &&
+                 string.CompareOrdinal(previous.Id.ToString("N"), current.Id.ToString("N")) >= 0))
+                throw new InvalidOperationException("Repository returned an unordered registry batch.");
         }
     }
 
