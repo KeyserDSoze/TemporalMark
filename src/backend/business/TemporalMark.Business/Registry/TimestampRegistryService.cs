@@ -32,6 +32,10 @@ public sealed class TimestampRegistryService(ITimestampRegistry registry)
         if (record.OrganizationId != organizationId)
             throw new InvalidOperationException("Repository returned a record outside authorized tenant.");
         record.Validate();
+        // Only Unverified has an implemented issuance/verification workflow.
+        // Never deliver a claimed qualification or incident state from an
+        // otherwise self-consistent but unsupported repository row.
+        RequirePilotUnverifiedState(record);
         return record.ResponseDer;
     }
 
@@ -218,11 +222,24 @@ public sealed class TimestampRegistryService(ITimestampRegistry registry)
             // Existing domain rule checks actual retained token bytes against
             // its stored SHA-256; this does not assert RFC3161 qualification.
             record.Validate();
+            // Applies before Page/Search (including lookahead)/ExportZip
+            // can expose a claimed legal or incident status or DER.
+            RequirePilotUnverifiedState(record);
 
             if (!seenIds.Add(record.Id))
                 throw new InvalidOperationException(
                     "Repository returned duplicate timestamp record identifiers.");
         }
+    }
+
+    // Scoped unqualified pilot policy: V001 has future-state enum values,
+    // but no external QTSP-qualified validation or incident adjudication
+    // workflow is active. The database value is never silently downgraded.
+    private static void RequirePilotUnverifiedState(TimestampRecord record)
+    {
+        if (record.ValidationState != TimestampValidationState.Unverified)
+            throw new InvalidOperationException(
+                "Repository returned an unsupported timestamp verification state.");
     }
 
     private static void RequireTenant(Guid organizationId)
