@@ -39,36 +39,17 @@ public sealed class PostgresTimestampRegistry(NpgsqlDataSource database) : ITime
                 reader.IsDBNull(10) ? null : reader.GetString(10)
         );
 
-    public async Task<IReadOnlyList<TimestampRecord>> SearchByDigestAsync(
+    /// <summary>
+    /// Page/search only: one SQL statement/snapshot first chooses ID and
+    /// logical DER length, then hides ALL raw bytea in the SQL projection if
+    /// any selected row or the aggregate exceeds the shared pilot budget.
+    /// The caller's independent SHA-256/tenant/status checks remain intact.
+    /// </summary>
+    public Task<IReadOnlyList<TimestampRecord>> SearchByDigestAsync(
         Guid organizationId, UtcPeriod period, string digestBase64,
-        int offset, int maxResults, CancellationToken cancellationToken)
-    {
-        // Always constrain BOTH server-selected organization and period.
-        // Digest matching is exact canonical Base64 for SHA-256 document
-        // imprint, not a search on the token's own token_sha256_hex.
-        await using var connection = await database.OpenConnectionAsync(cancellationToken);
-        await using var command = new NpgsqlCommand("""
-            SELECT id, organization_id, issued_utc, hash_algorithm_oid, digest_base64,
-                   policy_oid, provider_id, token_sha256_hex, validation_state,
-                   response_der, evidence_reference
-              FROM timestamp_registry
-             WHERE organization_id = @org
-               AND issued_utc >= @start AND issued_utc < @end
-               AND hash_algorithm_oid = @algorithm AND digest_base64 = @digest
-             ORDER BY issued_utc, id
-             LIMIT @limit OFFSET @offset
-            """, connection);
-        SetCommonParameters(command, organizationId, period);
-        command.Parameters.AddWithValue("algorithm", "2.16.840.1.101.3.4.2.1");
-        command.Parameters.AddWithValue("digest", digestBase64);
-        command.Parameters.AddWithValue("limit", maxResults);
-        command.Parameters.AddWithValue("offset", offset);
-        var records = new List<TimestampRecord>();
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        while (await reader.ReadAsync(cancellationToken))
-            records.Add(MapRecord(reader));
-        return records;
-    }
+        int offset, int maxResults, CancellationToken cancellationToken) =>
+        ReadBoundedMetadataAsync(
+            organizationId, period, offset, maxResults, digestBase64, cancellationToken);
 
     public async Task<long> CountAsync(Guid organizationId, UtcPeriod period, CancellationToken cancellationToken)
     {
@@ -105,11 +86,109 @@ public sealed class PostgresTimestampRegistry(NpgsqlDataSource database) : ITime
 
     public Task<IReadOnlyList<TimestampRecord>> PageAsync(
         Guid organizationId, UtcPeriod period, int offset, int limit, CancellationToken cancellationToken) =>
-        ReadAsync(organizationId, period, offset, limit, cancellationToken);
+        ReadBoundedMetadataAsync(
+            organizationId, period, offset, limit, digestBase64: null, cancellationToken);
 
     public Task<IReadOnlyList<TimestampRecord>> ForExportAsync(
         Guid organizationId, UtcPeriod period, int maxResults, CancellationToken cancellationToken) =>
         ReadAsync(organizationId, period, 0, maxResults, cancellationToken);
+
+    // Both queries deliberately contain only id + logical bytea length in
+    // MATERIALIZED chosen, with the original ORDER BY / LIMIT / OFFSET. No
+    // bytea is selected into either CTE. The final CASE controls whether
+    // the PostgreSQL wire result contains any DER at all; the JOIN reads
+    // the same row versions as chosen because this is ONE SELECT snapshot.
+    // PostgreSQL 17: WITH materialization and CASE lazy row projection.
+    // Query execution/TOAST metadata and accepted <=64MiB batches still
+    // consume resources; this is not a global concurrency memory limit.
+    private const string BoundedPageSql = """
+        WITH chosen AS MATERIALIZED (
+            SELECT id, octet_length(response_der)::bigint AS der_bytes
+              FROM public.timestamp_registry
+             WHERE organization_id = @org AND issued_utc >= @start AND issued_utc < @end
+             ORDER BY issued_utc, id
+             LIMIT @limit OFFSET @offset
+        ),
+        guarded AS MATERIALIZED (
+            SELECT id,
+                   bool_and(der_bytes BETWEEN 1 AND @max_receipt_bytes) OVER () AS all_receipts_ok,
+                   sum(der_bytes) OVER () AS batch_bytes
+              FROM chosen
+        )
+        SELECT t.id, t.organization_id, t.issued_utc, t.hash_algorithm_oid,
+               t.digest_base64, t.policy_oid, t.provider_id,
+               t.token_sha256_hex, t.validation_state,
+               CASE WHEN g.all_receipts_ok AND g.batch_bytes <= @max_batch_bytes
+                    THEN t.response_der ELSE NULL::bytea END AS response_der,
+               t.evidence_reference
+          FROM guarded AS g
+          JOIN public.timestamp_registry AS t
+            ON t.id = g.id AND t.organization_id = @org
+         ORDER BY t.issued_utc, t.id
+        """;
+
+    private const string BoundedSearchSql = """
+        WITH chosen AS MATERIALIZED (
+            SELECT id, octet_length(response_der)::bigint AS der_bytes
+              FROM public.timestamp_registry
+             WHERE organization_id = @org AND issued_utc >= @start AND issued_utc < @end
+               AND hash_algorithm_oid = @algorithm AND digest_base64 = @digest
+             ORDER BY issued_utc, id
+             LIMIT @limit OFFSET @offset
+        ),
+        guarded AS MATERIALIZED (
+            SELECT id,
+                   bool_and(der_bytes BETWEEN 1 AND @max_receipt_bytes) OVER () AS all_receipts_ok,
+                   sum(der_bytes) OVER () AS batch_bytes
+              FROM chosen
+        )
+        SELECT t.id, t.organization_id, t.issued_utc, t.hash_algorithm_oid,
+               t.digest_base64, t.policy_oid, t.provider_id,
+               t.token_sha256_hex, t.validation_state,
+               CASE WHEN g.all_receipts_ok AND g.batch_bytes <= @max_batch_bytes
+                    THEN t.response_der ELSE NULL::bytea END AS response_der,
+               t.evidence_reference
+          FROM guarded AS g
+          JOIN public.timestamp_registry AS t
+            ON t.id = g.id AND t.organization_id = @org
+         ORDER BY t.issued_utc, t.id
+        """;
+
+    private async Task<IReadOnlyList<TimestampRecord>> ReadBoundedMetadataAsync(
+        Guid organizationId, UtcPeriod period, int offset, int limit,
+        string? digestBase64, CancellationToken cancellationToken)
+    {
+        await using var connection = await database.OpenConnectionAsync(cancellationToken);
+        await using var command = new NpgsqlCommand(
+            digestBase64 is null ? BoundedPageSql : BoundedSearchSql,
+            connection);
+        SetCommonParameters(command, organizationId, period);
+        command.Parameters.AddWithValue("limit", limit);
+        command.Parameters.AddWithValue("offset", offset);
+        command.Parameters.AddWithValue(
+            "max_receipt_bytes", TimestampRegistryService.ExportReceiptDerLimitBytes);
+        command.Parameters.AddWithValue(
+            "max_batch_bytes", TimestampRegistryService.ExportTotalDerLimitBytes);
+        if (digestBase64 is not null)
+        {
+            command.Parameters.AddWithValue("algorithm", "2.16.840.1.101.3.4.2.1");
+            command.Parameters.AddWithValue("digest", digestBase64);
+        }
+
+        var records = new List<TimestampRecord>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            // SQL returns NULL::bytea for EVERY row of an over-budget batch,
+            // even if only the later search lookahead receipt is invalid.
+            // Reject before Npgsql.GetFieldValue<byte[]> can materialize DER.
+            if (reader.IsDBNull(9))
+                throw new InvalidOperationException(
+                    "Registry evidence exceeded PostgreSQL pre-materialization byte limits.");
+            records.Add(MapRecord(reader));
+        }
+        return records;
+    }
 
     private async Task<IReadOnlyList<TimestampRecord>> ReadAsync(
         Guid organizationId, UtcPeriod period, int offset, int limit, CancellationToken cancellationToken)
