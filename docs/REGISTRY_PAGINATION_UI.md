@@ -82,3 +82,10 @@ backend/frontend/Terraform successful and the real browser failing.
 **No GREEN is assumed** until exact final docs-inclusive main SHA's
 backend/frontend/docker-smoke/terraform conclusions and real tests
 are independently verified.
+
+
+## Bounded and ordered Business read boundaries (#168 / ADR 0126)
+
+PostgreSQL already uses `ORDER BY issued_utc,id LIMIT @limit OFFSET @offset` for tenant registry pages and exact-imprint searches. The Business service now independently **fails closed before returning any metadata** if a buggy/alternate repository delivers more than the selected page limit (1–200) or if its returned rows violate strictly increasing `(IssuedUtc, canonical UUID)` order. Exact-imprint search already limits the batch to `limit + 1` (1–50 results plus one lookahead) and now validates the **entire** batch's order, including the additional `hasMore` lookahead, before it can disclose matches or page state. Existing tenant, period, `Unverified`, DER/SHA256, duplicate-ID and imprint gates remain. Generic errors disclose no row, provider, tenant or searched imprint. The API/React pagination contract and on-prem/Azure code remain unchanged.
+
+[ADR 0126](../adr/0126-fail-closed-registry-page-and-imprint-search-order.md) / [#168](https://github.com/KeyserDSoze/TemporalMark/issues/168): genuine [tests-only RED 45056357292](https://github.com/KeyserDSoze/TemporalMark/actions/runs/45056357292/attempts/1) with **five missing-denial failures / 285 Business passes** (including sorted UUID-tie positive); minimal post-RED service [`216ae1b`](https://github.com/KeyserDSoze/TemporalMark/commit/216ae1b1257bbea7d2049dad3d4dd9b93800d3e8). Verify exact docs-inclusive GREEN separately. **One valid batch is not a multi-page stable snapshot**: inserts/deletes between separate offset reads may still shift page boundaries. Nor is it a signed complete-period export, WORM, legally qualified TSA or independent audit witness. #14/#17/#15/#13 remain OPEN.
