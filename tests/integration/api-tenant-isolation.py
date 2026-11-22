@@ -20,6 +20,10 @@ import urllib.parse
 import urllib.request
 import zipfile
 
+# #167: reuse the independent standard-library-only v1 ZIP/SHA256 checker
+# on the actual .NET API export bytes, not only synthetic unit fixtures.
+import verify_period_export as offline_v1
+
 API = "http://127.0.0.1:8080"
 IDP = "http://127.0.0.1:8081"
 ISSUER = "http://localhost:8081/realms/temporalmark"
@@ -151,10 +155,21 @@ def export(token: str, extra: str = "", headers=None):
     hdrs, raw = must_status("period export ZIP", result, 200)
     if "no-store" not in hdrs.get("Cache-Control", "").lower():
         raise AssertionError("Tenant evidence ZIP is missing no-store")
+    # This one wrapper serves both signed-Keycloak tenant A/B and spoofed
+    # selector requests. Check EXACTLY the returned ZIP with the stricter
+    # offline v1 structure/SHA256 parser before generic zipfile extraction.
+    # Never persist/log ZIP bytes or expose tenant/manifest/DER on failure.
+    try:
+        verified_count = offline_v1.verify_archive(io.BytesIO(raw))
+    except offline_v1.ExportVerificationError:
+        raise AssertionError(
+            "Offline v1 period ZIP structure/SHA256 verification failed") from None
     with zipfile.ZipFile(io.BytesIO(raw)) as archive:
         manifest = json.loads(archive.read("manifest.json"))
         names = set(archive.namelist())
         data = {key: archive.read(key) for key in names if key.startswith("tokens/")}
+    if manifest["count"] != verified_count:
+        raise AssertionError("Offline v1 period ZIP manifest count mismatch")
     return manifest, data
 
 
