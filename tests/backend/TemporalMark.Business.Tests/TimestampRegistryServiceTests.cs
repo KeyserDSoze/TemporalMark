@@ -81,6 +81,62 @@ public sealed class TimestampRegistryServiceTests
         Assert.DoesNotContain(record.TokenSha256Hex, error.ToString());
     }
 
+    // #169 / ADR 0127 — the ZIP and offline v1 verifier reject
+    // individual DER >1 MiB, but GET /receipt also needs that pilot guard.
+    [Fact]
+    public async Task DownloadReceiptRejectsOversizedShaConsistentPilotDer()
+    {
+        var der = new byte[1024 * 1024 + 1];
+        var oversized = MakeRecord(TenantA) with
+        {
+            ResponseDer = der,
+            TokenSha256Hex = Convert.ToHexString(SHA256.HashData(der))
+        };
+        // Prove this is NOT a corrupted hash/record fixture: only the
+        // missing single-receipt resource budget can cause the denial.
+        oversized.Validate();
+        var exception = await Assert.ThrowsAnyAsync<InvalidOperationException>(() =>
+            new TimestampRegistryService(new FakeRegistry([oversized]))
+                .DownloadReceiptAsync(TenantA, oversized.Id, default));
+        Assert.DoesNotContain(TenantA.ToString(), exception.Message);
+        Assert.DoesNotContain(oversized.TokenSha256Hex, exception.Message);
+        Assert.DoesNotContain(oversized.ProviderId, exception.Message);
+    }
+
+    [Fact]
+    public async Task DownloadReceiptAcceptsExactOneMiBPilotBoundaryUnmodified()
+    {
+        var der = new byte[1024 * 1024];
+        var receipt = MakeRecord(TenantA) with
+        {
+            ResponseDer = der,
+            TokenSha256Hex = Convert.ToHexString(SHA256.HashData(der))
+        };
+        var downloaded = await new TimestampRegistryService(new FakeRegistry([receipt]))
+            .DownloadReceiptAsync(TenantA, receipt.Id, default);
+        Assert.Equal(der, downloaded);
+    }
+
+    [Fact]
+    public async Task DownloadReceiptCrossTenantAndUnknownRemainDeniedEvenIfDerIsOversized()
+    {
+        var der = new byte[1024 * 1024 + 1];
+        var foreign = MakeRecord(TenantB) with
+        {
+            ResponseDer = der,
+            TokenSha256Hex = Convert.ToHexString(SHA256.HashData(der))
+        };
+        foreign.Validate();
+        var denied = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            new TimestampRegistryService(new MaliciousRegistry(foreign))
+                .DownloadReceiptAsync(TenantA, foreign.Id, default));
+        Assert.Equal("Repository returned a record outside authorized tenant.", denied.Message);
+
+        var missing = await new TimestampRegistryService(new FakeRegistry([]))
+            .DownloadReceiptAsync(TenantA, foreign.Id, default);
+        Assert.Null(missing);
+    }
+
     [Fact]
     public async Task DownloadReceiptRejectsCrossTenantLeak()
     {
