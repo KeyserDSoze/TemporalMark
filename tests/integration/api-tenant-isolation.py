@@ -37,6 +37,7 @@ SUB_B = "00000000-0000-0000-0000-000000000082"
 SUB_DISABLED = "00000000-0000-0000-0000-000000000083"
 STAMP_A = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa82"
 STAMP_B = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbb82"
+OVERSIZED_LEGACY_STAMP = "cccccccc-cccc-cccc-cccc-cccccccccc82"
 AUDIT_A = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaab82"
 AUDIT_B = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbb82"
 FROM = "2020-01-01T00:00:00Z"
@@ -553,6 +554,70 @@ def assert_search_body_budget_with_signed_chunked_jwt(token: str):
         raise AssertionError("Chunked 413 disclosed document or tenant metadata")
 
 
+
+def assert_oversized_legacy_receipt_is_not_downloaded(a_token: str, b_token: str):
+    """#169 CI-only real SQL/HTTP: >1 MiB retained DER, correct SHA, no 200/audit.
+
+    Run strictly after all ordinary tenant count and search assertions. Only
+    the disposable Docker/PG owner seeds this row; real API auth remains
+    tenant-scoped and no raw DER, tokens or hash are sent to CI logs.
+    """
+    size = 1024 * 1024 + 1
+    expected_sha = hashlib.sha256(bytes(size)).hexdigest().upper()
+    digest64 = base64.b64encode(DIGEST_A).decode("ascii")
+    sql = f"""
+    INSERT INTO public.timestamp_registry
+      (id, organization_id, issued_utc, hash_algorithm_oid, digest_base64,
+       policy_oid, provider_id, token_sha256_hex, validation_state,
+       response_der, evidence_reference)
+    VALUES ('{OVERSIZED_LEGACY_STAMP}', '{ORG_A}', now(),
+            '2.16.840.1.101.3.4.2.1', '{digest64}', '1.2.3.4.5.6',
+            'CI_ONLY_OVERSIZE', '{expected_sha}', 0,
+            decode(repeat('00', {size}), 'hex'), 'CI_ONLY_OVERSIZE');
+    """
+    command = [
+        "docker", "compose", "-f", "docker/compose.yml",
+        "exec", "-T", "postgres", "psql", "-X", "-q",
+        "-v", "ON_ERROR_STOP=1", "-U", "temporalmark",
+        "-d", "temporalmark"
+    ]
+    written = subprocess.run(
+        command, input=sql, text=True, capture_output=True, timeout=35,
+        check=False)
+    if written.returncode != 0:
+        raise AssertionError("CI-only oversized stored receipt fixture setup failed")
+
+    status, headers, body = api(
+        f"/stamps/{OVERSIZED_LEGACY_STAMP}/receipt", token=a_token)
+    if status != 409:
+        raise AssertionError(
+            f"Authenticated oversized receipt was not refused with 409 (HTTP {status}; response withheld)")
+    if "no-store" not in headers.get("Cache-Control", "").lower():
+        raise AssertionError("Refused oversized receipt lacks Cache-Control no-store")
+    if (len(body) > 4096 or
+        any(private in body for private in (
+            ORG_A.encode("ascii"), OVERSIZED_LEGACY_STAMP.encode("ascii"),
+            expected_sha.encode("ascii"), b"CI_ONLY_OVERSIZE"))):
+        raise AssertionError("Oversized receipt denial disclosed private evidence identifiers")
+
+    must_status("Other tenant oversized receipt remains nonexistent",
+                api(f"/stamps/{OVERSIZED_LEGACY_STAMP}/receipt", token=b_token), 404)
+
+    # Use the disposable database owner to count this EXACT rejected
+    # receipt's audit markers; avoid a limited paged listing false negative.
+    count_sql = f"""SELECT count(*) FROM public.tenant_audit_events
+        WHERE organization_id = '{ORG_A}'
+          AND receipt_id = '{OVERSIZED_LEGACY_STAMP}'
+          AND action = 'receipt_download_prepared';"""
+    checked = subprocess.run(
+        command, input=count_sql, text=True, capture_output=True, timeout=35,
+        check=False)
+    if checked.returncode != 0 or checked.stdout.strip() != "0":
+        raise AssertionError("Rejected oversized receipt incorrectly prepared a download audit event")
+    print("PASS: SHA-consistent oversized legacy DER owner GET 409/no-store, foreign GET 404, zero prepared-download audits")
+
+
+
 def main():
     if os.environ.get("TEMPORALMARK_CI_API_ISOLATION") != "1":
         raise AssertionError("Explicit CI-only fixture gate required")
@@ -637,6 +702,7 @@ def main():
     assert_search_audit_fail_closed_on_real_postgres_write_denial(a_token)
     assert_shared_tenant_principal_search_quota(a_token, b_token)
     assert_search_rate_store_permission_failure_is_closed(b_token)
+    assert_oversized_legacy_receipt_is_not_downloaded(a_token, b_token)
     print("PASS: real Keycloak-signed JWT 401/403; two isolated PostgreSQL tenants; "
           "real API list/summary/UTC daily/document-SHA256-search/TSR/ZIP/audit; header/query/body spoofing; "
           "inactive membership; no qualified issuance")
