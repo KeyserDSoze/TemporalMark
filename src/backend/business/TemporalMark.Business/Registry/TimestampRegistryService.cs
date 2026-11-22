@@ -157,27 +157,27 @@ public sealed class TimestampRegistryService(ITimestampRegistry registry)
         ValidateReturnedRecords(records, organizationId, period);
 
         var manifest = new
+        {
+            format = "temporalmark-period-export-v1",
+            organizationId,
+            fromUtc = period.FromUtc,
+            toUtcExclusive = period.ToUtcExclusive,
+            exportedAtUtc = DateTimeOffset.UtcNow,
+            count = records.Count,
+            entries = records.Select(record => new
             {
-                format = "temporalmark-period-export-v1",
-                organizationId,
-                fromUtc = period.FromUtc,
-                toUtcExclusive = period.ToUtcExclusive,
-                exportedAtUtc = DateTimeOffset.UtcNow,
-                count = records.Count,
-                entries = records.Select(record => new
-                {
-                    record.Id,
-                    record.IssuedUtc,
-                    record.HashAlgorithmOid,
-                    record.DigestBase64,
-                    record.PolicyOid,
-                    record.ProviderId,
-                    record.TokenSha256Hex,
-                    validationState = record.ValidationState.ToString(),
-                    record.EvidenceReference,
-                    responseFile = $"tokens/{record.Id:N}.tsr"
-                }).ToArray()
-            };
+                record.Id,
+                record.IssuedUtc,
+                record.HashAlgorithmOid,
+                record.DigestBase64,
+                record.PolicyOid,
+                record.ProviderId,
+                record.TokenSha256Hex,
+                validationState = record.ValidationState.ToString(),
+                record.EvidenceReference,
+                responseFile = $"tokens/{record.Id:N}.tsr"
+            }).ToArray()
+        };
 
         // The offline v1 verifier refuses manifests over 8 MiB of actual
         // UTF-8 JSON. Bound serializer output BEFORE allocating any ZIP:
@@ -226,6 +226,19 @@ public sealed class TimestampRegistryService(ITimestampRegistry registry)
         {
             RequireCapacityFor(count);
             base.Write(buffer, offset, count);
+        }
+
+        public override void WriteByte(byte value)
+        {
+            RequireCapacityFor(1);
+            base.WriteByte(value);
+        }
+
+        public override void SetLength(long value)
+        {
+            if (value > ExportManifestLimitBytes)
+                throw new ExportTooLargeException();
+            base.SetLength(value);
         }
 
         public override void Write(ReadOnlySpan<byte> buffer)
