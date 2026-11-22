@@ -36,6 +36,13 @@ public sealed class TimestampRegistryService(ITimestampRegistry registry)
         if (record is null) return null;
         if (record.OrganizationId != organizationId)
             throw new InvalidOperationException("Repository returned a record outside authorized tenant.");
+        // Bind the result to the exact requested receipt, not merely the
+        // authorized tenant. An alternate/broken repository could otherwise
+        // deliver another valid receipt and audit the requested ID instead.
+        // This precedes size/hash/status checks to avoid wrong-ID metadata
+        // disclosure. The real PostgreSQL adapter also filters by both keys.
+        if (record.Id != recordId)
+            throw new InvalidOperationException("Repository returned a receipt outside requested identity.");
         // Use the same conservative per-receipt pilot budget as synchronous
         // ZIP export and the strict offline v1 checker. Legacy rows with
         // matching hashes can still be oversized; refuse before SHA hashing.
