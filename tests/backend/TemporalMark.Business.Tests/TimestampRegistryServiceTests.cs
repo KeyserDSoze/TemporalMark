@@ -411,6 +411,142 @@ public sealed class TimestampRegistryServiceTests
         Assert.True(search.HasMore);
     }
 
+    // #171 / ADR 0129: page and imprint-search JSON omit DER, but Business
+    // still materializes and SHA-256 hashes every returned retained receipt.
+    // Reuse the synchronous ZIP's pilot byte limits before any hashing.
+    [Fact]
+    public async Task PageRejectsShaConsistentOversizedLegacyDerBeforeReturningMetadata()
+    {
+        var der = new byte[1024 * 1024 + 1];
+        var record = MakeRecord(TenantA) with
+        {
+            ResponseDer = der,
+            TokenSha256Hex = Convert.ToHexString(SHA256.HashData(der))
+        };
+        record.Validate(); // Intact hash; only the absent page budget can fail.
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            new TimestampRegistryService(new FakeRegistry([], overridePage: [record]))
+                .PageAsync(TenantA, Period, 0, 1, default));
+        Assert.DoesNotContain(TenantA.ToString(), error.Message);
+        Assert.DoesNotContain(record.Id.ToString(), error.Message);
+        Assert.DoesNotContain(record.TokenSha256Hex, error.Message);
+        Assert.DoesNotContain(record.ProviderId, error.Message);
+    }
+
+    [Fact]
+    public async Task SearchRejectsOversizedShaConsistentLookaheadBeforeHasMore()
+    {
+        var first = MakeRecord(TenantA);
+        var largeDer = new byte[1024 * 1024 + 1];
+        var lookahead = first with
+        {
+            Id = Guid.NewGuid(),
+            IssuedUtc = first.IssuedUtc.AddMinutes(1),
+            ResponseDer = largeDer,
+            TokenSha256Hex = Convert.ToHexString(SHA256.HashData(largeDer))
+        };
+        lookahead.Validate();
+        // Both rows are same-tenant, in UTC order and have canonical document
+        // SHA-256 imprint; second row must be guarded even when limit=1.
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            new TimestampRegistryService(new FakeRegistry([], overrideSearch: [first, lookahead]))
+                .SearchByDocumentSha256Async(
+                    TenantA, Period, new string('0', 64), 0, 1, default));
+        Assert.DoesNotContain(TenantA.ToString(), error.Message);
+        Assert.DoesNotContain(lookahead.Id.ToString(), error.Message);
+        Assert.DoesNotContain(lookahead.TokenSha256Hex, error.Message);
+    }
+
+    [Fact]
+    public async Task PageRejectsSixtyFiveMiBValidDerBatchBeforeMetadata()
+    {
+        // Same physical buffer; 65 distinct valid rows and UTC timestamps.
+        // Do not allocate 65 independent MiB arrays in the test runner.
+        var der = new byte[1024 * 1024];
+        var sample = MakeRecord(TenantA) with
+        {
+            ResponseDer = der,
+            TokenSha256Hex = Convert.ToHexString(SHA256.HashData(der))
+        };
+        var rows = Enumerable.Range(0, 65)
+            .Select(i => sample with
+            {
+                Id = Guid.NewGuid(),
+                IssuedUtc = sample.IssuedUtc.AddMinutes(i)
+            }).ToArray();
+        sample.Validate();
+        Assert.Equal(65L * 1024 * 1024, rows.Sum(r => (long)r.ResponseDer.Length));
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            new TimestampRegistryService(new FakeRegistry([], overridePage: rows))
+                .PageAsync(TenantA, Period, 0, 200, default));
+        Assert.DoesNotContain(TenantA.ToString(), error.Message);
+        Assert.DoesNotContain(sample.TokenSha256Hex, error.Message);
+        Assert.DoesNotContain(sample.ProviderId, error.Message);
+    }
+
+    [Fact]
+    public async Task PageAndSearchAcceptOneMiBValidDerAtExactBoundary()
+    {
+        var der = new byte[1024 * 1024];
+        var first = MakeRecord(TenantA) with
+        {
+            ResponseDer = der,
+            TokenSha256Hex = Convert.ToHexString(SHA256.HashData(der))
+        };
+        var searchRows = new[] { first, first with
+        {
+            Id = Guid.NewGuid(),
+            IssuedUtc = first.IssuedUtc.AddMinutes(1)
+        }};
+        var service = new TimestampRegistryService(new FakeRegistry(
+            [], overridePage: [first], overrideSearch: searchRows));
+
+        var page = await service.PageAsync(TenantA, Period, 0, 1, default);
+        Assert.Equal(first.Id, Assert.Single(page).Id);
+        var search = await service.SearchByDocumentSha256Async(
+            TenantA, Period, new string('0', 64), 0, 1, default);
+        Assert.Equal(first.Id, Assert.Single(search.Items).Id);
+        Assert.True(search.HasMore);
+    }
+
+    [Fact]
+    public async Task PageAcceptsExactlySixtyFourMiBDerBatch()
+    {
+        var der = new byte[1024 * 1024];
+        var sample = MakeRecord(TenantA) with
+        {
+            ResponseDer = der,
+            TokenSha256Hex = Convert.ToHexString(SHA256.HashData(der))
+        };
+        var rows = Enumerable.Range(0, 64)
+            .Select(i => sample with
+            {
+                Id = Guid.NewGuid(),
+                IssuedUtc = sample.IssuedUtc.AddMinutes(i)
+            }).ToArray();
+        var page = await new TimestampRegistryService(
+            new FakeRegistry([], overridePage: rows))
+                .PageAsync(TenantA, Period, 0, 200, default);
+        Assert.Equal(64, page.Count);
+        Assert.Equal(64L * 1024 * 1024,
+            page.Sum(r => (long)r.ResponseDer.Length));
+    }
+
+    [Fact]
+    public async Task PageRejectsForeignTenantBeforeOversizedDerPolicy()
+    {
+        var der = new byte[1024 * 1024 + 1];
+        var foreign = MakeRecord(TenantB) with
+        {
+            ResponseDer = der,
+            TokenSha256Hex = Convert.ToHexString(SHA256.HashData(der))
+        };
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            new TimestampRegistryService(new FakeRegistry([], overridePage: [foreign]))
+                .PageAsync(TenantA, Period, 0, 1, default));
+        Assert.Equal("Repository returned a record outside authorized tenant/period.", error.Message);
+    }
+
     [Fact]
     public async Task PageRejectsRepositoryCrossTenantLeak()
     {
