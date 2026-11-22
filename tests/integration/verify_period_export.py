@@ -124,8 +124,17 @@ def require_local_central_metadata_match(
     header = zipped.fp.read(30)
     require(len(header) == 30 and header[:4] == b"PK\x03\x04")
     local_flags, local_method = struct.unpack_from("<HH", header, 6)
+    local_crc, local_compressed, local_uncompressed = struct.unpack_from(
+        "<III", header, 14)
+    # The current seekable .NET v1 ZIP writes exact CRC32 and lengths in
+    # every local header. Streaming data-descriptor (bit 3) ZIPs are outside
+    # this deliberately narrow profile, even if generic zipfile reads them.
+    require((local_flags & 0x0008) == 0)
     require(local_flags == info.flag_bits and
             local_method == info.compress_type)
+    require(local_crc == info.CRC and
+            local_compressed == info.compress_size and
+            local_uncompressed == info.file_size)
 
 
 def archive_bytes(source: object) -> int:
