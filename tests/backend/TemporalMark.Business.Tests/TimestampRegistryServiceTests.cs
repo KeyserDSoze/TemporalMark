@@ -137,6 +137,54 @@ public sealed class TimestampRegistryServiceTests
         Assert.Null(missing);
     }
 
+    // #170 / ADR 0128: FindByIdAsync is tenant/id-filtered in PostgreSQL,
+    // but a buggy adapter can still return the wrong SAME-tenant identity.
+    // The API audits the requested receipt ID only after this read succeeds.
+    [Fact]
+    public async Task DownloadReceiptRejectsDifferentSameTenantIdEvenWithValidDerAndHash()
+    {
+        var requestedId = Guid.Parse("11111111-1111-4111-8111-111111111111");
+        var returned = MakeRecord(TenantA) with
+        {
+            Id = Guid.Parse("22222222-2222-4222-8222-222222222222")
+        };
+        returned.Validate();
+        Assert.NotEqual(requestedId, returned.Id);
+        Assert.Equal(Convert.ToHexString(SHA256.HashData(returned.ResponseDer)),
+            returned.TokenSha256Hex);
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            new TimestampRegistryService(new MaliciousRegistry(returned))
+                .DownloadReceiptAsync(TenantA, requestedId, default));
+        Assert.DoesNotContain(requestedId.ToString(), error.Message);
+        Assert.DoesNotContain(returned.Id.ToString(), error.Message);
+        Assert.DoesNotContain(returned.ProviderId, error.Message);
+        Assert.DoesNotContain(returned.TokenSha256Hex, error.Message);
+    }
+
+    [Fact]
+    public async Task DownloadReceiptWrongIdTakesPriorityOverOversizedLegacyDer()
+    {
+        var requestedId = Guid.Parse("11111111-1111-4111-8111-111111111111");
+        var der = new byte[1024 * 1024 + 1];
+        var returned = MakeRecord(TenantA) with
+        {
+            Id = Guid.Parse("22222222-2222-4222-8222-222222222222"),
+            ResponseDer = der,
+            TokenSha256Hex = Convert.ToHexString(SHA256.HashData(der))
+        };
+        // Valid business record and matching DER hash; the *first* rejection
+        // must bind record identity rather than disclose its byte-size status.
+        returned.Validate();
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            new TimestampRegistryService(new MaliciousRegistry(returned))
+                .DownloadReceiptAsync(TenantA, requestedId, default));
+        Assert.DoesNotContain(requestedId.ToString(), error.Message);
+        Assert.DoesNotContain(returned.Id.ToString(), error.Message);
+        Assert.DoesNotContain(returned.TokenSha256Hex, error.Message);
+        Assert.DoesNotContain(returned.ProviderId, error.Message);
+    }
+
     [Fact]
     public async Task DownloadReceiptRejectsCrossTenantLeak()
     {
