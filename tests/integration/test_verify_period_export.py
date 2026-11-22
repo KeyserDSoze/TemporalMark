@@ -106,6 +106,69 @@ class OfflinePeriodExportTests(unittest.TestCase):
     def test_current_v1_archive_passes_only_local_consistency(self):
         self.assertEqual(1, check(build_zip()))
 
+    # #155 / ADR 0120: Python zipfile may accept a normal v1 ZIP with
+    # unreferenced self-extracting-style bytes or opaque trailing material.
+    # The offline verifier must be stricter than a generic ZIP reader.
+    @staticmethod
+    def _assert_python_zip_can_read_original_v1_members(raw):
+        with zipfile.ZipFile(io.BytesIO(raw), "r") as archive:
+            parsed = json.loads(archive.read("manifest.json"))
+            assert parsed["format"] == "temporalmark-period-export-v1"
+            assert archive.read(record()["responseFile"]) == DER
+            assert archive.comment == b""
+
+    def test_non_zip_prefix_polyglot_is_denied_despite_intact_members(self):
+        base = build_zip()
+        self.assertEqual(1, check(base))
+        overlaid = b"POLYGLOT-OPAQUE-PREFIX:" + base
+        self._assert_python_zip_can_read_original_v1_members(overlaid)
+        with self.assertRaises(verifier.ExportVerificationError):
+            check(overlaid)
+
+    def test_appended_non_zip_payload_is_denied_despite_intact_members(self):
+        base = build_zip()
+        self.assertEqual(1, check(base))
+        overlaid = base + b"TRAILER:unreferenced-private-payload"
+        self._assert_python_zip_can_read_original_v1_members(overlaid)
+        with self.assertRaises(verifier.ExportVerificationError):
+            check(overlaid)
+
+    def test_appended_nul_padding_is_denied_despite_intact_members(self):
+        base = build_zip()
+        self.assertEqual(1, check(base))
+        overlaid = base + b"\x00" * 1024
+        self._assert_python_zip_can_read_original_v1_members(overlaid)
+        with self.assertRaises(verifier.ExportVerificationError):
+            check(overlaid)
+
+    def test_simultaneous_prefix_and_suffix_are_denied(self):
+        base = build_zip()
+        self.assertEqual(1, check(base))
+        overlaid = b"HTML-PREFIX-EXTRA" + base + b"PRIVATE-TRAILER"
+        self._assert_python_zip_can_read_original_v1_members(overlaid)
+        with self.assertRaises(verifier.ExportVerificationError):
+            check(overlaid)
+
+    def test_opaque_zip_suffix_cli_failure_is_generic_with_no_private_values(self):
+        overlaid = build_zip() + b"OPERATOR-PRIVATE-APPENDED-OVERLAY"
+        self._assert_python_zip_can_read_original_v1_members(overlaid)
+        with tempfile.TemporaryDirectory() as folder:
+            private_path = Path(folder) / "private-tenant-export.zip"
+            private_path.write_bytes(overlaid)
+            output, errors = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+                result = verifier.main([str(private_path)])
+            self.assertEqual(1, result)
+            self.assertEqual("", output.getvalue())
+            self.assertIn("FAILED", errors.getvalue())
+            self.assertNotIn(str(private_path), errors.getvalue())
+            self.assertNotIn(ORG, errors.getvalue())
+            self.assertNotIn("OPERATOR-PRIVATE", errors.getvalue())
+
+    def test_exact_v1_archive_with_zero_or_one_receipt_is_still_accepted(self):
+        self.assertEqual(1, check(build_zip()))
+        self.assertEqual(0, check(build_zip(manifest([]))))
+
     def test_empty_period_export_is_allowed(self):
         self.assertEqual(0, check(build_zip(manifest([]))))
 
