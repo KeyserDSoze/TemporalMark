@@ -53,6 +53,8 @@ jobs:
           python3 -m unittest discover -s tests/integration -p 'test_publish_ci_verdict.py' -v
           # RED-first #107: offline ZIP integrity without legal/trust assertions.
           python3 -m unittest discover -s tests/integration -p 'test_verify_period_export.py' -v
+          # #167: real API smoke export wrapper must use strict offline v1 checker.
+          python3 -m unittest discover -s tests/integration -p 'test_api_export_offline_gate.py' -v
       - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
         with:
           dotnet-version: 10.0.x
