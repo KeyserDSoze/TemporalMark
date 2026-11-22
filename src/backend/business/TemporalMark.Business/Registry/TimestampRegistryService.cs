@@ -21,6 +21,8 @@ public sealed class TimestampRegistryService(ITimestampRegistry registry)
     public const int ExportLimit = 10000;
     public const int ExportReceiptDerLimitBytes = 1024 * 1024;
     public const long ExportTotalDerLimitBytes = 64L * 1024 * 1024;
+    public const int ExportManifestLimitBytes = 8 * 1024 * 1024;
+    public const int ExportArchiveLimitBytes = 80 * 1024 * 1024;
 
     public async Task<byte[]?> DownloadReceiptAsync(
         Guid organizationId, Guid recordId, CancellationToken cancellationToken)
@@ -154,10 +156,7 @@ public sealed class TimestampRegistryService(ITimestampRegistry registry)
         // otherwise create ambiguous tokens/{id}.tsr archive paths.
         ValidateReturnedRecords(records, organizationId, period);
 
-        using var buffer = new MemoryStream();
-        using (var zip = new ZipArchive(buffer, ZipArchiveMode.Create, leaveOpen: true))
-        {
-            var manifest = new
+        var manifest = new
             {
                 format = "temporalmark-period-export-v1",
                 organizationId,
@@ -180,9 +179,20 @@ public sealed class TimestampRegistryService(ITimestampRegistry registry)
                 }).ToArray()
             };
 
+        // The offline v1 verifier refuses manifests over 8 MiB of actual
+        // UTF-8 JSON. Bound serializer output BEFORE allocating any ZIP:
+        // Unicode escaping and metadata length make char estimates unsafe.
+        await using var manifestBuffer = new BoundedManifestStream();
+        await JsonSerializer.SerializeAsync(
+            manifestBuffer, manifest, cancellationToken: cancellationToken);
+        manifestBuffer.Position = 0;
+
+        using var buffer = new MemoryStream();
+        using (var zip = new ZipArchive(buffer, ZipArchiveMode.Create, leaveOpen: true))
+        {
             var index = zip.CreateEntry("manifest.json", CompressionLevel.Optimal);
             await using (var output = index.Open())
-                await JsonSerializer.SerializeAsync(output, manifest, cancellationToken: cancellationToken);
+                await manifestBuffer.CopyToAsync(output, cancellationToken);
 
             foreach (var record in records)
             {
@@ -191,7 +201,54 @@ public sealed class TimestampRegistryService(ITimestampRegistry registry)
                 await output.WriteAsync(record.ResponseDer, cancellationToken);
             }
         }
+        // Align the physical v1 producer with the standalone offline
+        // verifer's outer-file cap. Never return a partial/unsupported ZIP.
+        if (buffer.Length > ExportArchiveLimitBytes)
+            throw new ExportTooLargeException();
         return buffer.ToArray();
+    }
+
+    /// <summary>
+    /// Holds one v1 manifest and never accepts writes beyond its real
+    /// serialized UTF-8 JSON budget, including async serializer writes.
+    /// No unbounded SerializeToUtf8Bytes allocation and no private values
+    /// in the overflow exception.
+    /// </summary>
+    private sealed class BoundedManifestStream : MemoryStream
+    {
+        private void RequireCapacityFor(int count)
+        {
+            if (count < 0 || count > ExportManifestLimitBytes - Length)
+                throw new ExportTooLargeException();
+        }
+
+        public override void Write(byte[] buffer, int offset, int count)
+        {
+            RequireCapacityFor(count);
+            base.Write(buffer, offset, count);
+        }
+
+        public override void Write(ReadOnlySpan<byte> buffer)
+        {
+            RequireCapacityFor(buffer.Length);
+            base.Write(buffer);
+        }
+
+        public override Task WriteAsync(
+            byte[] buffer, int offset, int count, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            RequireCapacityFor(count);
+            return base.WriteAsync(buffer, offset, count, cancellationToken);
+        }
+
+        public override ValueTask WriteAsync(
+            ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            RequireCapacityFor(buffer.Length);
+            return base.WriteAsync(buffer, cancellationToken);
+        }
     }
 
     private static void ValidateSynchronousExportByteBudget(IReadOnlyList<TimestampRecord> records)
