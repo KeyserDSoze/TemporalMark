@@ -323,13 +323,36 @@ public sealed class TimestampRegistryService(ITimestampRegistry registry)
     private static void ValidateReturnedRecords(
         IReadOnlyList<TimestampRecord> records, Guid organizationId, UtcPeriod period)
     {
-        var seenIds = new HashSet<Guid>();
+        // #171 / ADR 0129: check ALL tenant/period identities first. An
+        // oversized foreign record must not turn a scope failure into a
+        // byte-budget detail. No repository rows have been exposed yet.
         foreach (var record in records)
         {
             if (record.OrganizationId != organizationId || !period.Contains(record.IssuedUtc))
                 throw new InvalidOperationException(
                     "Repository returned a record outside authorized tenant/period.");
+        }
 
+        // Page/search both materialize the original DER for local SHA-256
+        // checking even though only metadata is returned in JSON. Apply
+        // the same conservative pilot source-byte limits as ZIP BEFORE
+        // hashing any records, including the search lookahead row.
+        // PostgreSQL has already materialized bytea: this is NOT a
+        // pre-query allocation/concurrency cap.
+        long totalBytes = 0;
+        foreach (var record in records)
+        {
+            var length = record.ResponseDer.Length;
+            if (length > ExportReceiptDerLimitBytes ||
+                length > ExportTotalDerLimitBytes - totalBytes)
+                throw new InvalidOperationException(
+                    "Repository returned a registry batch outside pilot evidence read limits.");
+            totalBytes += length;
+        }
+
+        var seenIds = new HashSet<Guid>();
+        foreach (var record in records)
+        {
             // Existing domain rule checks actual retained token bytes against
             // its stored SHA-256; this does not assert RFC3161 qualification.
             record.Validate();
