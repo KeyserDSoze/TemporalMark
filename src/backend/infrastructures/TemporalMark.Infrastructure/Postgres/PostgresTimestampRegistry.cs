@@ -91,7 +91,7 @@ public sealed class PostgresTimestampRegistry(NpgsqlDataSource database) : ITime
 
     public Task<IReadOnlyList<TimestampRecord>> ForExportAsync(
         Guid organizationId, UtcPeriod period, int maxResults, CancellationToken cancellationToken) =>
-        ReadAsync(organizationId, period, 0, maxResults, cancellationToken);
+        ReadBoundedExportAsync(organizationId, period, maxResults, cancellationToken);
 
     // Both queries deliberately contain only id + logical bytea length in
     // MATERIALIZED chosen, with the original ORDER BY / LIMIT / OFFSET. No
@@ -190,26 +190,69 @@ public sealed class PostgresTimestampRegistry(NpgsqlDataSource database) : ITime
         return records;
     }
 
-    private async Task<IReadOnlyList<TimestampRecord>> ReadAsync(
-        Guid organizationId, UtcPeriod period, int offset, int limit, CancellationToken cancellationToken)
+    // #173 / ADR 0131: keep export's HTTP 413 contract, rather than
+    // reusing page/search's generic InvalidOperationException. One PG17
+    // statement/snapshot selects ONLY IDs and logical bytea lengths in
+    // the materialized CTE; a whole-batch row/size gate controls the
+    // eventual PostgreSQL wire projection of raw retained DER.
+    //
+    // A failed 1MiB / 64MiB / 10k-record budget yields NULL::bytea
+    // for EVERY selected row, and ExportTooLargeException is thrown
+    // before Npgsql GetFieldValue<byte[]> materializes any raw receipt.
+    // This does not bound internal TOAST I/O or accepted concurrent loads.
+    private const string BoundedExportSql = """
+        WITH chosen AS MATERIALIZED (
+            SELECT id, octet_length(response_der)::bigint AS der_bytes
+              FROM public.timestamp_registry
+             WHERE organization_id = @org
+               AND issued_utc >= @start AND issued_utc < @end
+             ORDER BY issued_utc, id
+             LIMIT @limit
+        ),
+        guarded AS MATERIALIZED (
+            SELECT id,
+                   bool_and(der_bytes BETWEEN 1 AND @max_receipt_bytes) OVER () AS all_receipts_ok,
+                   sum(der_bytes) OVER () AS batch_bytes,
+                   count(*) OVER () AS record_count
+              FROM chosen
+        )
+        SELECT t.id, t.organization_id, t.issued_utc, t.hash_algorithm_oid,
+               t.digest_base64, t.policy_oid, t.provider_id,
+               t.token_sha256_hex, t.validation_state,
+               CASE WHEN g.all_receipts_ok
+                         AND g.batch_bytes <= @max_batch_bytes
+                         AND g.record_count <= @max_records
+                    THEN t.response_der ELSE NULL::bytea END AS response_der,
+               t.evidence_reference
+          FROM guarded AS g
+          JOIN public.timestamp_registry AS t
+            ON t.id = g.id AND t.organization_id = @org
+         ORDER BY t.issued_utc, t.id
+        """;
+
+    private async Task<IReadOnlyList<TimestampRecord>> ReadBoundedExportAsync(
+        Guid organizationId, UtcPeriod period, int maxResults,
+        CancellationToken cancellationToken)
     {
         await using var connection = await database.OpenConnectionAsync(cancellationToken);
-        await using var command = new NpgsqlCommand("""
-            SELECT id, organization_id, issued_utc, hash_algorithm_oid, digest_base64,
-                   policy_oid, provider_id, token_sha256_hex, validation_state,
-                   response_der, evidence_reference
-              FROM timestamp_registry
-             WHERE organization_id = @org AND issued_utc >= @start AND issued_utc < @end
-             ORDER BY issued_utc, id
-             LIMIT @limit OFFSET @offset
-            """, connection);
+        await using var command = new NpgsqlCommand(BoundedExportSql, connection);
         SetCommonParameters(command, organizationId, period);
-        command.Parameters.AddWithValue("limit", limit);
-        command.Parameters.AddWithValue("offset", offset);
+        command.Parameters.AddWithValue("limit", maxResults);
+        command.Parameters.AddWithValue(
+            "max_receipt_bytes", TimestampRegistryService.ExportReceiptDerLimitBytes);
+        command.Parameters.AddWithValue(
+            "max_batch_bytes", TimestampRegistryService.ExportTotalDerLimitBytes);
+        command.Parameters.AddWithValue("max_records", TimestampRegistryService.ExportLimit);
+
         var records = new List<TimestampRecord>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
         {
+            // A later over-budget row invalidates the *entire* batch,
+            // including all earlier rows. Do not expose any partial result
+            // or change ExportZipAsync's original HTTP 413 error mapping.
+            if (reader.IsDBNull(9))
+                throw new ExportTooLargeException();
             records.Add(MapRecord(reader));
         }
         return records;
