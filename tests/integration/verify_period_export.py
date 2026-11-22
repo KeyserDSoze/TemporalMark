@@ -110,7 +110,7 @@ def read_bounded(zipped: zipfile.ZipFile, info: zipfile.ZipInfo,
 
 
 def require_local_central_metadata_match(
-        zipped: zipfile.ZipFile, info: zipfile.ZipInfo) -> None:
+        zipped: zipfile.ZipFile, info: zipfile.ZipInfo) -> int:
     """Check two ZIP views before any member is decompressed (ADR 0078).
 
     Python ZipFile.open() binds local filename to central filename but does
@@ -135,6 +135,13 @@ def require_local_central_metadata_match(
     require(local_crc == info.CRC and
             local_compressed == info.compress_size and
             local_uncompressed == info.file_size)
+    # Data descriptors are forbidden above: a v1 member occupies exactly
+    # local header (30), local name+extra and declared compressed bytes.
+    # Return the first byte after the member without reading its contents.
+    local_name_len, local_extra_len = struct.unpack_from("<HH", header, 26)
+    member_end = offset + 30 + local_name_len + local_extra_len + info.compress_size
+    require(member_end <= MAX_ARCHIVE)
+    return member_end
 
 
 def archive_bytes(source: object) -> int:
@@ -148,7 +155,7 @@ def archive_bytes(source: object) -> int:
 
 
 def require_exact_v1_zip_envelope(
-        zipped: zipfile.ZipFile, archive_size: int, member_count: int) -> None:
+        zipped: zipfile.ZipFile, archive_size: int, member_count: int) -> int:
     """Reject prefix/trailer/ZIP64/multi-disk ambiguity in *v1* (ADR 0120).
 
     Generic Python zipfile intentionally accepts ZIP appended to other bytes.
@@ -179,6 +186,7 @@ def require_exact_v1_zip_envelope(
     # No unclaimed gap, hidden attachment, shifted central directory or
     # self-extracting prefix may exist in this intentionally narrow profile.
     require(central_offset + central_size == archive_size - 22)
+    return central_offset
 
 
 def verify_archive(source: object) -> int:
@@ -190,14 +198,20 @@ def verify_archive(source: object) -> int:
             infos = zipped.infolist()
             # Check the full physical v1 container before reading any
             # manifest JSON or TSR; zipfile alone tolerates ZIP overlays.
-            require_exact_v1_zip_envelope(zipped, size, len(infos))
+            central_start = require_exact_v1_zip_envelope(zipped, size, len(infos))
             require(1 <= len(infos) <= MAX_COUNT + 1)
             names = [item.filename for item in infos]
             require(len(names) == len(set(names)))
             require("manifest.json" in names)
             require(not zipped.comment)
-            for info in infos:
-                require_local_central_metadata_match(zipped, info)
+            # Current seekable v1 writes contiguous local member data.
+            # Central metadata and hashes alone can hide an unreferenced
+            # opaque gap between members or immediately before central.
+            expected_local_start = 0
+            for info in sorted(infos, key=lambda item: item.header_offset):
+                require(info.header_offset == expected_local_start)
+                expected_local_start = require_local_central_metadata_match(zipped, info)
+                require(expected_local_start <= central_start)
                 require(not info.is_dir())
                 require(not (info.flag_bits & 0x1))  # no encrypted members
                 # Current .NET v1 exports regular files using STORE/DEFLATE.
@@ -213,6 +227,10 @@ def verify_archive(source: object) -> int:
                 # bounded manifest. Never extract files to a filesystem.
                 require(info.filename == "manifest.json" or
                         re.fullmatch(r"tokens/[0-9a-f]{32}\.tsr", info.filename) is not None)
+
+            # The final local member must end exactly where the verified
+            # central directory starts. No unclaimed bytes anywhere in v1.
+            require(expected_local_start == central_start)
 
             manifest_info = zipped.getinfo("manifest.json")
             raw = read_bounded(zipped, manifest_info, MAX_MANIFEST)
