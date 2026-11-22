@@ -419,6 +419,73 @@ public sealed class TimestampRegistryServiceTests
                 .ExportZipAsync(TenantA, Period, CancellationToken.None));
     }
 
+    // #166 / ADR 0124: an ordinary compressed ZIP can hide an oversized
+    // *uncompressed* manifest that our own strict v1 offline verifier denies.
+    // Stored DER and SHA, tenant, UTC and Unverified state are all valid.
+    [Fact]
+    public async Task ExportRejectsSingleOversizedJsonManifestBeforeReturningZip()
+    {
+        var receipt = MakeRecord(TenantA) with
+        {
+            EvidenceReference = new string('X', 8 * 1024 * 1024)
+        };
+
+        await Assert.ThrowsAsync<ExportTooLargeException>(() =>
+            new TimestampRegistryService(new FakeRegistry([receipt]))
+                .ExportZipAsync(TenantA, Period, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task ExportRejectsAggregateMetadataOverEightMiBDespiteSmallReceipts()
+    {
+        // Each record is well below 8 MiB and all rows share the same
+        // allocation; only their combined serialized manifest is too large.
+        var sharedReference = new string('Q', 1024 * 1024);
+        var rows = Enumerable.Range(0, 9)
+            .Select(_ => MakeRecord(TenantA) with
+            {
+                EvidenceReference = sharedReference
+            }).ToArray();
+
+        await Assert.ThrowsAsync<ExportTooLargeException>(() =>
+            new TimestampRegistryService(new FakeRegistry(rows))
+                .ExportZipAsync(TenantA, Period, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task ExportRejectsEscapedUnicodeJsonBytesRatherThanCountingCSharpChars()
+    {
+        // System.Text.Json escapes non-ASCII chars by default. This short
+        // 1.5M-char string expands past 8 MiB in serialized JSON UTF-8.
+        var receipt = MakeRecord(TenantA) with
+        {
+            EvidenceReference = new string('\u00e9', 1_500_000)
+        };
+
+        await Assert.ThrowsAsync<ExportTooLargeException>(() =>
+            new TimestampRegistryService(new FakeRegistry([receipt]))
+                .ExportZipAsync(TenantA, Period, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task ExportAcceptsLargeButInBudgetJsonManifestAndPreservesMetadata()
+    {
+        var reference = new string('R', 7 * 1024 * 1024);
+        var receipt = MakeRecord(TenantA) with { EvidenceReference = reference };
+        var zipBytes = await new TimestampRegistryService(new FakeRegistry([receipt]))
+            .ExportZipAsync(TenantA, Period, CancellationToken.None);
+
+        Assert.True(zipBytes.LongLength <= 80L * 1024 * 1024);
+        using var zip = new ZipArchive(new MemoryStream(zipBytes), ZipArchiveMode.Read);
+        var manifest = zip.GetEntry("manifest.json");
+        Assert.NotNull(manifest);
+        Assert.InRange(manifest!.Length, 1, 8L * 1024 * 1024);
+        using var json = JsonDocument.Parse(manifest.Open());
+        Assert.Equal(reference, json.RootElement.GetProperty("entries")[0]
+            .GetProperty("EvidenceReference").GetString());
+        Assert.NotNull(zip.GetEntry($"tokens/{receipt.Id:N}.tsr"));
+    }
+
     [Fact]
     public async Task ExportAcceptsOneMiBReceiptAtInclusivePerReceiptBoundary()
     {
