@@ -621,6 +621,35 @@ def assert_oversized_legacy_receipt_is_not_downloaded(a_token: str, b_token: str
 
 
 
+
+def assert_oversized_legacy_registry_page_is_denied(a_token: str, b_token: str):
+    """#171: after #169's one SHA-consistent oversized A-only row is seeded,
+    list API must refuse entire A metadata page, while B stays readable.
+    This is a real disposable PostgreSQL + signed Keycloak .NET HTTP probe.
+    """
+    page_url = "/stamps?" + urllib.parse.urlencode({
+        "fromUtc": FROM, "toUtcExclusive": TO, "offset": 0, "limit": 50
+    })
+    status, headers, body = api(page_url, token=a_token)
+    if status != 500:
+        raise AssertionError(
+            f"SHA-consistent oversized legacy DER was accepted on owner registry page (HTTP {status}; body withheld)")
+    if any(private in body for private in (
+        ORG_A.encode("ascii"), OVERSIZED_LEGACY_STAMP.encode("ascii"),
+        b"CI_ONLY_OVERSIZE")):
+        raise AssertionError("Oversized metadata-page denial disclosed private evidence identity")
+
+    # Wrong-tenant records must never poison or appear in B's own valid
+    # listing; the original B 1-row test canary remains independently visible.
+    b_items = json.loads(must_status(
+        "Other signed tenant registry page unaffected by oversized A-only row",
+        api(page_url, token=b_token), 200)[1])
+    if len(b_items) != 1 or b_items[0].get("id") != STAMP_B:
+        raise AssertionError("Other tenant registry page isolation regressed")
+    print("PASS: oversized SHA-consistent legacy DER denies A metadata page; B tenant registry remains isolated")
+
+
+
 def main():
     if os.environ.get("TEMPORALMARK_CI_API_ISOLATION") != "1":
         raise AssertionError("Explicit CI-only fixture gate required")
@@ -706,6 +735,7 @@ def main():
     assert_shared_tenant_principal_search_quota(a_token, b_token)
     assert_search_rate_store_permission_failure_is_closed(b_token)
     assert_oversized_legacy_receipt_is_not_downloaded(a_token, b_token)
+    assert_oversized_legacy_registry_page_is_denied(a_token, b_token)
     print("PASS: real Keycloak-signed JWT 401/403; two isolated PostgreSQL tenants; "
           "real API list/summary/UTC daily/document-SHA256-search/TSR/ZIP/audit; header/query/body spoofing; "
           "inactive membership; no qualified issuance")
