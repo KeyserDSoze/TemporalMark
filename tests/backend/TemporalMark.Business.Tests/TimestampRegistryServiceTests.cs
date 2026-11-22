@@ -203,6 +203,110 @@ public sealed class TimestampRegistryServiceTests
                 .SearchByDocumentSha256Async(TenantA, Period, hex, 0, 50, default));
     }
 
+    // #168 / ADR 0126: the real PG repository returns ordered, bounded
+    // batches; the Business read boundary must not trust a buggy adapter.
+    [Fact]
+    public async Task PageRejectsValidButOverLimitRepositoryBatch()
+    {
+        var first = MakeRecord(TenantA);
+        var second = first with { Id = Guid.NewGuid(), IssuedUtc = first.IssuedUtc.AddMinutes(1) };
+        first.Validate();
+        second.Validate();
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            new TimestampRegistryService(new FakeRegistry([], overridePage: [first, second]))
+                .PageAsync(TenantA, Period, 0, 1, default));
+        Assert.DoesNotContain(TenantA.ToString(), error.Message);
+        Assert.DoesNotContain(first.ProviderId, error.Message);
+    }
+
+    [Fact]
+    public async Task PageRejectsDescendingIssuedUtcDespiteValidTenantAndDer()
+    {
+        var earlier = MakeRecord(TenantA);
+        var later = earlier with { Id = Guid.NewGuid(), IssuedUtc = earlier.IssuedUtc.AddMinutes(1) };
+        earlier.Validate();
+        later.Validate();
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            new TimestampRegistryService(new FakeRegistry([], overridePage: [later, earlier]))
+                .PageAsync(TenantA, Period, 0, 2, default));
+    }
+
+    [Fact]
+    public async Task PageRejectsDescendingCanonicalUuidWhenIssuedUtcTies()
+    {
+        var smaller = MakeRecord(TenantA) with
+        {
+            Id = Guid.Parse("10000000-0000-0000-0000-000000000001")
+        };
+        var larger = smaller with
+        {
+            Id = Guid.Parse("20000000-0000-0000-0000-000000000002")
+        };
+        smaller.Validate();
+        larger.Validate();
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            new TimestampRegistryService(new FakeRegistry([], overridePage: [larger, smaller]))
+                .PageAsync(TenantA, Period, 0, 2, default));
+    }
+
+    [Fact]
+    public async Task SearchRejectsDescendingIssuedUtcInLookaheadBeforeHasMore()
+    {
+        var earlier = MakeRecord(TenantA);
+        var later = earlier with { Id = Guid.NewGuid(), IssuedUtc = earlier.IssuedUtc.AddMinutes(1) };
+        earlier.Validate();
+        later.Validate();
+        // Two otherwise-valid matches for limit=1: the second *lookahead*
+        // record may not be skipped by the ordering check.
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            new TimestampRegistryService(new FakeRegistry([], overrideSearch: [later, earlier]))
+                .SearchByDocumentSha256Async(TenantA, Period, new string('0', 64), 0, 1, default));
+        Assert.DoesNotContain(TenantA.ToString(), error.Message);
+        Assert.DoesNotContain(new string('0', 64), error.Message);
+    }
+
+    [Fact]
+    public async Task SearchRejectsDescendingCanonicalUuidInLookaheadTie()
+    {
+        var smaller = MakeRecord(TenantA) with
+        {
+            Id = Guid.Parse("10000000-0000-0000-0000-000000000001")
+        };
+        var larger = smaller with
+        {
+            Id = Guid.Parse("20000000-0000-0000-0000-000000000002")
+        };
+        smaller.Validate();
+        larger.Validate();
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            new TimestampRegistryService(new FakeRegistry([], overrideSearch: [larger, smaller]))
+                .SearchByDocumentSha256Async(TenantA, Period, new string('0', 64), 0, 1, default));
+    }
+
+    [Fact]
+    public async Task PageAndSearchAcceptStrictlySortedSameUtcIdTie()
+    {
+        var smaller = MakeRecord(TenantA) with
+        {
+            Id = Guid.Parse("10000000-0000-0000-0000-000000000001")
+        };
+        var larger = smaller with
+        {
+            Id = Guid.Parse("20000000-0000-0000-0000-000000000002")
+        };
+        var rows = new[] { smaller, larger };
+        var repository = new FakeRegistry([], overridePage: rows, overrideSearch: rows);
+        var registry = new TimestampRegistryService(repository);
+
+        var page = await registry.PageAsync(TenantA, Period, 0, 2, default);
+        Assert.Equal(new[] { smaller.Id, larger.Id }, page.Select(x => x.Id).ToArray());
+
+        var search = await registry.SearchByDocumentSha256Async(
+            TenantA, Period, new string('0', 64), 0, 1, default);
+        Assert.Equal(smaller.Id, Assert.Single(search.Items).Id);
+        Assert.True(search.HasMore);
+    }
+
     [Fact]
     public async Task PageRejectsRepositoryCrossTenantLeak()
     {
@@ -520,7 +624,8 @@ public sealed class TimestampRegistryServiceTests
     private sealed class FakeRegistry(
         IReadOnlyList<TimestampRecord> data,
         IReadOnlyList<RegistryDayCount>? overrideDays = null,
-        IReadOnlyList<TimestampRecord>? overrideSearch = null) : ITimestampRegistry
+        IReadOnlyList<TimestampRecord>? overrideSearch = null,
+        IReadOnlyList<TimestampRecord>? overridePage = null) : ITimestampRegistry
     {
         public int DailyQueries { get; private set; }
         public int SearchQueries { get; private set; }
@@ -557,7 +662,7 @@ public sealed class TimestampRegistryServiceTests
         public Task<long> CountAsync(Guid org, UtcPeriod period, CancellationToken ct) =>
             Task.FromResult((long)Filter(org, period).Count());
         public Task<IReadOnlyList<TimestampRecord>> PageAsync(Guid org, UtcPeriod period, int offset, int limit, CancellationToken ct) =>
-            Task.FromResult<IReadOnlyList<TimestampRecord>>(Filter(org, period).Skip(offset).Take(limit).ToArray());
+            Task.FromResult<IReadOnlyList<TimestampRecord>>(overridePage ?? Filter(org, period).Skip(offset).Take(limit).ToArray());
         public Task<IReadOnlyList<TimestampRecord>> ForExportAsync(Guid org, UtcPeriod period, int max, CancellationToken ct) =>
             Task.FromResult<IReadOnlyList<TimestampRecord>>(Filter(org, period).Take(max).ToArray());
     }
