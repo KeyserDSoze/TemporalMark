@@ -224,6 +224,52 @@ public sealed class TimestampIssueServiceTests
         Assert.Equal(record, writer.Record);
     }
 
+    // #182 / ADR 0140: alternate ITimestampProvider cannot produce a
+    // successful new receipt whose future v1 ZIP the offline Python reader
+    // rejects because its policy or provider is C0 separator-only.
+    [Theory]
+    [InlineData("policy")]
+    [InlineData("provider")]
+    public async Task PythonBlankC0ProviderSourceIsRejectedBeforePersistence(
+        string field)
+    {
+        foreach (var source in new[]
+                 { "\u001c", "\u001d", "\u001e", "\u001f", " \u001c\u00a0\u001f" })
+        {
+            Assert.False(string.IsNullOrWhiteSpace(source));
+            var policy = field == "policy" ? source : "1.2.3.4";
+            var providerName = field == "provider" ? source : "CI_TRUSTED_PILOT";
+            var provider = new ScriptedProvider(
+                [0x30, 0x02, 0x01, 0x00], policy, providerName);
+            var writer = new FakeWriter();
+
+            var error = await Assert.ThrowsAsync<TimestampProviderResponseException>(
+                () => new TimestampIssueService(provider, writer).IssueAsync(
+                    Organization, Convert.ToBase64String(new byte[32]), default));
+            Assert.Equal(1, provider.Requests);
+            Assert.Null(writer.Record);
+            Assert.Equal("External TSA response exceeds pilot registry persistence limits.",
+                error.Message);
+            Assert.DoesNotContain(Organization.ToString(), error.Message);
+            Assert.DoesNotContain(Convert.ToBase64String(new byte[32]), error.Message);
+        }
+    }
+
+    [Fact]
+    public async Task IssuanceKeepsVisibleSourceWithEmbeddedSeparatorUnmodified()
+    {
+        var provider = new ScriptedProvider(
+            [0x30, 0x02, 0x01, 0x00], "1.\u001c2.3", "ISSUER\u001fVISIBLE");
+        var writer = new FakeWriter();
+        var issued = await new TimestampIssueService(provider, writer).IssueAsync(
+            Organization, Convert.ToBase64String(new byte[32]), default);
+        Assert.Equal(1, provider.Requests);
+        Assert.Equal("1.\u001c2.3", issued.PolicyOid);
+        Assert.Equal("ISSUER\u001fVISIBLE", issued.ProviderId);
+        Assert.Equal(issued, writer.Record);
+        Assert.Equal(TimestampValidationState.Unverified, issued.ValidationState);
+    }
+
     private sealed class ScriptedProvider(
         byte[] rawDer, string policyOid, string providerId) : ITimestampProvider
     {

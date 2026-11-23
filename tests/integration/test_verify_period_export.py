@@ -531,6 +531,23 @@ class OfflinePeriodExportTests(unittest.TestCase):
             with self.assertRaises(verifier.ExportVerificationError):
                 check(build_zip(manifest([row])))
 
+    # #182 / ADR 0140: establish strict Python v1 behavior independently
+    # of the .NET new-write and historical-read REDs. Python .strip()
+    # treats U+001C–U+001F as whitespace whereas .NET Char.IsWhiteSpace
+    # does not. A visible identifier with an embedded separator is valid.
+    def test_c0_separator_only_policy_and_provider_are_denied(self):
+        for field in ("PolicyOid", "ProviderId"):
+            for source in ("\u001c", "\u001d", "\u001e", "\u001f",
+                           " \u001c\u00a0\u001f"):
+                with self.subTest(field=field, source=ord(source[-1])):
+                    self.assertFalse(bool(source.strip()))
+                    with self.assertRaises(verifier.ExportVerificationError):
+                        check(build_zip(manifest([record(**{field: source})])))
+
+    def test_visible_policy_and_provider_with_embedded_c0_are_preserved(self):
+        row = record(PolicyOid="1.\u001c2.3", ProviderId="ISSUER\u001fVISIBLE")
+        self.assertEqual(1, check(build_zip(manifest([row]))))
+
     def test_untrusted_qualified_state_claim_fails_closed(self):
         for state in ("VerifiedQualifiedExternal", "VerifiedQualifiedOwn", "VerifiedNonQualified"):
             with self.subTest(state=state):

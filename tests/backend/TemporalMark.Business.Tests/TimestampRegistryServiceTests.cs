@@ -16,6 +16,129 @@ public sealed class TimestampRegistryServiceTests
         new DateTimeOffset(2026, 11, 1, 0, 0, 0, TimeSpan.Zero),
         new DateTimeOffset(2026, 12, 1, 0, 0, 0, TimeSpan.Zero));
 
+    // #182 / ADR 0140: Python's str.strip() considers U+001C–U+001F
+    // whitespace, unlike .NET string.IsNullOrWhiteSpace. Source-only
+    // identifiers must be refused on historical reads, including search
+    // lookahead; otherwise v1 exports fail the strict offline ZIP checker.
+    [Theory]
+    [InlineData("policy", "page")]
+    [InlineData("policy", "receipt")]
+    [InlineData("policy", "search")]
+    [InlineData("policy", "export")]
+    [InlineData("provider", "page")]
+    [InlineData("provider", "receipt")]
+    [InlineData("provider", "search")]
+    [InlineData("provider", "export")]
+    public async Task PythonBlankC0SourceMetadataIsDeniedBeforeAuthorizedDelivery(
+        string field, string route)
+    {
+        var sourceVariants = new[]
+        {
+            "\u001c", "\u001d", "\u001e", "\u001f", " \u001c\u00a0\u001f"
+        };
+        foreach (var source in sourceVariants)
+        {
+            Assert.False(string.IsNullOrWhiteSpace(source));
+            var row = field == "policy"
+                ? MakeRecord(TenantA) with { PolicyOid = source }
+                : MakeRecord(TenantA) with { ProviderId = source };
+            row.Validate(); // The previous Domain gate still succeeds.
+            Assert.Equal(
+                Convert.ToHexString(SHA256.HashData(row.ResponseDer)), row.TokenSha256Hex);
+            Assert.Equal(TimestampValidationState.Unverified, row.ValidationState);
+            var service = new TimestampRegistryService(new FakeRegistry([row]));
+
+            Func<Task> read = route switch
+            {
+                "page" => async () =>
+                {
+                    _ = await service.PageAsync(TenantA, Period, 0, 1, default);
+                },
+                "receipt" => async () =>
+                {
+                    _ = await service.DownloadReceiptAsync(TenantA, row.Id, default);
+                },
+                "search" => async () =>
+                {
+                    _ = await service.SearchByDocumentSha256Async(
+                        TenantA, Period, new string('0', 64), 0, 1, default);
+                },
+                "export" => async () =>
+                {
+                    _ = await service.ExportZipAsync(TenantA, Period, default);
+                },
+                _ => throw new InvalidOperationException("Unrecognized fixed route.")
+            };
+            var error = await Assert.ThrowsAsync<InvalidOperationException>(read);
+            Assert.Equal(field == "policy"
+                    ? "Repository returned an unsupported pilot policy identifier."
+                    : "Repository returned an unsupported pilot provider identifier.",
+                error.Message);
+            Assert.DoesNotContain(TenantA.ToString(), error.Message);
+            Assert.DoesNotContain(row.Id.ToString(), error.Message);
+            Assert.DoesNotContain(row.TokenSha256Hex, error.Message);
+            Assert.DoesNotContain(row.DigestBase64, error.Message);
+            Assert.Null(await service.DownloadReceiptAsync(TenantB, row.Id, default));
+            Assert.Empty(await service.PageAsync(TenantB, Period, 0, 10, default));
+        }
+    }
+
+    [Theory]
+    [InlineData("policy")]
+    [InlineData("provider")]
+    public async Task PythonBlankC0SourceInSearchLookaheadDeniesEntireResult(
+        string field)
+    {
+        var owned = MakeRecord(TenantA);
+        foreach (var source in new[] { "\u001c", "\u001d", "\u001e", "\u001f" })
+        {
+            var lookahead = (field == "policy"
+                    ? owned with { PolicyOid = source }
+                    : owned with { ProviderId = source }) with
+                {
+                    Id = Guid.NewGuid(),
+                    IssuedUtc = owned.IssuedUtc.AddMinutes(1)
+                };
+            owned.Validate();
+            lookahead.Validate();
+            var repository = new FakeRegistry([], overrideSearch: [owned, lookahead]);
+            var denied = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                new TimestampRegistryService(repository).SearchByDocumentSha256Async(
+                    TenantA, Period, new string('0', 64), 0, 1, default));
+            Assert.Equal(field == "policy"
+                    ? "Repository returned an unsupported pilot policy identifier."
+                    : "Repository returned an unsupported pilot provider identifier.",
+                denied.Message);
+            Assert.DoesNotContain(lookahead.Id.ToString(), denied.Message);
+            Assert.Equal(1, repository.SearchQueries);
+        }
+    }
+
+    [Fact]
+    public async Task VisibleSourceWithEmbeddedC0RetainsOriginalReadAndExport()
+    {
+        var seed = MakeRecord(TenantA) with
+        {
+            PolicyOid = "1.\u001c2.3",
+            ProviderId = "ISSUER\u001fVISIBLE"
+        };
+        var service = new TimestampRegistryService(new FakeRegistry([seed]));
+        Assert.Equal(seed.PolicyOid, Assert.Single(await service.PageAsync(
+            TenantA, Period, 0, 10, default)).PolicyOid);
+        Assert.Equal(seed.ProviderId, Assert.Single((await service.SearchByDocumentSha256Async(
+            TenantA, Period, new string('0', 64), 0, 1, default)).Items).ProviderId);
+        Assert.Equal(seed.ResponseDer, await service.DownloadReceiptAsync(
+            TenantA, seed.Id, default));
+        var zip = await service.ExportZipAsync(TenantA, Period, default);
+        using var archive = new ZipArchive(new MemoryStream(zip), ZipArchiveMode.Read);
+        using var manifest = JsonDocument.Parse(archive.GetEntry("manifest.json")!.Open());
+        Assert.Equal(seed.PolicyOid, manifest.RootElement.GetProperty("entries")[0]
+            .GetProperty("PolicyOid").GetString());
+        Assert.Equal(seed.ProviderId, manifest.RootElement.GetProperty("entries")[0]
+            .GetProperty("ProviderId").GetString());
+        Assert.Null(await service.DownloadReceiptAsync(TenantB, seed.Id, default));
+    }
+
     // #181 / ADR 0139: the offline v1 ZIP verifier requires a nonblank
     // original PolicyOid. Older SQL owner/restore rows can bypass the
     // current writer's strict nonblank policy admission. No DER/hash or
