@@ -16,6 +16,124 @@ public sealed class TimestampRegistryServiceTests
         new DateTimeOffset(2026, 11, 1, 0, 0, 0, TimeSpan.Zero),
         new DateTimeOffset(2026, 12, 1, 0, 0, 0, TimeSpan.Zero));
 
+    // #181 / ADR 0139: the offline v1 ZIP verifier requires a nonblank
+    // original PolicyOid. Older SQL owner/restore rows can bypass the
+    // current writer's strict nonblank policy admission. No DER/hash or
+    // tenant failure must be mistaken for a new read-policy denial.
+    [Theory]
+    [InlineData("empty", "page")]
+    [InlineData("empty", "receipt")]
+    [InlineData("empty", "search")]
+    [InlineData("empty", "export")]
+    [InlineData("spaces", "page")]
+    [InlineData("spaces", "receipt")]
+    [InlineData("spaces", "search")]
+    [InlineData("spaces", "export")]
+    [InlineData("tab", "page")]
+    [InlineData("tab", "receipt")]
+    [InlineData("tab", "search")]
+    [InlineData("tab", "export")]
+    [InlineData("unicode-nbsp", "page")]
+    [InlineData("unicode-nbsp", "receipt")]
+    [InlineData("unicode-nbsp", "search")]
+    [InlineData("unicode-nbsp", "export")]
+    public async Task BlankHistoricalPolicyOidIsDeniedBeforePilotReadDelivery(
+        string badCase, string route)
+    {
+        var policy = badCase switch
+        {
+            "empty" => "",
+            "spaces" => "   ",
+            "tab" => "\t",
+            "unicode-nbsp" => "\u00A0",
+            _ => throw new InvalidOperationException("Invalid fixed variant.")
+        };
+        var original = MakeRecord(TenantA) with { PolicyOid = policy };
+        original.Validate();
+        Assert.Equal(
+            Convert.ToHexString(SHA256.HashData(original.ResponseDer)), original.TokenSha256Hex);
+        Assert.Equal(TimestampValidationState.Unverified, original.ValidationState);
+        Assert.Equal(Convert.ToBase64String(new byte[32]), original.DigestBase64);
+
+        var service = new TimestampRegistryService(new FakeRegistry([original]));
+        Func<Task> read = route switch
+        {
+            "page" => async () =>
+            {
+                _ = await service.PageAsync(TenantA, Period, 0, 10, default);
+            },
+            "receipt" => async () =>
+            {
+                _ = await service.DownloadReceiptAsync(TenantA, original.Id, default);
+            },
+            "search" => async () =>
+            {
+                _ = await service.SearchByDocumentSha256Async(
+                    TenantA, Period, new string('0', 64), 0, 1, default);
+            },
+            "export" => async () =>
+            {
+                _ = await service.ExportZipAsync(TenantA, Period, default);
+            },
+            _ => throw new InvalidOperationException("Invalid fixed route.")
+        };
+        var denied = await Assert.ThrowsAsync<InvalidOperationException>(read);
+        Assert.Equal("Repository returned an unsupported pilot policy identifier.", denied.Message);
+        Assert.DoesNotContain(TenantA.ToString(), denied.Message);
+        Assert.DoesNotContain(original.Id.ToString(), denied.Message);
+        Assert.DoesNotContain(original.TokenSha256Hex, denied.Message);
+        Assert.DoesNotContain(original.ProviderId, denied.Message);
+
+        // A foreign tenant's lookup remains not-found even if the source
+        // PolicyOid cannot be exposed to its legitimate owner.
+        Assert.Null(await service.DownloadReceiptAsync(TenantB, original.Id, default));
+        Assert.Empty(await service.PageAsync(TenantB, Period, 0, 10, default));
+    }
+
+    [Fact]
+    public async Task BadLegacyPolicyInSearchLookaheadRejectsWholeResult()
+    {
+        var own = MakeRecord(TenantA);
+        var malformed = own with
+        {
+            Id = Guid.NewGuid(),
+            IssuedUtc = own.IssuedUtc.AddMinutes(1),
+            PolicyOid = "\t"
+        };
+        own.Validate();
+        malformed.Validate();
+        var repo = new FakeRegistry([], overrideSearch: [own, malformed]);
+        var service = new TimestampRegistryService(repo);
+        var denied = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.SearchByDocumentSha256Async(TenantA, Period,
+                new string('0', 64), 0, 1, default));
+        Assert.Equal("Repository returned an unsupported pilot policy identifier.", denied.Message);
+        Assert.DoesNotContain(malformed.Id.ToString(), denied.Message);
+        Assert.DoesNotContain(TenantA.ToString(), denied.Message);
+        Assert.Equal(1, repo.SearchQueries);
+    }
+
+    [Fact]
+    public async Task ExactSixteenKiBOriginalPolicyRemainsReadableAndExportable()
+    {
+        var policy = new string('P', 16 * 1024);
+        var original = MakeRecord(TenantA) with { PolicyOid = policy };
+        var service = new TimestampRegistryService(new FakeRegistry([original]));
+
+        Assert.Equal(policy, Assert.Single(await service.PageAsync(
+            TenantA, Period, 0, 10, default)).PolicyOid);
+        Assert.Equal(policy, Assert.Single((await service.SearchByDocumentSha256Async(
+            TenantA, Period, new string('0', 64), 0, 1, default)).Items).PolicyOid);
+        Assert.Equal(original.ResponseDer,
+            await service.DownloadReceiptAsync(TenantA, original.Id, default));
+        var zip = await service.ExportZipAsync(TenantA, Period, default);
+        using var archive = new ZipArchive(new MemoryStream(zip), ZipArchiveMode.Read);
+        using var manifest = JsonDocument.Parse(archive.GetEntry("manifest.json")!.Open());
+        Assert.Equal(policy, manifest.RootElement.GetProperty("entries")[0]
+            .GetProperty("PolicyOid").GetString());
+        Assert.Null(await service.DownloadReceiptAsync(TenantB, original.Id, default));
+    }
+
     // #180 / ADR 0138: owner-restored original DER and matching DER hash
     // do not make the *document* imprint canonical. Test the distinct
     // legacy read trust boundary without using the now-protected writer.
