@@ -29,6 +29,10 @@ public sealed class TimestampRegistryService(ITimestampRegistry registry)
     // Raw UTF-8 evidence_reference admission; serialized JSON has its OWN cap.
     public const int EvidenceReferenceLimitBytes = 8 * 1024 * 1024;
     public const long EvidenceReferenceBatchLimitBytes = 8L * 1024 * 1024;
+    // #176 / ADR 0134: original UTF-8 V001 nonnull text metadata. These
+    // are independent of DER, evidence_reference and serialized JSON caps.
+    public const int MetadataTextFieldLimitBytes = 16 * 1024;
+    public const long MetadataTextBatchLimitBytes = 2L * 1024 * 1024;
     public const int ExportArchiveLimitBytes = 80 * 1024 * 1024;
 
     public async Task<byte[]?> DownloadReceiptAsync(
@@ -47,6 +51,11 @@ public sealed class TimestampRegistryService(ITimestampRegistry registry)
         // disclosure. The real PostgreSQL adapter also filters by both keys.
         if (record.Id != recordId)
             throw new InvalidOperationException("Repository returned a receipt outside requested identity.");
+        // #176: Business defense in depth against alternate adapters. The
+        // real PostgreSQL SELECT separately prevents oversized text from
+        // ever appearing in its result fields before Npgsql GetString.
+        if (MeasureMetadataTextBytes(record) < 0)
+            throw new ReceiptTooLargeException();
         // Alternate repositories must not bypass the SQL read projection
         // limit on legacy evidence references. The raw DER remains original.
         if (record.EvidenceReference is not null &&
@@ -382,6 +391,23 @@ public sealed class TimestampRegistryService(ITimestampRegistry registry)
             totalReferenceBytes += referenceBytes;
         }
 
+        // #176: bound original UTF8 bytes of V001's four other text
+        // columns across the ENTIRE authorized batch (including search
+        // lookahead) before validating/hash-reading or exposing any row.
+        long totalMetadataBytes = 0;
+        foreach (var record in records)
+        {
+            var bytes = MeasureMetadataTextBytes(record);
+            if (bytes < 0 || bytes > MetadataTextBatchLimitBytes - totalMetadataBytes)
+            {
+                if (forExport)
+                    throw new ExportTooLargeException();
+                throw new InvalidOperationException(
+                    "Repository returned a registry batch outside pilot metadata read limits.");
+            }
+            totalMetadataBytes += bytes;
+        }
+
         var seenIds = new HashSet<Guid>();
         foreach (var record in records)
         {
@@ -396,6 +422,28 @@ public sealed class TimestampRegistryService(ITimestampRegistry registry)
                 throw new InvalidOperationException(
                     "Repository returned duplicate timestamp record identifiers.");
         }
+    }
+
+    /// <summary>
+    /// Original UTF-8 lengths of four nonnull V001 registry metadata fields.
+    /// A negative sentinel means one field is NULL/over the pilot 16KiB cap.
+    /// This is a read RESOURCE check, never a parser/trust approval of OIDs
+    /// or issuer identity. Source values are preserved, never trimmed.
+    /// </summary>
+    private static long MeasureMetadataTextBytes(TimestampRecord record)
+    {
+        long total = 0;
+        foreach (var field in new[]
+                 { record.HashAlgorithmOid, record.DigestBase64, record.PolicyOid, record.ProviderId })
+        {
+            if (field is null)
+                return -1;
+            var bytes = Encoding.UTF8.GetByteCount(field);
+            if (bytes > MetadataTextFieldLimitBytes)
+                return -1;
+            total += bytes;
+        }
+        return total;
     }
 
     // Scoped unqualified pilot policy: V001 has future-state enum values,
