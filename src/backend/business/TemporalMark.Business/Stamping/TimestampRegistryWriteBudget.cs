@@ -80,8 +80,28 @@ public static class TimestampRegistryWriteBudget
         originalDer is { Length: > 0 } &&
         originalDer.Length <= TimestampRegistryService.ExportReceiptDerLimitBytes;
 
+    // #182 / ADR 0140: Python's strict v1 ZIP checker treats U+001C–U+001F
+    // as whitespace under str.strip(), unlike .NET char.IsWhiteSpace.
+    // Require *some* genuine nonblank source character under BOTH
+    // definitions; retain original bytes, including embedded C0 characters.
+    // This is not identifier syntax, signer trust or a qualification check.
+    internal static bool HasPilotOfflineNonblankText(string? originalText)
+    {
+        if (originalText is null)
+            return false;
+
+        foreach (var character in originalText)
+        {
+            if (!char.IsWhiteSpace(character) &&
+                (character < '\u001c' || character > '\u001f'))
+                return true;
+        }
+        return false;
+    }
+
     private static bool IsRequiredOriginalTextAdmissible(string? originalText) =>
-        !string.IsNullOrWhiteSpace(originalText) &&
+        originalText is not null &&
+        HasPilotOfflineNonblankText(originalText) &&
         IsOriginalTextWithinBytes(
             originalText, TimestampRegistryService.MetadataTextFieldLimitBytes);
 

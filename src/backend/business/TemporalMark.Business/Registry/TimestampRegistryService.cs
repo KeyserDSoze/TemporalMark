@@ -80,6 +80,9 @@ public sealed class TimestampRegistryService(ITimestampRegistry registry)
         // must not be returned when the strict offline v1 ZIP reader
         // would reject the original policy metadata as blank.
         RequirePilotNonblankPolicy(record);
+        // #182: the same Python-compatible pilot nonblank source
+        // classification also covers an owner-restored ProviderId.
+        RequirePilotNonblankProvider(record);
         return record.ResponseDer;
     }
 
@@ -432,6 +435,7 @@ public sealed class TimestampRegistryService(ITimestampRegistry registry)
             // #181: enforce the same nonblank policy on Page, Search
             // (including lookahead) and ZIP before returning any result.
             RequirePilotNonblankPolicy(record);
+            RequirePilotNonblankProvider(record);
 
             if (!seenIds.Add(record.Id))
                 throw new InvalidOperationException(
@@ -488,9 +492,19 @@ public sealed class TimestampRegistryService(ITimestampRegistry registry)
     // or echo the invalid original source into exceptions/log messages.
     private static void RequirePilotNonblankPolicy(TimestampRecord record)
     {
-        if (string.IsNullOrWhiteSpace(record.PolicyOid))
+        if (!TimestampRegistryWriteBudget.HasPilotOfflineNonblankText(record.PolicyOid))
             throw new InvalidOperationException(
                 "Repository returned an unsupported pilot policy identifier.");
+    }
+
+    // #182: preserve Domain's separate provider identity checks, while
+    // rejecting U+001C–U+001F-only historical metadata that Python strips
+    // from strict v1 ZIP manifest fields. No raw identifier disclosure.
+    private static void RequirePilotNonblankProvider(TimestampRecord record)
+    {
+        if (!TimestampRegistryWriteBudget.HasPilotOfflineNonblankText(record.ProviderId))
+            throw new InvalidOperationException(
+                "Repository returned an unsupported pilot provider identifier.");
     }
 
     private static void RequireTenant(Guid organizationId)
