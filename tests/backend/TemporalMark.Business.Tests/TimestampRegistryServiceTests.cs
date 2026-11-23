@@ -851,6 +851,75 @@ public sealed class TimestampRegistryServiceTests
         Assert.Equal(1, manifest.RootElement.GetProperty("count").GetInt32());
     }
 
+    // #175 / ADR 0133: external/buggy adapters must not bypass the
+    // provider's PostgreSQL pre-wire reference limits. The known 7MiB
+    // positive export remains valid; no metadata is silently truncated.
+    [Fact]
+    public async Task PageAndImprintSearchDenyOverEightMiBRawEvidenceReference()
+    {
+        var large = new string('Z', 8 * 1024 * 1024 + 1);
+        var receipt = MakeRecord(TenantA) with { EvidenceReference = large };
+        var service = new TimestampRegistryService(new FakeRegistry([receipt]));
+
+        var pageDenied = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.PageAsync(TenantA, Period, 0, 10, CancellationToken.None));
+        var searchDenied = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.SearchByDocumentSha256Async(TenantA, Period,
+                new string('0', 64), 0, 10, CancellationToken.None));
+        Assert.DoesNotContain(large[..32], pageDenied.Message);
+        Assert.DoesNotContain(large[..32], searchDenied.Message);
+        Assert.DoesNotContain(TenantA.ToString(), pageDenied.Message);
+    }
+
+    [Fact]
+    public async Task DownloadDenyOverEightMiBReferenceBeforeReturningOtherwiseValidDer()
+    {
+        var receipt = MakeRecord(TenantA) with
+        {
+            EvidenceReference = new string('X', 8 * 1024 * 1024 + 1)
+        };
+
+        var denied = await Assert.ThrowsAsync<ReceiptTooLargeException>(() =>
+            new TimestampRegistryService(new FakeRegistry([receipt]))
+                .DownloadReceiptAsync(TenantA, receipt.Id, CancellationToken.None));
+        Assert.Equal(new ReceiptTooLargeException().Message, denied.Message);
+    }
+
+    [Fact]
+    public async Task PageAndSearchDenyCumulativeReferencesOverEightMiB()
+    {
+        var first = MakeRecord(TenantA) with
+        {
+            EvidenceReference = new string('A', 4 * 1024 * 1024)
+        };
+        var second = MakeRecord(TenantA) with
+        {
+            IssuedUtc = first.IssuedUtc.AddSeconds(1),
+            EvidenceReference = new string('B', 4 * 1024 * 1024 + 1)
+        };
+        var service = new TimestampRegistryService(new FakeRegistry([first, second]));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.PageAsync(TenantA, Period, 0, 10, CancellationToken.None));
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.SearchByDocumentSha256Async(TenantA, Period,
+                new string('0', 64), 0, 10, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task SevenMiBReferenceRemainsReadableInPilotPageAndReceipt()
+    {
+        var evidence = new string('R', 7 * 1024 * 1024);
+        var receipt = MakeRecord(TenantA) with { EvidenceReference = evidence };
+        var service = new TimestampRegistryService(new FakeRegistry([receipt]));
+
+        var page = Assert.Single(await service.PageAsync(
+            TenantA, Period, 0, 10, CancellationToken.None));
+        Assert.Equal(evidence, page.EvidenceReference);
+        Assert.Equal(receipt.ResponseDer,
+            await service.DownloadReceiptAsync(TenantA, receipt.Id, CancellationToken.None));
+    }
+
     private static TimestampRecord MakeRecord(Guid tenant)
     {
         var der = new byte[] { 0x30, 0x02, 0x01, 0x00 };
