@@ -152,4 +152,41 @@ public sealed class PostgresTimestampWriterAdmissibilityTests
         Assert.Equal(receipt.ResponseDer, actual.ResponseDer);
         Assert.Equal(receipt.TokenSha256Hex, actual.TokenSha256Hex);
     }
+
+    // #178 / ADR 0136: V001 and Domain permit future status values, but a
+    // direct NEW pilot append must never persist a status that existing
+    // Page/Search/Receipt/ZIP read gates refuse. Real PG17, not a mock.
+    [Theory]
+    [InlineData(TimestampValidationState.VerifiedNonQualified)]
+    [InlineData(TimestampValidationState.VerifiedQualifiedExternal)]
+    [InlineData(TimestampValidationState.VerifiedQualifiedOwn)]
+    [InlineData(TimestampValidationState.AffectedByIncident)]
+    public async Task DirectWriterRefusesUnsupportedNewPilotStateBeforeInsert(
+        TimestampValidationState unsupportedState)
+    {
+        await using var db = Database();
+        var tenant = await NewTenantAsync(db);
+        var receipt = Record(tenant) with { ValidationState = unsupportedState };
+
+        // Distinguish a missing NEW-append admission gate from a preexisting
+        // Domain rejection, malformed DER, bad SHA or unauthorized tenant.
+        receipt.Validate();
+        Assert.Equal(tenant, receipt.OrganizationId);
+        Assert.Equal(unsupportedState, receipt.ValidationState);
+
+        var denied = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            new PostgresTimestampWriter(db).AppendAsync(receipt, default));
+        Assert.Equal("Stored receipt exceeds pilot registry write limits.", denied.Message);
+        Assert.DoesNotContain(unsupportedState.ToString(), denied.Message);
+        Assert.DoesNotContain(tenant.ToString(), denied.Message);
+        Assert.DoesNotContain(receipt.Id.ToString(), denied.Message);
+
+        await using var connection = await db.OpenConnectionAsync();
+        await using var check = new NpgsqlCommand(
+            "SELECT count(*) FROM public.timestamp_registry WHERE organization_id=@org AND id=@id",
+            connection);
+        check.Parameters.AddWithValue("org", tenant);
+        check.Parameters.AddWithValue("id", receipt.Id);
+        Assert.Equal(0L, Assert.IsType<long>(await check.ExecuteScalarAsync()));
+    }
 }
