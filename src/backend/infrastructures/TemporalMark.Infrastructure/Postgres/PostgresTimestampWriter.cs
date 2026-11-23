@@ -11,6 +11,13 @@ public sealed class PostgresTimestampWriter(NpgsqlDataSource database) : ITimest
 {
     public async Task AppendAsync(TimestampRecord record, CancellationToken cancellationToken)
     {
+        // #177 / ADR 0135: direct internal/alternate callers must not
+        // persist a new receipt the pilot read/download/export routes deny.
+        // Fail closed before DER SHA hashing, acquiring a database connection
+        // or transmitting any original text/DER to PostgreSQL.
+        if (!TimestampRegistryWriteBudget.IsNewRegistryRecordAdmissible(record))
+            throw new InvalidOperationException(
+                "Stored receipt exceeds pilot registry write limits.");
         record.Validate();
         await using var connection = await database.OpenConnectionAsync(cancellationToken);
         await using var command = new NpgsqlCommand("""
