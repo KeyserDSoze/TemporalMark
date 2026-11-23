@@ -16,6 +16,132 @@ public sealed class TimestampRegistryServiceTests
         new DateTimeOffset(2026, 11, 1, 0, 0, 0, TimeSpan.Zero),
         new DateTimeOffset(2026, 12, 1, 0, 0, 0, TimeSpan.Zero));
 
+    // #180 / ADR 0138: owner-restored original DER and matching DER hash
+    // do not make the *document* imprint canonical. Test the distinct
+    // legacy read trust boundary without using the now-protected writer.
+    [Theory]
+    [InlineData("wrong-oid", "page")]
+    [InlineData("wrong-oid", "receipt")]
+    [InlineData("wrong-oid", "export")]
+    [InlineData("pad-bit-alias", "page")]
+    [InlineData("pad-bit-alias", "receipt")]
+    [InlineData("pad-bit-alias", "export")]
+    [InlineData("decoded-31", "page")]
+    [InlineData("decoded-31", "receipt")]
+    [InlineData("decoded-31", "export")]
+    [InlineData("leading-whitespace", "page")]
+    [InlineData("leading-whitespace", "receipt")]
+    [InlineData("leading-whitespace", "export")]
+    [InlineData("urlsafe-alphabet", "page")]
+    [InlineData("urlsafe-alphabet", "receipt")]
+    [InlineData("urlsafe-alphabet", "export")]
+    public async Task LegacyNoncanonicalPilotDocumentImprintIsDeniedOnAuthorizedReads(
+        string mutation, string boundary)
+    {
+        var canonical = Convert.ToBase64String(new byte[32]);
+        var original = MakeRecord(TenantA);
+        var corrupted = mutation switch
+        {
+            "wrong-oid" => original with { HashAlgorithmOid = "1.3.14.3.2.26" },
+            "pad-bit-alias" => original with { DigestBase64 = canonical[..42] + "B=" },
+            "decoded-31" => original with
+            {
+                DigestBase64 = Convert.ToBase64String(new byte[31])
+            },
+            "leading-whitespace" => original with { DigestBase64 = " " + canonical },
+            "urlsafe-alphabet" => original with
+            {
+                DigestBase64 = Convert.ToBase64String(
+                    Enumerable.Repeat((byte)0xff, 32).ToArray()).Replace('/', '_')
+            },
+            _ => throw new InvalidOperationException("Unknown fixed test variant.")
+        };
+        corrupted.Validate();
+        Assert.Equal(TenantA, corrupted.OrganizationId);
+        Assert.Equal(TimestampValidationState.Unverified, corrupted.ValidationState);
+        Assert.Equal(
+            Convert.ToHexString(SHA256.HashData(corrupted.ResponseDer)),
+            corrupted.TokenSha256Hex);
+        if (mutation == "pad-bit-alias")
+            Assert.Equal(new byte[32], Convert.FromBase64String(corrupted.DigestBase64));
+
+        var service = new TimestampRegistryService(new FakeRegistry([corrupted]));
+        Func<Task> read = boundary switch
+        {
+            "page" => async () =>
+            {
+                _ = await service.PageAsync(TenantA, Period, 0, 10, default);
+            },
+            "receipt" => async () =>
+            {
+                _ = await service.DownloadReceiptAsync(TenantA, corrupted.Id, default);
+            },
+            "export" => async () =>
+            {
+                _ = await service.ExportZipAsync(TenantA, Period, default);
+            },
+            _ => throw new InvalidOperationException("Unknown fixed test route.")
+        };
+        var denied = await Assert.ThrowsAsync<InvalidOperationException>(read);
+        Assert.Equal("Repository returned an unsupported pilot document imprint.",
+            denied.Message);
+        Assert.DoesNotContain(corrupted.DigestBase64, denied.Message);
+        Assert.DoesNotContain(corrupted.HashAlgorithmOid, denied.Message);
+        Assert.DoesNotContain(TenantA.ToString(), denied.Message);
+        Assert.DoesNotContain(corrupted.Id.ToString(), denied.Message);
+
+        // Scope before validation: a foreign administrator must learn
+        // nothing about a broken owned row, even when bytes are unchanged.
+        Assert.Null(await service.DownloadReceiptAsync(TenantB, corrupted.Id, default));
+        Assert.Empty(await service.PageAsync(TenantB, Period, 0, 10, default));
+    }
+
+    [Fact]
+    public async Task SearchLookaheadUsesSharedCanonicalPilotGateBeforeReturningHasMore()
+    {
+        var valid = MakeRecord(TenantA);
+        var invalidLookahead = valid with
+        {
+            Id = Guid.NewGuid(), IssuedUtc = valid.IssuedUtc.AddMinutes(1),
+            HashAlgorithmOid = "1.3.14.3.2.26"
+        };
+        valid.Validate();
+        invalidLookahead.Validate();
+        // A buggy repository supplies an invalid *lookahead* (limit+1):
+        // existing Search eventually refuses mismatched results, but it
+        // must now enforce the shared pilot read integrity gate FIRST.
+        var repo = new FakeRegistry([], overrideSearch: [valid, invalidLookahead]);
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            new TimestampRegistryService(repo).SearchByDocumentSha256Async(
+                TenantA, Period, new string('0', 64), 0, 1, default));
+        Assert.Equal("Repository returned an unsupported pilot document imprint.",
+            error.Message);
+        Assert.DoesNotContain(TenantA.ToString(), error.Message);
+        Assert.DoesNotContain(invalidLookahead.Id.ToString(), error.Message);
+        Assert.Equal(1, repo.SearchQueries);
+    }
+
+    [Fact]
+    public async Task CanonicalNonzeroLegacyImprintStillPassesReadBoundariesUnmodified()
+    {
+        var originalDigest = Enumerable.Range(0, 32).Select(i => (byte)i).ToArray();
+        var record = MakeRecord(TenantA) with
+        {
+            DigestBase64 = Convert.ToBase64String(originalDigest)
+        };
+        var service = new TimestampRegistryService(new FakeRegistry([record]));
+        Assert.Equal(record, Assert.Single(await service.PageAsync(
+            TenantA, Period, 0, 10, default)));
+        Assert.Equal(record.ResponseDer,
+            await service.DownloadReceiptAsync(TenantA, record.Id, default));
+        var archiveBytes = await service.ExportZipAsync(TenantA, Period, default);
+        using var archive = new ZipArchive(new MemoryStream(archiveBytes), ZipArchiveMode.Read);
+        using var manifest = JsonDocument.Parse(archive.GetEntry("manifest.json")!.Open());
+        Assert.Equal(record.DigestBase64, manifest.RootElement.GetProperty("entries")[0]
+            .GetProperty("DigestBase64").GetString());
+        Assert.Null(await service.DownloadReceiptAsync(TenantB, record.Id, default));
+    }
+
     // #156 / ADR 0121: only Unverified is supported by actual issuance.
     // An otherwise valid, tenant-owned record must not declare a future
     // qualification or incident status on any registry read boundary.
