@@ -37,6 +37,15 @@ public sealed class TimestampIssueService(ITimestampProvider provider, ITimestam
             throw new ArgumentException("A canonical SHA-256 Base64 digest is required.", nameof(digestBase64));
 
         var receipt = await provider.RequestAsync(digest, cancellationToken);
+        // #177 / ADR 0135: the source bytes and operator-owned identity
+        // must fit pilot registry read budgets BEFORE hashing DER or invoking
+        // any writer. A buggy alternate TSA adapter must never create a 201
+        // receipt that the authenticated owner cannot later download.
+        // Preserve fixed sanitized 502 provider-response semantics; do not
+        // log or reflect the original untrusted provider field.
+        if (!TimestampRegistryWriteBudget.IsProviderReceiptAdmissible(receipt))
+            throw new TimestampProviderResponseException(
+                "External TSA response exceeds pilot registry persistence limits.");
         var record = new TimestampRecord(
             Guid.NewGuid(), organizationId, receipt.GeneratedAtUtc.ToUniversalTime(),
             "2.16.840.1.101.3.4.2.1", Convert.ToBase64String(digest),
