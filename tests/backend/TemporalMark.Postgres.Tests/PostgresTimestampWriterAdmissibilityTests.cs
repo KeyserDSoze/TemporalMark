@@ -50,6 +50,8 @@ public sealed class PostgresTimestampWriterAdmissibilityTests
     }
 
     [Theory]
+    [InlineData("oversized-algorithm")]
+    [InlineData("oversized-imprint-text")]
     [InlineData("oversized-provider")]
     [InlineData("oversized-policy")]
     [InlineData("multibyte-provider")]
@@ -63,6 +65,14 @@ public sealed class PostgresTimestampWriterAdmissibilityTests
         var tenant = await NewTenantAsync(db);
         var receipt = variant switch
         {
+            "oversized-algorithm" => Record(tenant) with
+            {
+                HashAlgorithmOid = new string('H', TextLimit + 1)
+            },
+            "oversized-imprint-text" => Record(tenant) with
+            {
+                DigestBase64 = new string('D', TextLimit + 1)
+            },
             "oversized-provider" => Record(tenant,
                 provider: new string('P', TextLimit + 1)),
             "oversized-policy" => Record(tenant,
