@@ -202,6 +202,29 @@ if (entraRegistryCandidate is not null)
         throw new InvalidOperationException("Registry PostgreSQL Entra startup denied");
     }
 }
+// #186 / ADR 0144: browser HTTP caching is distinct from the PWA's
+// Workbox CacheStorage. Private tenant metadata, actor identity, search,
+// audit and every error/status under /api/v1 must NEVER be stored by
+// compliant HTTP caches, even if an endpoint forgets its own header.
+// Run before Kestrel's pre-auth search 413, CORS and JWT/tenant auth.
+// OnStarting runs on success, authentication denials and other responses
+// and overwrites any accidentally weaker downstream caching directive.
+// The segment boundary excludes /api/v10, /healthz and PWA static shell.
+app.Use(async (HttpContext context, RequestDelegate next) =>
+{
+    if (context.Request.Path.StartsWithSegments(
+        new PathString("/api/v1"), StringComparison.OrdinalIgnoreCase))
+    {
+        context.Response.OnStarting(() =>
+        {
+            context.Response.Headers.CacheControl = "no-store";
+            return Task.CompletedTask;
+        });
+    }
+
+    await next(context);
+});
+
 // #136 / ADR 0102: exact sensitive search route ONLY, including direct ACA
 // access that bypasses on-prem Nginx. This early pre-auth request budget
 // prevents oversized declared JSON from reaching JWT/model binding and makes
