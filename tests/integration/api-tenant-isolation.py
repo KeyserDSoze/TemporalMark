@@ -38,6 +38,7 @@ SUB_DISABLED = "00000000-0000-0000-0000-000000000083"
 STAMP_A = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa82"
 STAMP_B = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbb82"
 OVERSIZED_LEGACY_STAMP = "cccccccc-cccc-cccc-cccc-cccccccccc82"
+OVERSIZED_METADATA_STAMP = "dddddddd-dddd-dddd-dddd-dddddddddd82"
 AUDIT_A = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaab82"
 AUDIT_B = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbb82"
 FROM = "2020-01-01T00:00:00Z"
@@ -564,6 +565,107 @@ def assert_search_body_budget_with_signed_chunked_jwt(token: str):
 
 
 
+def assert_oversized_legacy_other_metadata_is_denied(a_token: str, b_token: str):
+    """#176: original SHA-consistent DER, but provider_id has >16KiB UTF8 bytes.
+
+    Runs before the separately seeded oversized DER canary, so denial
+    cannot be attributed to older DER or evidence_reference checks.
+    All text/DER synthesis happens inside disposable PostgreSQL, not logs.
+    """
+    digest64 = base64.b64encode(DIGEST_A).decode("ascii")
+    token_sha = hashlib.sha256(DER_A).hexdigest().upper()
+    command = [
+        "docker", "compose", "-f", "docker/compose.yml",
+        "exec", "-T", "postgres", "psql", "-X", "-q",
+        "-v", "ON_ERROR_STOP=1", "-U", "temporalmark",
+        "-d", "temporalmark"
+    ]
+    sql = f"""
+    INSERT INTO public.timestamp_registry
+        (id, organization_id, issued_utc, hash_algorithm_oid, digest_base64,
+         policy_oid, provider_id, token_sha256_hex, validation_state,
+         response_der, evidence_reference)
+    VALUES ('{OVERSIZED_METADATA_STAMP}', '{ORG_A}', now(),
+            '2.16.840.1.101.3.4.2.1', '{digest64}',
+            '1.2.3', repeat('P', 16385), '{token_sha}', 0,
+            decode('{DER_A.hex()}', 'hex'), NULL::text);
+    """
+    written = subprocess.run(command, input=sql, text=True, capture_output=True,
+                             timeout=35, check=False)
+    if written.returncode != 0:
+        raise AssertionError("CI-only oversized metadata fixture setup failed")
+
+    # An authorized own-row response must be refused BEFORE any
+    # receipt_download_prepared event, and another tenant cannot infer size.
+    status, headers, body = api(
+        f"/stamps/{OVERSIZED_METADATA_STAMP}/receipt", token=a_token)
+    if status != 409 or "no-store" not in headers.get("Cache-Control", "").lower():
+        raise AssertionError(f"Over-budget original provider metadata GET contract regressed: HTTP {status}")
+    if len(body) > 4096 or any(value in body for value in (
+        ORG_A.encode(), OVERSIZED_METADATA_STAMP.encode(), b"CI_ONLY_METADATA_PROJECTION")):
+        raise AssertionError("Oversized provider metadata denial disclosed evidence identity")
+    must_status("Other tenant metadata-sized receipt stays 404",
+                api(f"/stamps/{OVERSIZED_METADATA_STAMP}/receipt", token=b_token), 404)
+
+    q = f"""SELECT count(*) FROM public.tenant_audit_events
+        WHERE organization_id = '{ORG_A}'
+          AND receipt_id = '{OVERSIZED_METADATA_STAMP}'
+          AND action = 'receipt_download_prepared';"""
+    checked = subprocess.run(command + ["-t", "-A"], input=q, text=True,
+                             capture_output=True, timeout=35, check=False)
+    if checked.returncode != 0 or checked.stdout.strip() != "0":
+        raise AssertionError("Oversized provider metadata incorrectly prepared receipt audit")
+
+    # No partial page/export, including a preceding normal A record.
+    page_url = "/stamps?" + urllib.parse.urlencode({
+        "fromUtc": FROM, "toUtcExclusive": TO, "offset": 0, "limit": 50
+    })
+    page_status, _, page_body = api(page_url, token=a_token)
+    if page_status != 500 or any(value in page_body for value in (
+        ORG_A.encode(), OVERSIZED_METADATA_STAMP.encode(), b"CI_ONLY_METADATA_PROJECTION")):
+        raise AssertionError(f"Invalid provider metadata page gate regressed: HTTP {page_status}")
+    b_page = json.loads(must_status(
+        "Other signed tenant page still intact after metadata denial",
+        api(page_url, token=b_token), 200)[1])
+    if len(b_page) != 1 or b_page[0].get("id") != STAMP_B:
+        raise AssertionError("Foreign tenant metadata contamination")
+
+    period_url = "/stamps/export?" + urllib.parse.urlencode({
+        "fromUtc": FROM, "toUtcExclusive": TO
+    })
+    q_export = f"""SELECT count(*) FROM public.tenant_audit_events
+        WHERE organization_id = '{ORG_A}'
+          AND action = 'period_export_prepared'
+          AND period_from_utc = '{FROM}'::timestamptz
+          AND period_to_utc_exclusive = '{TO}'::timestamptz;"""
+
+    def prepared_exports() -> int:
+        result = subprocess.run(command + ["-t", "-A"], input=q_export, text=True,
+                                capture_output=True, timeout=35, check=False)
+        if result.returncode != 0 or not result.stdout.strip().isdigit():
+            raise AssertionError("CI-only metadata export audit scalar failed")
+        return int(result.stdout.strip())
+
+    before = prepared_exports()
+    zip_status, _, zip_body = api(period_url, token=a_token)
+    if zip_status != 413 or len(zip_body) > 4096 or any(value in zip_body for value in (
+        ORG_A.encode(), OVERSIZED_METADATA_STAMP.encode(), b"CI_ONLY_METADATA_PROJECTION")):
+        raise AssertionError(f"Invalid provider metadata ZIP admission regressed: HTTP {zip_status}")
+    if prepared_exports() != before:
+        raise AssertionError("Oversized provider metadata incorrectly prepared period export audit")
+
+    # B keeps its original one receipt and readable raw DER.
+    _, foreign_zip = must_status("Other signed tenant ZIP remains original",
+                                 api(period_url, token=b_token), 200)
+    with zipfile.ZipFile(io.BytesIO(foreign_zip)) as archive:
+        expected_entry = "tokens/" + STAMP_B.replace("-", "") + ".tsr"
+        if archive.namelist().count(expected_entry) != 1:
+            raise AssertionError("Foreign tenant ZIP path changed")
+        if archive.read(expected_entry) != DER_B:
+            raise AssertionError("Foreign tenant retained original receipt changed")
+    print("PASS: original SHA-consistent over-16KiB provider metadata: A GET 409/no-store, page 500, ZIP 413, zero prepared audit; B 404 and intact page/ZIP")
+
+
 def assert_oversized_legacy_receipt_is_not_downloaded(a_token: str, b_token: str):
     """#169 CI-only real SQL/HTTP: >1 MiB retained DER, correct SHA, no 200/audit.
 
@@ -798,6 +900,7 @@ def main():
     assert_search_audit_fail_closed_on_real_postgres_write_denial(a_token)
     assert_shared_tenant_principal_search_quota(a_token, b_token)
     assert_search_rate_store_permission_failure_is_closed(b_token)
+    assert_oversized_legacy_other_metadata_is_denied(a_token, b_token)
     assert_oversized_legacy_receipt_is_not_downloaded(a_token, b_token)
     assert_oversized_legacy_registry_page_is_denied(a_token, b_token)
     assert_oversized_legacy_period_export_preserves_413_and_no_audit(a_token, b_token)
