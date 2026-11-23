@@ -628,6 +628,96 @@ class OfflinePeriodExportTests(unittest.TestCase):
             self.assertNotIn(first["responseFile"], err.getvalue())
             self.assertNotIn(tie["responseFile"], err.getvalue())
 
+    # #184 / ADR 0142: .NET/PG17 v1 admission limits EACH original
+    # registry text field to 16KiB UTF8 and their whole export batch to
+    # 2MiB. JSON manifest 8MiB and compressed ZIP 80MiB are SEPARATE
+    # budgets: repetitive oversized source strings easily fit both.
+    # No original text is normalized or trimmed to satisfy a byte limit.
+    @staticmethod
+    def _source_metadata_batch(count: int, policy_size: int):
+        return [
+            record(
+                rid=f"{i + 1:08x}-0000-4000-8000-000000000000",
+                PolicyOid="P" * policy_size)
+            for i in range(count)
+        ]
+
+    def test_nonblank_policy_16385_original_utf8_bytes_refused(self):
+        row = record(PolicyOid="P" * (16 * 1024 + 1))
+        self.assertEqual(16 * 1024 + 1, len(row["PolicyOid"].encode("utf-8")))
+        with self.assertRaises(verifier.ExportVerificationError):
+            check(build_zip(manifest([row])))
+
+    def test_nonblank_provider_16385_original_utf8_bytes_refused(self):
+        row = record(ProviderId="V" * (16 * 1024 + 1))
+        self.assertEqual(16 * 1024 + 1, len(row["ProviderId"].encode("utf-8")))
+        with self.assertRaises(verifier.ExportVerificationError):
+            check(build_zip(manifest([row])))
+
+    def test_multibyte_utf8_source_length_not_python_character_count(self):
+        for field in ("PolicyOid", "ProviderId"):
+            value = "é" * 8193
+            self.assertLess(len(value), 16 * 1024)
+            self.assertGreater(len(value.encode("utf-8")), 16 * 1024)
+            with self.subTest(field=field), self.assertRaises(
+                    verifier.ExportVerificationError):
+                check(build_zip(manifest([record(**{field: value})])))
+
+    def test_export_batch_original_text_total_over_2mib_refused(self):
+        # 128 individually admissible, distinct same-UTC chronological
+        # rows with an exact 16KiB policy already exceed 2MiB once the
+        # three additional mandatory text fields are counted. This
+        # manifest is <8MiB JSON and compressed ZIP is <80MiB.
+        rows = self._source_metadata_batch(128, 16 * 1024)
+        raw_manifest = json.dumps(manifest(rows), separators=(",", ":")).encode()
+        self.assertLess(len(raw_manifest), 8 * 1024 * 1024)
+        raw = build_zip(manifest(rows))
+        self.assertLess(len(raw), 80 * 1024 * 1024)
+        with self.assertRaises(verifier.ExportVerificationError):
+            check(raw)
+
+    def test_original_text_budget_cli_denial_does_not_echo_private_values(self):
+        secret = "CONFIDENTIAL-POLICY-" + ("P" * 17_000)
+        source = build_zip(manifest([record(PolicyOid=secret)]))
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "tenant-a-private-period.zip"
+            path.write_bytes(source)
+            out, err = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                exit_code = verifier.main([str(path)])
+            self.assertEqual(1, exit_code)
+            self.assertEqual("", out.getvalue())
+            self.assertIn("FAILED", err.getvalue())
+            for private in ("CONFIDENTIAL-POLICY", ORG, RID,
+                            "tenant-a-private-period.zip"):
+                self.assertNotIn(private, err.getvalue())
+
+    def test_exact_16k_original_utf8_field_is_still_valid(self):
+        rows = [
+            record(PolicyOid="P" * (16 * 1024),
+                   ProviderId="V" * (16 * 1024),
+                   EvidenceReference="operator-controlled-original"),
+            record(rid="22222222-2222-4222-8222-222222222222",
+                   PolicyOid="é" * 8192,
+                   ProviderId="VISIBLE\u001fORIGINAL")
+        ]
+        self.assertEqual(16 * 1024, len(rows[1]["PolicyOid"].encode("utf-8")))
+        self.assertEqual(2, check(build_zip(manifest(rows))))
+
+    def test_original_utf8_batch_near_but_under_2mib_remains_valid(self):
+        # 127 * 16KiB + other fixed fields is <2MiB. Avoid canonical
+        # identity and time changes: the synthetic values are in valid
+        # ascending same-UTC UUID order with original signed-test-only DER.
+        rows = self._source_metadata_batch(127, 16 * 1024)
+        source_text_bytes = sum(
+            len(row[field].encode("utf-8"))
+            for row in rows
+            for field in ("HashAlgorithmOid", "DigestBase64",
+                          "PolicyOid", "ProviderId")
+        )
+        self.assertLess(source_text_bytes, 2 * 1024 * 1024)
+        self.assertEqual(127, check(build_zip(manifest(rows))))
+
     def test_untrusted_qualified_state_claim_fails_closed(self):
         for state in ("VerifiedQualifiedExternal", "VerifiedQualifiedOwn", "VerifiedNonQualified"):
             with self.subTest(state=state):
