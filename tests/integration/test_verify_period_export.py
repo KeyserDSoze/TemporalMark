@@ -548,6 +548,86 @@ class OfflinePeriodExportTests(unittest.TestCase):
         row = record(PolicyOid="1.\u001c2.3", ProviderId="ISSUER\u001fVISIBLE")
         self.assertEqual(1, check(build_zip(manifest([row]))))
 
+    # #183 / ADR 0141. The current .NET v1 producer first writes the
+    # manifest then TSR members in (IssuedUtc, canonical Id) SQL order.
+    # Distinct tenant-owned original SHA-consistent DER+manifest rows with
+    # reversed chronology or physical member order MUST be refused, not
+    # silently accepted merely because the unordered ZIP bag is consistent.
+    @staticmethod
+    def _canonical_timeline_rows():
+        original = record(
+            rid="11111111-1111-4111-8111-111111111111",
+            IssuedUtc="2026-11-15T09:00:00.1234567+00:00")
+        tie = record(
+            rid="22222222-2222-4222-8222-222222222222",
+            IssuedUtc=original["IssuedUtc"])
+        later = record(
+            rid="33333333-3333-4333-8333-333333333333",
+            IssuedUtc="2026-11-15T09:00:00.1234568+00:00")
+        return original, tie, later
+
+    def test_current_v1_accepts_sorted_same_tick_and_different_tick_records(self):
+        rows = self._canonical_timeline_rows()
+        self.assertEqual(3, check(build_zip(manifest(list(rows)))))
+        self.assertEqual(2, check(build_zip(manifest(list(rows[:2])))))
+
+    def test_reversed_utc_manifest_rows_are_denied_even_with_valid_der_and_members(self):
+        first, tie, later = self._canonical_timeline_rows()
+        # All original IDs, DER hashes, UTC period, ZIP entries and bytes
+        # are valid. The only mutation is the manifest timeline.
+        original = build_zip(manifest([later, first, tie]))
+        with self.assertRaises(verifier.ExportVerificationError):
+            check(original)
+
+    def test_same_tick_reversed_uuid_tie_is_denied(self):
+        first, tie, _ = self._canonical_timeline_rows()
+        with self.assertRaises(verifier.ExportVerificationError):
+            check(build_zip(manifest([tie, first])))
+
+    def test_physical_tsr_order_must_match_strictly_ordered_manifest(self):
+        first, tie, later = self._canonical_timeline_rows()
+        rows = [first, tie, later]
+        files = [(row["responseFile"], DER) for row in reversed(rows)]
+        # Generic Python zipfile finds all names and hashes; current v1
+        # .NET producer writes manifest then physically ordered receipts.
+        raw = build_zip(manifest(rows), files=files)
+        with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+            self.assertEqual(DER, archive.read(first["responseFile"]))
+            self.assertEqual(DER, archive.read(later["responseFile"]))
+        with self.assertRaises(verifier.ExportVerificationError):
+            check(raw)
+
+    def test_manifest_must_be_physically_first_v1_member(self):
+        first, tie, _ = self._canonical_timeline_rows()
+        rows = [first, tie]
+        raw = io.BytesIO()
+        with zipfile.ZipFile(raw, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr(first["responseFile"], DER)
+            archive.writestr("manifest.json", json.dumps(
+                manifest(rows), separators=(",", ":")).encode("utf-8"))
+            archive.writestr(tie["responseFile"], DER)
+        with self.assertRaises(verifier.ExportVerificationError):
+            check(raw.getvalue())
+
+    def test_reordered_receipts_cli_failure_redacts_tenant_and_names(self):
+        first, tie, later = self._canonical_timeline_rows()
+        rows = [first, tie, later]
+        raw = build_zip(manifest(rows),
+                        files=[(row["responseFile"], DER) for row in reversed(rows)])
+        with tempfile.TemporaryDirectory() as folder:
+            source = Path(folder) / "private-tenant-archive.zip"
+            source.write_bytes(raw)
+            out, err = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                result = verifier.main([str(source)])
+            self.assertEqual(1, result)
+            self.assertEqual("", out.getvalue())
+            self.assertIn("FAILED", err.getvalue())
+            self.assertNotIn(ORG, err.getvalue())
+            self.assertNotIn(str(source), err.getvalue())
+            self.assertNotIn(first["responseFile"], err.getvalue())
+            self.assertNotIn(tie["responseFile"], err.getvalue())
+
     def test_untrusted_qualified_state_claim_fails_closed(self):
         for state in ("VerifiedQualifiedExternal", "VerifiedQualifiedOwn", "VerifiedNonQualified"):
             with self.subTest(state=state):
