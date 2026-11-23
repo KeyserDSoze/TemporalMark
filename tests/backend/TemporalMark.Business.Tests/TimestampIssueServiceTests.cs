@@ -128,6 +128,94 @@ public sealed class TimestampIssueServiceTests
                 Guid.Empty, Convert.ToBase64String(new byte[32]), default));
     }
 
+    // #177 / ADR 0135: new issued records must fit already-enforced
+    // registry read budgets, even with an alternate/malformed provider.
+    // Every negative is AFTER exactly one request but BEFORE any writer.
+    [Theory]
+    [InlineData("over-provider")]
+    [InlineData("over-policy")]
+    [InlineData("unicode-provider")]
+    [InlineData("over-der")]
+    [InlineData("empty-policy")]
+    [InlineData("blank-provider")]
+    public async Task ProviderResponsesOutsidePilotRegistryWriteBudgetDoNotPersist(
+        string variant)
+    {
+        var ordinaryDer = new byte[] { 0x30, 0x02, 0x01, 0x00 };
+        var bytes = variant == "over-der"
+            ? new byte[1024 * 1024 + 1]
+            : ordinaryDer;
+        var policy = variant switch
+        {
+            "over-policy" => new string('P', 16 * 1024 + 1),
+            "empty-policy" => "",
+            _ => "1.2.3.4"
+        };
+        var providerName = variant switch
+        {
+            "over-provider" => new string('R', 16 * 1024 + 1),
+            // Only 8193 UTF-16 chars but 16386 actual UTF8 bytes.
+            "unicode-provider" => new string('é', 16 * 1024 / 2 + 1),
+            "blank-provider" => "  ",
+            _ => "ci-operator-approved-provider"
+        };
+        var provider = new ScriptedProvider(bytes, policy, providerName);
+        var writer = new FakeWriter();
+        var canonicalSha256 = Convert.ToBase64String(new byte[32]);
+
+        var error = await Assert.ThrowsAsync<TimestampProviderResponseException>(() =>
+            new TimestampIssueService(provider, writer).IssueAsync(
+                Organization, canonicalSha256, default));
+
+        Assert.Equal(1, provider.Requests);
+        Assert.Null(writer.Record);
+        Assert.Equal("External TSA response exceeds pilot registry persistence limits.",
+            error.Message);
+        Assert.DoesNotContain(Organization.ToString(), error.ToString());
+        Assert.DoesNotContain(canonicalSha256, error.ToString());
+        Assert.DoesNotContain(providerName[..Math.Min(16, providerName.Length)],
+            error.Message);
+    }
+
+    [Fact]
+    public async Task PilotIssuanceRetainsOriginalExactlyBoundedProviderFieldsAndDer()
+    {
+        const int metadataLimit = 16 * 1024;
+        const int derLimit = 1024 * 1024;
+        var der = new byte[derLimit];
+        der[0] = 0x30;
+        der[^1] = 0x01;
+        var providerId = new string('Q', metadataLimit);
+        var policy = new string('7', metadataLimit);
+        var provider = new ScriptedProvider(der, policy, providerId);
+        var writer = new FakeWriter();
+
+        var record = await new TimestampIssueService(provider, writer).IssueAsync(
+            Organization, Convert.ToBase64String(new byte[32]), default);
+
+        Assert.Equal(1, provider.Requests);
+        Assert.Equal(providerId, record.ProviderId);
+        Assert.Equal(policy, record.PolicyOid);
+        Assert.Equal(der, writer.Record!.ResponseDer);
+        Assert.Equal(Convert.ToHexString(SHA256.HashData(der)), record.TokenSha256Hex);
+        Assert.Equal(TimestampValidationState.Unverified, record.ValidationState);
+        Assert.Equal(TimeSpan.Zero, record.IssuedUtc.Offset);
+        Assert.Equal(record, writer.Record);
+    }
+
+    private sealed class ScriptedProvider(
+        byte[] rawDer, string policyOid, string providerId) : ITimestampProvider
+    {
+        public int Requests { get; private set; }
+        public Task<ProviderTimestamp> RequestAsync(byte[] sha256Digest, CancellationToken ct)
+        {
+            Requests++;
+            return Task.FromResult(new ProviderTimestamp(
+                rawDer, new DateTimeOffset(2026, 11, 15, 10, 0, 0, TimeSpan.Zero),
+                policyOid, providerId));
+        }
+    }
+
     private sealed class FakeProvider : ITimestampProvider
     {
         public int Requests { get; private set; }
