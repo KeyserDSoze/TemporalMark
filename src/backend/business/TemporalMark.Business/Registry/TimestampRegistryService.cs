@@ -76,6 +76,10 @@ public sealed class TimestampRegistryService(ITimestampRegistry registry)
         // #180: legacy/owner-restored original data may predate new-write
         // admission. Never deliver a receipt with unsupported pilot imprint.
         RequirePilotCanonicalImprint(record);
+        // #181 / ADR 0139: even otherwise valid owner-restored DER
+        // must not be returned when the strict offline v1 ZIP reader
+        // would reject the original policy metadata as blank.
+        RequirePilotNonblankPolicy(record);
         return record.ResponseDer;
     }
 
@@ -425,6 +429,9 @@ public sealed class TimestampRegistryService(ITimestampRegistry registry)
             // must reject unsearchable/misleading historic imprint metadata
             // before returning any record, hasMore or serialized evidence.
             RequirePilotCanonicalImprint(record);
+            // #181: enforce the same nonblank policy on Page, Search
+            // (including lookahead) and ZIP before returning any result.
+            RequirePilotNonblankPolicy(record);
 
             if (!seenIds.Add(record.Id))
                 throw new InvalidOperationException(
@@ -473,6 +480,17 @@ public sealed class TimestampRegistryService(ITimestampRegistry registry)
                 record.HashAlgorithmOid, record.DigestBase64))
             throw new InvalidOperationException(
                 "Repository returned an unsupported pilot document imprint.");
+    }
+
+    // Scoped SHA256-only pilot consistency with v1 offline archive
+    // inspection and new-app-owned writer admission. Do not normalize
+    // or delete owner-restored historic evidence, validate CMS signatures,
+    // or echo the invalid original source into exceptions/log messages.
+    private static void RequirePilotNonblankPolicy(TimestampRecord record)
+    {
+        if (string.IsNullOrWhiteSpace(record.PolicyOid))
+            throw new InvalidOperationException(
+                "Repository returned an unsupported pilot policy identifier.");
     }
 
     private static void RequireTenant(Guid organizationId)
