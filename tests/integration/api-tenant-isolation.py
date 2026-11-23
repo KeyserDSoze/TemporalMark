@@ -816,6 +816,69 @@ def assert_oversized_legacy_period_export_preserves_413_and_no_audit(a_token: st
     print("PASS: A SHA-consistent oversized legacy ZIP remains HTTP 413 with zero new prepared-export audits; B retained ZIP 200 and original DER")
 
 
+def assert_all_versioned_tenant_api_responses_no_store(
+        a_token: str, b_token: str, member_token: str):
+    """#186 / ADR 0144: REAL signed-Keycloak two-tenant HTTP cache boundary.
+
+    Browser HTTP caches are separate from Workbox CacheStorage. Test even
+    errors, and never print token, tenant, query, evidence or response data.
+    """
+    period = urllib.parse.urlencode({"fromUtc": FROM, "toUtcExclusive": TO})
+    day = urllib.parse.urlencode({
+        "fromUtc": "2026-11-01T00:00:00Z",
+        "toUtcExclusive": "2026-11-02T00:00:00Z"
+    })
+    checks = [
+        ("A identity", api("/me", token=a_token), 200),
+        ("B identity", api("/me", token=b_token), 200),
+        ("A page", api("/stamps?" + period, token=a_token), 200),
+        ("B page", api("/stamps?" + period, token=b_token), 200),
+        ("A summary", api("/stamps/summary?" + period, token=a_token), 200),
+        ("B summary", api("/stamps/summary?" + period, token=b_token), 200),
+        ("A daily", api("/stamps/daily?" + day, token=a_token), 200),
+        ("B daily", api("/stamps/daily?" + day, token=b_token), 200),
+        ("A audit", api("/audit?" + period, token=a_token), 200),
+        ("B audit", api("/audit?" + period, token=b_token), 200),
+        ("A TSR", api(f"/stamps/{STAMP_A}/receipt", token=a_token), 200),
+        ("B TSR", api(f"/stamps/{STAMP_B}/receipt", token=b_token), 200),
+        ("A ZIP", api("/stamps/export?" + period, token=a_token), 200),
+        ("B ZIP", api("/stamps/export?" + period, token=b_token), 200),
+        ("A search", search_imprint(a_token, DIGEST_A.hex()), 200),
+        ("B search", search_imprint(b_token, DIGEST_B.hex()), 200),
+        ("No bearer", api("/me"), 401),
+        ("Invalid bearer", api("/me", token="NOT_A_JWT"), 401),
+        ("Signed nonadmin", api("/me", token=member_token), 403),
+        ("Malformed UTC", api("/stamps/summary?fromUtc=invalid&toUtcExclusive=invalid",
+                              token=a_token), 400),
+        ("Malformed digest", search_imprint(a_token, "invalid"), 400),
+        ("Foreign receipt", api(f"/stamps/{STAMP_B}/receipt",
+                                token=a_token), 404),
+        ("Unknown v1 endpoint", api("/__no_store_ci_private_probe__"), 404),
+        ("TSA unavailable", api("/stamps/issue", method="POST",
+                                token=a_token, payload={
+                                    "digestBase64": base64.b64encode(DIGEST_A).decode()
+                                }), 503),
+    ]
+    missing = []
+    for name, (status, headers, _private_body), expected in checks:
+        if status != expected:
+            raise AssertionError(
+                f"Live cache fixture {name}: HTTP {status}, wanted {expected} "
+                "(private body withheld)")
+        if "no-store" not in headers.get("Cache-Control", "").lower():
+            missing.append(name)
+    if missing:
+        raise AssertionError(
+            "Missing HTTP Cache-Control no-store for real versioned API: " +
+            ", ".join(missing) +
+            " (no tenant, URL, token, imprint or response body logged)")
+    must_status("Public health still available",
+                checked_http(API + "/healthz"), 200)
+    print("PASS: signed-Keycloak two-tenant no-store on identity, tenant "
+          "registry, daily, audit, search, TSR, ZIP, 400/401/403/404/503; "
+          "public health still available")
+
+
 def main():
     if os.environ.get("TEMPORALMARK_CI_API_ISOLATION") != "1":
         raise AssertionError("Explicit CI-only fixture gate required")
@@ -882,6 +945,9 @@ def main():
     must_status("signed tenant_member without admin", api("/me", token=member_token), 403)
     check_authorized(a_token, ORG_A, STAMP_A, STAMP_B, AUDIT_A, DER_A, ORG_B)
     check_authorized(b_token, ORG_B, STAMP_B, STAMP_A, AUDIT_B, DER_B, ORG_A)
+    # #186 RED-first: real signed tenant A/B, after actual PostgreSQL seed.
+    assert_all_versioned_tenant_api_responses_no_store(
+        a_token, b_token, member_token)
 
     # Explicit body scope forging cannot override the server-selected org.
     payload = {"digestBase64": base64.b64encode(DIGEST_A).decode(),
