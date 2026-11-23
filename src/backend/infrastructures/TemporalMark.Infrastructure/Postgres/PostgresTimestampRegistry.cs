@@ -14,14 +14,25 @@ public sealed class PostgresTimestampRegistry(NpgsqlDataSource database) : ITime
         await using var command = new NpgsqlCommand("""
             SELECT id, organization_id, issued_utc, hash_algorithm_oid, digest_base64,
                    policy_oid, provider_id, token_sha256_hex, validation_state,
-                   response_der, evidence_reference
-              FROM timestamp_registry
+                   CASE WHEN octet_length(response_der) <= @max_receipt_bytes
+                        THEN response_der ELSE NULL::bytea END AS response_der,
+                   evidence_reference
+              FROM public.timestamp_registry
              WHERE organization_id = @org AND id = @id
             """, connection);
         command.Parameters.AddWithValue("org", organizationId);
         command.Parameters.AddWithValue("id", recordId);
+        command.Parameters.AddWithValue(
+            "max_receipt_bytes", TimestampRegistryService.ExportReceiptDerLimitBytes);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        return await reader.ReadAsync(cancellationToken) ? MapRecord(reader) : null;
+        // A truly missing/foreign record has no row -> 404. An authorized
+        // oversized legacy row has a row but no projected bytea -> 409.
+        // Check before MapRecord calls Npgsql GetFieldValue<byte[]>(9).
+        if (!await reader.ReadAsync(cancellationToken))
+            return null;
+        if (reader.IsDBNull(9))
+            throw new ReceiptTooLargeException();
+        return MapRecord(reader);
     }
 
     private static TimestampRecord MapRecord(NpgsqlDataReader reader) =>
