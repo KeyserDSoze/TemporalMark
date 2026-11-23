@@ -31,6 +31,11 @@ public static class TimestampRegistryWriteBudget
     /// </summary>
     public static bool IsNewRegistryRecordAdmissible(TimestampRecord? record) =>
         record is not null &&
+        // #178 / ADR 0136: the only currently authorized NEW pilot state
+        // is Unverified. Future qualification/incident states still exist
+        // in Domain and historic V001, but have no approved append workflow.
+        // Deny direct writer calls before DER SHA or any SQL connection.
+        record.ValidationState == TimestampValidationState.Unverified &&
         HasAllowedOriginalDerLength(record.ResponseDer) &&
         IsRequiredOriginalTextAdmissible(record.HashAlgorithmOid) &&
         IsRequiredOriginalTextAdmissible(record.DigestBase64) &&
