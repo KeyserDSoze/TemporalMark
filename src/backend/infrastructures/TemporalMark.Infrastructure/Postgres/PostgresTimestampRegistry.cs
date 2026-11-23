@@ -15,8 +15,10 @@ public sealed class PostgresTimestampRegistry(NpgsqlDataSource database) : ITime
             SELECT id, organization_id, issued_utc, hash_algorithm_oid, digest_base64,
                    policy_oid, provider_id, token_sha256_hex, validation_state,
                    CASE WHEN octet_length(response_der) <= @max_receipt_bytes
+                             AND COALESCE(octet_length(evidence_reference), 0) <= @max_ref_bytes
                         THEN response_der ELSE NULL::bytea END AS response_der,
-                   evidence_reference
+                   CASE WHEN COALESCE(octet_length(evidence_reference), 0) <= @max_ref_bytes
+                        THEN evidence_reference ELSE NULL::text END AS evidence_reference
               FROM public.timestamp_registry
              WHERE organization_id = @org AND id = @id
             """, connection);
@@ -24,6 +26,8 @@ public sealed class PostgresTimestampRegistry(NpgsqlDataSource database) : ITime
         command.Parameters.AddWithValue("id", recordId);
         command.Parameters.AddWithValue(
             "max_receipt_bytes", TimestampRegistryService.ExportReceiptDerLimitBytes);
+        command.Parameters.AddWithValue(
+            "max_ref_bytes", TimestampRegistryService.EvidenceReferenceLimitBytes);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         // A truly missing/foreign record has no row -> 404. An authorized
         // oversized legacy row has a row but no projected bytea -> 409.
@@ -114,7 +118,8 @@ public sealed class PostgresTimestampRegistry(NpgsqlDataSource database) : ITime
     // consume resources; this is not a global concurrency memory limit.
     private const string BoundedPageSql = """
         WITH chosen AS MATERIALIZED (
-            SELECT id, octet_length(response_der)::bigint AS der_bytes
+            SELECT id, octet_length(response_der)::bigint AS der_bytes,
+                   COALESCE(octet_length(evidence_reference), 0)::bigint AS ref_bytes
               FROM public.timestamp_registry
              WHERE organization_id = @org AND issued_utc >= @start AND issued_utc < @end
              ORDER BY issued_utc, id
@@ -123,15 +128,20 @@ public sealed class PostgresTimestampRegistry(NpgsqlDataSource database) : ITime
         guarded AS MATERIALIZED (
             SELECT id,
                    bool_and(der_bytes BETWEEN 1 AND @max_receipt_bytes) OVER () AS all_receipts_ok,
-                   sum(der_bytes) OVER () AS batch_bytes
+                   sum(der_bytes) OVER () AS batch_bytes,
+                   bool_and(ref_bytes <= @max_ref_bytes) OVER () AS refs_ok,
+                   sum(ref_bytes) OVER () AS ref_batch_bytes
               FROM chosen
         )
         SELECT t.id, t.organization_id, t.issued_utc, t.hash_algorithm_oid,
                t.digest_base64, t.policy_oid, t.provider_id,
                t.token_sha256_hex, t.validation_state,
                CASE WHEN g.all_receipts_ok AND g.batch_bytes <= @max_batch_bytes
+                         AND g.refs_ok AND g.ref_batch_bytes <= @max_ref_batch_bytes
                     THEN t.response_der ELSE NULL::bytea END AS response_der,
-               t.evidence_reference
+               CASE WHEN g.all_receipts_ok AND g.batch_bytes <= @max_batch_bytes
+                         AND g.refs_ok AND g.ref_batch_bytes <= @max_ref_batch_bytes
+                    THEN t.evidence_reference ELSE NULL::text END AS evidence_reference
           FROM guarded AS g
           JOIN public.timestamp_registry AS t
             ON t.id = g.id AND t.organization_id = @org
@@ -140,7 +150,8 @@ public sealed class PostgresTimestampRegistry(NpgsqlDataSource database) : ITime
 
     private const string BoundedSearchSql = """
         WITH chosen AS MATERIALIZED (
-            SELECT id, octet_length(response_der)::bigint AS der_bytes
+            SELECT id, octet_length(response_der)::bigint AS der_bytes,
+                   COALESCE(octet_length(evidence_reference), 0)::bigint AS ref_bytes
               FROM public.timestamp_registry
              WHERE organization_id = @org AND issued_utc >= @start AND issued_utc < @end
                AND hash_algorithm_oid = @algorithm AND digest_base64 = @digest
@@ -150,15 +161,20 @@ public sealed class PostgresTimestampRegistry(NpgsqlDataSource database) : ITime
         guarded AS MATERIALIZED (
             SELECT id,
                    bool_and(der_bytes BETWEEN 1 AND @max_receipt_bytes) OVER () AS all_receipts_ok,
-                   sum(der_bytes) OVER () AS batch_bytes
+                   sum(der_bytes) OVER () AS batch_bytes,
+                   bool_and(ref_bytes <= @max_ref_bytes) OVER () AS refs_ok,
+                   sum(ref_bytes) OVER () AS ref_batch_bytes
               FROM chosen
         )
         SELECT t.id, t.organization_id, t.issued_utc, t.hash_algorithm_oid,
                t.digest_base64, t.policy_oid, t.provider_id,
                t.token_sha256_hex, t.validation_state,
                CASE WHEN g.all_receipts_ok AND g.batch_bytes <= @max_batch_bytes
+                         AND g.refs_ok AND g.ref_batch_bytes <= @max_ref_batch_bytes
                     THEN t.response_der ELSE NULL::bytea END AS response_der,
-               t.evidence_reference
+               CASE WHEN g.all_receipts_ok AND g.batch_bytes <= @max_batch_bytes
+                         AND g.refs_ok AND g.ref_batch_bytes <= @max_ref_batch_bytes
+                    THEN t.evidence_reference ELSE NULL::text END AS evidence_reference
           FROM guarded AS g
           JOIN public.timestamp_registry AS t
             ON t.id = g.id AND t.organization_id = @org
@@ -180,6 +196,10 @@ public sealed class PostgresTimestampRegistry(NpgsqlDataSource database) : ITime
             "max_receipt_bytes", TimestampRegistryService.ExportReceiptDerLimitBytes);
         command.Parameters.AddWithValue(
             "max_batch_bytes", TimestampRegistryService.ExportTotalDerLimitBytes);
+        command.Parameters.AddWithValue(
+            "max_ref_bytes", TimestampRegistryService.EvidenceReferenceLimitBytes);
+        command.Parameters.AddWithValue(
+            "max_ref_batch_bytes", TimestampRegistryService.EvidenceReferenceBatchLimitBytes);
         if (digestBase64 is not null)
         {
             command.Parameters.AddWithValue("algorithm", "2.16.840.1.101.3.4.2.1");
@@ -213,7 +233,8 @@ public sealed class PostgresTimestampRegistry(NpgsqlDataSource database) : ITime
     // This does not bound internal TOAST I/O or accepted concurrent loads.
     private const string BoundedExportSql = """
         WITH chosen AS MATERIALIZED (
-            SELECT id, octet_length(response_der)::bigint AS der_bytes
+            SELECT id, octet_length(response_der)::bigint AS der_bytes,
+                   COALESCE(octet_length(evidence_reference), 0)::bigint AS ref_bytes
               FROM public.timestamp_registry
              WHERE organization_id = @org
                AND issued_utc >= @start AND issued_utc < @end
@@ -224,6 +245,8 @@ public sealed class PostgresTimestampRegistry(NpgsqlDataSource database) : ITime
             SELECT id,
                    bool_and(der_bytes BETWEEN 1 AND @max_receipt_bytes) OVER () AS all_receipts_ok,
                    sum(der_bytes) OVER () AS batch_bytes,
+                   bool_and(ref_bytes <= @max_ref_bytes) OVER () AS refs_ok,
+                   sum(ref_bytes) OVER () AS ref_batch_bytes,
                    count(*) OVER () AS record_count
               FROM chosen
         )
@@ -233,8 +256,13 @@ public sealed class PostgresTimestampRegistry(NpgsqlDataSource database) : ITime
                CASE WHEN g.all_receipts_ok
                          AND g.batch_bytes <= @max_batch_bytes
                          AND g.record_count <= @max_records
+                         AND g.refs_ok AND g.ref_batch_bytes <= @max_ref_batch_bytes
                     THEN t.response_der ELSE NULL::bytea END AS response_der,
-               t.evidence_reference
+               CASE WHEN g.all_receipts_ok
+                         AND g.batch_bytes <= @max_batch_bytes
+                         AND g.record_count <= @max_records
+                         AND g.refs_ok AND g.ref_batch_bytes <= @max_ref_batch_bytes
+                    THEN t.evidence_reference ELSE NULL::text END AS evidence_reference
           FROM guarded AS g
           JOIN public.timestamp_registry AS t
             ON t.id = g.id AND t.organization_id = @org
@@ -253,6 +281,10 @@ public sealed class PostgresTimestampRegistry(NpgsqlDataSource database) : ITime
             "max_receipt_bytes", TimestampRegistryService.ExportReceiptDerLimitBytes);
         command.Parameters.AddWithValue(
             "max_batch_bytes", TimestampRegistryService.ExportTotalDerLimitBytes);
+        command.Parameters.AddWithValue(
+            "max_ref_bytes", TimestampRegistryService.EvidenceReferenceLimitBytes);
+        command.Parameters.AddWithValue(
+            "max_ref_batch_bytes", TimestampRegistryService.EvidenceReferenceBatchLimitBytes);
         command.Parameters.AddWithValue("max_records", TimestampRegistryService.ExportLimit);
 
         var records = new List<TimestampRecord>();
