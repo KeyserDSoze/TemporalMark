@@ -920,6 +920,165 @@ public sealed class TimestampRegistryServiceTests
             await service.DownloadReceiptAsync(TenantA, receipt.Id, CancellationToken.None));
     }
 
+    // #176 / ADR 0134: these four V001 NOT NULL fields are not constrained
+    // by #175's evidence_reference or the SHA-consistent DER byte budgets.
+    // Exactly 16KiB original UTF8 per field is allowed, then a separate 2MiB
+    // selected-batch budget; never silently truncate metadata.
+    [Theory]
+    [InlineData("hash_algorithm_oid", "receipt")]
+    [InlineData("hash_algorithm_oid", "page")]
+    [InlineData("hash_algorithm_oid", "search")]
+    [InlineData("hash_algorithm_oid", "export")]
+    [InlineData("digest_base64", "receipt")]
+    [InlineData("digest_base64", "page")]
+    [InlineData("digest_base64", "search")]
+    [InlineData("digest_base64", "export")]
+    [InlineData("policy_oid", "receipt")]
+    [InlineData("policy_oid", "page")]
+    [InlineData("policy_oid", "search")]
+    [InlineData("policy_oid", "export")]
+    [InlineData("provider_id", "receipt")]
+    [InlineData("provider_id", "page")]
+    [InlineData("provider_id", "search")]
+    [InlineData("provider_id", "export")]
+    public async Task PilotRegistryRejectsOversizedOtherMetadataByRoute(
+        string field, string route)
+    {
+        const int allowed = 16 * 1024;
+        var oversized = new string('Z', allowed + 1);
+        var original = MakeRecord(TenantA);
+        var record = field switch
+        {
+            "hash_algorithm_oid" => original with { HashAlgorithmOid = oversized },
+            "digest_base64" => original with { DigestBase64 = oversized },
+            "policy_oid" => original with { PolicyOid = oversized },
+            "provider_id" => original with { ProviderId = oversized },
+            _ => throw new InvalidOperationException()
+        };
+        // DER is original/owned/unverified/SHA-consistent; this is a read
+        // resource boundary, not a corrupted DER or qualified state fixture.
+        record.Validate();
+        var repository = new FakeRegistry([record], overrideSearch: [record]);
+        var service = new TimestampRegistryService(repository);
+        Func<Task> action = route switch
+        {
+            "receipt" => async () =>
+            {
+                _ = await service.DownloadReceiptAsync(TenantA, record.Id, default);
+            },
+            "page" => async () =>
+            {
+                _ = await service.PageAsync(TenantA, Period, 0, 10, default);
+            },
+            "search" => async () =>
+            {
+                _ = await service.SearchByDocumentSha256Async(
+                    TenantA, Period, new string('0', 64), 0, 10, default);
+            },
+            "export" => async () =>
+            {
+                _ = await service.ExportZipAsync(TenantA, Period, default);
+            },
+            _ => throw new InvalidOperationException()
+        };
+
+        if (route == "receipt")
+        {
+            var denied = await Assert.ThrowsAsync<ReceiptTooLargeException>(action);
+            Assert.Equal(new ReceiptTooLargeException().Message, denied.Message);
+        }
+        else if (route == "export")
+        {
+            var denied = await Assert.ThrowsAsync<ExportTooLargeException>(action);
+            Assert.Equal(new ExportTooLargeException().Message, denied.Message);
+        }
+        else
+        {
+            var denied = await Assert.ThrowsAsync<InvalidOperationException>(action);
+            Assert.Equal(
+                "Repository returned a registry batch outside pilot metadata read limits.",
+                denied.Message);
+            Assert.DoesNotContain(TenantA.ToString(), denied.Message);
+        }
+    }
+
+    [Theory]
+    [InlineData("page")]
+    [InlineData("export")]
+    public async Task OtherMetadataCumulativeBudgetDeniesEntireBatchOfIndividuallyValidRows(
+        string route)
+    {
+        const int allowedField = 16 * 1024;
+        var normal = MakeRecord(TenantA);
+        var fieldValue = new string('Q', allowedField);
+        // All four fields individually sit EXACTLY at their inclusive cap.
+        // 33 distinct receipts x 4 x 16KiB = 2,162,688 > 2MiB.
+        var records = Enumerable.Range(0, 33)
+            .Select(i => normal with
+            {
+                Id = Guid.NewGuid(),
+                IssuedUtc = normal.IssuedUtc.AddSeconds(i),
+                HashAlgorithmOid = fieldValue,
+                DigestBase64 = fieldValue,
+                PolicyOid = fieldValue,
+                ProviderId = fieldValue
+            }).ToArray();
+        var service = new TimestampRegistryService(new FakeRegistry(records));
+        if (route == "export")
+            await Assert.ThrowsAsync<ExportTooLargeException>(() =>
+                service.ExportZipAsync(TenantA, Period, default));
+        else
+        {
+            var denied = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                service.PageAsync(TenantA, Period, 0, 33, default));
+            Assert.Equal(
+                "Repository returned a registry batch outside pilot metadata read limits.",
+                denied.Message);
+        }
+    }
+
+    [Fact]
+    public async Task OtherMetadataUtf8CountsBytesNotCharactersAtSingleReceipt()
+    {
+        var record = MakeRecord(TenantA) with
+        {
+            // 8193 x U+00E9 = 16386 UTF8 bytes, despite only 8193 chars.
+            ProviderId = new string('é', 8193)
+        };
+        var denied = await Assert.ThrowsAsync<ReceiptTooLargeException>(() =>
+            new TimestampRegistryService(new FakeRegistry([record]))
+                .DownloadReceiptAsync(TenantA, record.Id, default));
+        Assert.Equal(new ReceiptTooLargeException().Message, denied.Message);
+    }
+
+    [Fact]
+    public async Task OtherMetadataLargeButInBudgetOriginalValuesStayUnchanged()
+    {
+        var normal = MakeRecord(TenantA);
+        var longProvider = new string('P', 16 * 1024);
+        var record = normal with
+        {
+            ProviderId = longProvider,
+            PolicyOid = "1.3.6.1.4.1.55555.1",
+            EvidenceReference = "https://operator.example/receipt/ci",
+        };
+        var service = new TimestampRegistryService(
+            new FakeRegistry([record], overrideSearch: [record]));
+        Assert.Equal(longProvider, Assert.Single(await service.PageAsync(
+            TenantA, Period, 0, 10, default)).ProviderId);
+        Assert.Equal(longProvider, Assert.Single((await service.SearchByDocumentSha256Async(
+            TenantA, Period, new string('0', 64), 0, 10, default)).Items).ProviderId);
+        Assert.Equal(record.ResponseDer,
+            await service.DownloadReceiptAsync(TenantA, record.Id, default));
+        var zip = await service.ExportZipAsync(TenantA, Period, default);
+        using var archive = new ZipArchive(new MemoryStream(zip), ZipArchiveMode.Read);
+        using var manifest = JsonDocument.Parse(archive.GetEntry("manifest.json")!.Open());
+        Assert.Equal(longProvider, manifest.RootElement.GetProperty("entries")[0]
+            .GetProperty("ProviderId").GetString());
+        Assert.Equal(record.PolicyOid, manifest.RootElement.GetProperty("entries")[0]
+            .GetProperty("PolicyOid").GetString());
+    }
+
     private static TimestampRecord MakeRecord(Guid tenant)
     {
         var der = new byte[] { 0x30, 0x02, 0x01, 0x00 };
