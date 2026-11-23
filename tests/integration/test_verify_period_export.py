@@ -718,6 +718,98 @@ class OfflinePeriodExportTests(unittest.TestCase):
         self.assertLess(source_text_bytes, 2 * 1024 * 1024)
         self.assertEqual(127, check(build_zip(manifest(rows))))
 
+    # #185 / ADR 0143: the current .NET v1 exporter writes a central
+    # directory in exactly the same order as the chronological manifest
+    # and physical local headers. Generic ZipFile tolerates a different
+    # central RECORD order and reads all original bytes successfully.
+    @staticmethod
+    def _permute_central_records_without_changing_any_other_bytes(
+            original: bytes, permutation: tuple[int, ...]) -> bytes:
+        with zipfile.ZipFile(io.BytesIO(original)) as archive:
+            previous_names = archive.namelist()
+            offsets = {info.filename: info.header_offset
+                       for info in archive.infolist()}
+            expected_raw = {name: archive.read(name)
+                            for name in previous_names}
+            directory_start = archive.start_dir
+        assert len(permutation) == len(previous_names)
+        assert sorted(permutation) == list(range(len(previous_names)))
+        assert original[-22:-18] == b"PK\x05\x06"  # classic no-comment EOCD
+        size, offset = struct.unpack_from(
+            "<II", original, len(original) - 22 + 12)
+        assert directory_start == offset
+        position = offset
+        records = []
+        for _ in previous_names:
+            assert original[position:position + 4] == b"PK\x01\x02"
+            name_length, extra_length, comment_length = struct.unpack_from(
+                "<HHH", original, position + 28)
+            end = position + 46 + name_length + extra_length + comment_length
+            assert end <= offset + size
+            records.append(original[position:end])
+            position = end
+        assert position == offset + size
+        reordered = (
+            original[:offset] +
+            b"".join(records[index] for index in permutation) +
+            original[position:])
+        assert len(reordered) == len(original)
+        assert reordered[:offset] == original[:offset]
+        assert reordered[position:] == original[position:]
+        with zipfile.ZipFile(io.BytesIO(reordered)) as archive:
+            assert archive.namelist() == [
+                previous_names[index] for index in permutation]
+            assert {i.filename: i.header_offset for i in archive.infolist()} == offsets
+            for name, raw in expected_raw.items():
+                assert archive.read(name) == raw
+        return reordered
+
+    def test_canonical_central_and_local_manifest_order_accepts_two_receipts(self):
+        first, tie, _ = self._canonical_timeline_rows()
+        raw = build_zip(manifest([first, tie]))
+        with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+            names = ["manifest.json", first["responseFile"], tie["responseFile"]]
+            self.assertEqual(names, archive.namelist())
+            self.assertEqual(names, [i.filename for i in sorted(
+                archive.infolist(), key=lambda entry: entry.header_offset)])
+        self.assertEqual(2, check(raw))
+
+    def test_central_receipt_before_manifest_is_denied_even_if_locals_correct(self):
+        first, tie, _ = self._canonical_timeline_rows()
+        original = build_zip(manifest([first, tie]))
+        tampered = self._permute_central_records_without_changing_any_other_bytes(
+            original, (1, 0, 2))
+        self.assertEqual(2, check(original))
+        with self.assertRaises(verifier.ExportVerificationError):
+            check(tampered)
+
+    def test_central_tsr_swap_is_denied_even_if_local_manifest_order_correct(self):
+        first, tie, _ = self._canonical_timeline_rows()
+        original = build_zip(manifest([first, tie]))
+        tampered = self._permute_central_records_without_changing_any_other_bytes(
+            original, (0, 2, 1))
+        self.assertEqual(2, check(original))
+        with self.assertRaises(verifier.ExportVerificationError):
+            check(tampered)
+
+    def test_central_order_denial_cli_is_generic_and_private_metadata_is_absent(self):
+        first, tie, _ = self._canonical_timeline_rows()
+        altered = self._permute_central_records_without_changing_any_other_bytes(
+            build_zip(manifest([first, tie])), (0, 2, 1))
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "tenant-confidential-original-der.zip"
+            path.write_bytes(altered)
+            out, err = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                code = verifier.main([str(path)])
+            self.assertEqual(1, code)
+            self.assertEqual("", out.getvalue())
+            self.assertIn("FAILED", err.getvalue())
+            for secret in (ORG, first["Id"], tie["Id"],
+                           first["responseFile"], tie["responseFile"],
+                           str(path), "tenant-confidential"):
+                self.assertNotIn(secret, err.getvalue())
+
     def test_untrusted_qualified_state_claim_fails_closed(self):
         for state in ("VerifiedQualifiedExternal", "VerifiedQualifiedOwn", "VerifiedNonQualified"):
             with self.subTest(state=state):
