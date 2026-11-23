@@ -208,7 +208,12 @@ def verify_archive(source: object) -> int:
             # Central metadata and hashes alone can hide an unreferenced
             # opaque gap between members or immediately before central.
             expected_local_start = 0
-            for info in sorted(infos, key=lambda item: item.header_offset):
+            # #183 / ADR 0141: bind physical local-file order, not merely
+            # an unordered set of central-directory member names. The
+            # memory-backed current .NET v1 writer emits manifest first,
+            # then TSRs in chronological (issuedUtc, id) order.
+            physical_members = sorted(infos, key=lambda item: item.header_offset)
+            for info in physical_members:
                 require(info.header_offset == expected_local_start)
                 expected_local_start = require_local_central_metadata_match(zipped, info)
                 require(expected_local_start <= central_start)
@@ -251,6 +256,7 @@ def verify_archive(source: object) -> int:
 
             expected = {"manifest.json"}
             seen_ids: set[str] = set()
+            previous_timeline: tuple[int, int] | None = None
             total = 0
             for row in rows:
                 require(isinstance(row, dict) and set(row) == ENTRY_KEYS)
@@ -262,6 +268,12 @@ def verify_archive(source: object) -> int:
                 expected.add(row["responseFile"])
                 issued = parse_utc_ticks(row["IssuedUtc"])
                 require(start <= issued < end)
+                # Reuse exact 100ns UTC ticks and canonical parsed UUID
+                # rather than textual timestamp/UUID spellings. Strictly
+                # increasing pairs match SQL ORDER BY issued_utc, id.
+                timeline = (issued, rid.int)
+                require(previous_timeline is None or previous_timeline < timeline)
+                previous_timeline = timeline
                 require(row["HashAlgorithmOid"] == SHA256_OID)
                 parse_digest(row["DigestBase64"])
                 require(isinstance(row["PolicyOid"], str) and bool(row["PolicyOid"].strip()))
@@ -281,6 +293,12 @@ def verify_archive(source: object) -> int:
                 require(hashlib.sha256(token).hexdigest() == expected_hash.lower())
 
             require(set(names) == expected)
+            # No physical archive ambiguity: first local member is the
+            # manifest, then the exact canonical manifest receipt sequence.
+            # Existing local/central header and no-gap checks above already
+            # bind these names to actual stored bytes.
+            require([info.filename for info in physical_members] ==
+                    ["manifest.json"] + [row["responseFile"] for row in rows])
             return count
     except ExportVerificationError:
         raise

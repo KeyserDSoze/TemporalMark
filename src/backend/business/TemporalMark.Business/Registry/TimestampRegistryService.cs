@@ -205,6 +205,11 @@ public sealed class TimestampRegistryService(ITimestampRegistry registry)
         // Fail before creating any ZIP or manifest: a duplicate ID could
         // otherwise create ambiguous tokens/{id}.tsr archive paths.
         ValidateReturnedRecords(records, organizationId, period, forExport: true);
+        // #183 / ADR 0141: authenticated Page/Search already enforce
+        // PostgreSQL's (IssuedUtc, Id) ordering. Refuse an alternate
+        // exporter returning a reversed chronological batch BEFORE creating
+        // any v1 manifest/ZIP; never silently sort original evidence.
+        RequireAscendingRegistryOrder(records);
 
         var manifest = new
         {
