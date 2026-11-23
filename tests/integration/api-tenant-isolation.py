@@ -374,6 +374,15 @@ def check_authorized(token, own_org, own_id, other_id, own_audit, own_der, other
         raise AssertionError(f"{role}: receipt does not match verified canary or no-store absent")
     must_status("foreign receipt is indistinguishable from nonexistent",
                 api(f"/stamps/{other_id}/receipt", token=token), 404)
+    # #174: the legitimate 200 returns the original retained DER and
+    # appends exactly ONE scoped receipt-prepared audit. Foreign 404 must
+    # not prepare a download, and the later oversized A 409 must append ZERO.
+    prepared_receipts = [event for event in audit(token)
+                         if event.get("action") == "ReceiptDownloadPrepared"]
+    if (len(prepared_receipts) != 1 or
+        prepared_receipts[0].get("receiptId") != own_id or
+        prepared_receipts[0].get("organizationId") != own_org):
+        raise AssertionError(f"{role}: normal retained receipt not audited exactly once for own tenant")
 
     manifest, blobs = export(token)
     names = {entry["Id"] for entry in manifest["entries"]}
