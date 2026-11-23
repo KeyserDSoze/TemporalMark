@@ -1,4 +1,5 @@
 using System.IO.Compression;
+using System.Text;
 using System.Text.Json;
 using TemporalMark.Domain.Stamping;
 
@@ -25,6 +26,9 @@ public sealed class TimestampRegistryService(ITimestampRegistry registry)
     public const int ExportReceiptDerLimitBytes = 1024 * 1024;
     public const long ExportTotalDerLimitBytes = 64L * 1024 * 1024;
     public const int ExportManifestLimitBytes = 8 * 1024 * 1024;
+    // Raw UTF-8 evidence_reference admission; serialized JSON has its OWN cap.
+    public const int EvidenceReferenceLimitBytes = 8 * 1024 * 1024;
+    public const long EvidenceReferenceBatchLimitBytes = 8L * 1024 * 1024;
     public const int ExportArchiveLimitBytes = 80 * 1024 * 1024;
 
     public async Task<byte[]?> DownloadReceiptAsync(
@@ -43,6 +47,11 @@ public sealed class TimestampRegistryService(ITimestampRegistry registry)
         // disclosure. The real PostgreSQL adapter also filters by both keys.
         if (record.Id != recordId)
             throw new InvalidOperationException("Repository returned a receipt outside requested identity.");
+        // Alternate repositories must not bypass the SQL read projection
+        // limit on legacy evidence references. The raw DER remains original.
+        if (record.EvidenceReference is not null &&
+            Encoding.UTF8.GetByteCount(record.EvidenceReference) > EvidenceReferenceLimitBytes)
+            throw new ReceiptTooLargeException();
         // Use the same conservative per-receipt pilot budget as synchronous
         // ZIP export and the strict offline v1 checker. Legacy rows with
         // matching hashes can still be oversized; refuse before SHA hashing.
@@ -175,7 +184,7 @@ public sealed class TimestampRegistryService(ITimestampRegistry registry)
         ValidateSynchronousExportByteBudget(records);
         // Fail before creating any ZIP or manifest: a duplicate ID could
         // otherwise create ambiguous tokens/{id}.tsr archive paths.
-        ValidateReturnedRecords(records, organizationId, period);
+        ValidateReturnedRecords(records, organizationId, period, forExport: true);
 
         var manifest = new
         {
@@ -321,7 +330,8 @@ public sealed class TimestampRegistryService(ITimestampRegistry registry)
     }
 
     private static void ValidateReturnedRecords(
-        IReadOnlyList<TimestampRecord> records, Guid organizationId, UtcPeriod period)
+        IReadOnlyList<TimestampRecord> records, Guid organizationId, UtcPeriod period,
+        bool forExport = false)
     {
         // #171 / ADR 0129: check ALL tenant/period identities first. An
         // oversized foreign record must not turn a scope failure into a
@@ -348,6 +358,28 @@ public sealed class TimestampRegistryService(ITimestampRegistry registry)
                 throw new InvalidOperationException(
                     "Repository returned a registry batch outside pilot evidence read limits.");
             totalBytes += length;
+        }
+
+        // #175 / ADR 0133: a SHA-consistent 4-byte DER cannot make a
+        // multi-megabyte unbounded evidence reference safe to list or export.
+        // Check original UTF-8 BYTES (not C# chars), including search lookahead,
+        // without silently truncating any retained metadata. This Business
+        // defense-in-depth runs after an alternate adapter materializes text;
+        // the PostgreSQL provider independently gates its wire projection.
+        long totalReferenceBytes = 0;
+        foreach (var record in records)
+        {
+            var referenceBytes = record.EvidenceReference is null
+                ? 0 : Encoding.UTF8.GetByteCount(record.EvidenceReference);
+            if (referenceBytes > EvidenceReferenceLimitBytes ||
+                referenceBytes > EvidenceReferenceBatchLimitBytes - totalReferenceBytes)
+            {
+                if (forExport)
+                    throw new ExportTooLargeException();
+                throw new InvalidOperationException(
+                    "Repository returned a registry batch outside pilot metadata read limits.");
+            }
+            totalReferenceBytes += referenceBytes;
         }
 
         var seenIds = new HashSet<Guid>();
