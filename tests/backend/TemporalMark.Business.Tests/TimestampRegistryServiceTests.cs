@@ -16,6 +16,82 @@ public sealed class TimestampRegistryServiceTests
         new DateTimeOffset(2026, 11, 1, 0, 0, 0, TimeSpan.Zero),
         new DateTimeOffset(2026, 12, 1, 0, 0, 0, TimeSpan.Zero));
 
+    // #183 / ADR 0141: the real PostgreSQL period exporter returns rows
+    // in (issued_utc, id) order. A buggy alternate repository must NOT
+    // silently create an unordered v1 ZIP that the strict offline reader
+    // may accept as internally self-consistent.
+    [Theory]
+    [InlineData("descending-utc")]
+    [InlineData("descending-id-at-same-utc")]
+    public async Task ExportRefusesNoncanonicalRepositoryTimelineBeforeZip(
+        string variant)
+    {
+        var early = MakeRecord(TenantA) with
+        {
+            Id = Guid.Parse("00000000-0000-4000-8000-000000000001")
+        };
+        var late = early with
+        {
+            Id = Guid.Parse("00000000-0000-4000-8000-000000000002"),
+            IssuedUtc = variant == "descending-utc"
+                ? early.IssuedUtc.AddSeconds(1)
+                : early.IssuedUtc
+        };
+        early.Validate();
+        late.Validate();
+        Assert.True(early.IssuedUtc <= late.IssuedUtc);
+        var service = new TimestampRegistryService(
+            new FakeRegistry([], overrideExport: [late, early]));
+
+        var denied = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.ExportZipAsync(TenantA, Period, default));
+
+        Assert.Equal("Repository returned an unordered registry batch.", denied.Message);
+        Assert.DoesNotContain(early.Id.ToString(), denied.Message);
+        Assert.DoesNotContain(late.Id.ToString(), denied.Message);
+        Assert.DoesNotContain(TenantA.ToString(), denied.Message);
+        Assert.DoesNotContain(early.TokenSha256Hex, denied.Message);
+    }
+
+    [Fact]
+    public async Task ExportFromSqlOrderedFixturePreservesManifestAndPhysicalReceiptOrder()
+    {
+        var early = MakeRecord(TenantA) with
+        {
+            Id = Guid.Parse("00000000-0000-4000-8000-000000000001")
+        };
+        var tie = early with
+        {
+            Id = Guid.Parse("00000000-0000-4000-8000-000000000002")
+        };
+        var later = tie with
+        {
+            Id = Guid.Parse("00000000-0000-4000-8000-000000000003"),
+            IssuedUtc = tie.IssuedUtc.AddTicks(1)
+        };
+        var other = MakeRecord(TenantB);
+        // Test fake reproduces the real SELECT ORDER BY even when seed
+        // insertion order is reversed and foreign tenant rows are present.
+        var service = new TimestampRegistryService(
+            new FakeRegistry([later, other, tie, early]));
+        var bytes = await service.ExportZipAsync(TenantA, Period, default);
+        using var archive = new ZipArchive(new MemoryStream(bytes), ZipArchiveMode.Read);
+        using var manifest = JsonDocument.Parse(archive.GetEntry("manifest.json")!.Open());
+        var ids = manifest.RootElement.GetProperty("entries")
+            .EnumerateArray()
+            .Select(e => e.GetProperty("Id").GetGuid())
+            .ToArray();
+        Assert.Equal(new[] { early.Id, tie.Id, later.Id }, ids);
+        Assert.Equal(new[]
+        {
+            "manifest.json",
+            $"tokens/{early.Id:N}.tsr",
+            $"tokens/{tie.Id:N}.tsr",
+            $"tokens/{later.Id:N}.tsr"
+        }, archive.Entries.Select(e => e.FullName).ToArray());
+        Assert.DoesNotContain(other.Id, ids);
+    }
+
     // #182 / ADR 0140: Python's str.strip() considers U+001C–U+001F
     // whitespace, unlike .NET string.IsNullOrWhiteSpace. Source-only
     // identifiers must be refused on historical reads, including search
@@ -1460,7 +1536,8 @@ public sealed class TimestampRegistryServiceTests
         IReadOnlyList<TimestampRecord> data,
         IReadOnlyList<RegistryDayCount>? overrideDays = null,
         IReadOnlyList<TimestampRecord>? overrideSearch = null,
-        IReadOnlyList<TimestampRecord>? overridePage = null) : ITimestampRegistry
+        IReadOnlyList<TimestampRecord>? overridePage = null,
+        IReadOnlyList<TimestampRecord>? overrideExport = null) : ITimestampRegistry
     {
         public int DailyQueries { get; private set; }
         public int SearchQueries { get; private set; }
@@ -1499,7 +1576,11 @@ public sealed class TimestampRegistryServiceTests
         public Task<IReadOnlyList<TimestampRecord>> PageAsync(Guid org, UtcPeriod period, int offset, int limit, CancellationToken ct) =>
             Task.FromResult<IReadOnlyList<TimestampRecord>>(overridePage ?? Filter(org, period).Skip(offset).Take(limit).ToArray());
         public Task<IReadOnlyList<TimestampRecord>> ForExportAsync(Guid org, UtcPeriod period, int max, CancellationToken ct) =>
-            Task.FromResult<IReadOnlyList<TimestampRecord>>(Filter(org, period).Take(max).ToArray());
+            Task.FromResult(overrideExport ?? (IReadOnlyList<TimestampRecord>)
+                Filter(org, period)
+                    .OrderBy(x => x.IssuedUtc)
+                    .ThenBy(x => x.Id.ToString("N"), StringComparer.Ordinal)
+                    .Take(max).ToArray());
     }
 
     private sealed class MaliciousRegistry(TimestampRecord record) : ITimestampRegistry
