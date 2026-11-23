@@ -39,11 +39,40 @@ public static class TimestampRegistryWriteBudget
         HasAllowedOriginalDerLength(record.ResponseDer) &&
         IsRequiredOriginalTextAdmissible(record.HashAlgorithmOid) &&
         IsRequiredOriginalTextAdmissible(record.DigestBase64) &&
+        // #179 / ADR 0137: the SHA-256-only pilot searches by this exact
+        // OID + canonical 32-byte imprint. Direct appends must not bypass
+        // the issuer's separate canonical Base64 ingress policy.
+        HasCanonicalPilotSha256Imprint(record.HashAlgorithmOid, record.DigestBase64) &&
         IsRequiredOriginalTextAdmissible(record.PolicyOid) &&
         IsRequiredOriginalTextAdmissible(record.ProviderId) &&
         (record.EvidenceReference is null ||
          IsOriginalTextWithinBytes(
              record.EvidenceReference, TimestampRegistryService.EvidenceReferenceLimitBytes));
+
+    // A 32-byte SHA-256 document imprint is exactly 44 characters in
+    // standard padded Base64. Check this BEFORE decoding to avoid large
+    // allocations, and round-trip ordinally to deny whitespace aliases and
+    // RFC4648 nonzero unused pad bits tolerated by Convert.FromBase64String.
+    // This verifies *metadata syntax*, NOT the signer or RFC3161 CMS content.
+    private static bool HasCanonicalPilotSha256Imprint(
+        string? hashAlgorithmOid, string? digestBase64)
+    {
+        if (!string.Equals(hashAlgorithmOid, "2.16.840.1.101.3.4.2.1",
+                StringComparison.Ordinal) || digestBase64 is not { Length: 44 })
+            return false;
+
+        try
+        {
+            var decoded = Convert.FromBase64String(digestBase64);
+            return decoded.Length == 32 &&
+                   string.Equals(Convert.ToBase64String(decoded), digestBase64,
+                       StringComparison.Ordinal);
+        }
+        catch (FormatException)
+        {
+            return false;
+        }
+    }
 
     private static bool HasAllowedOriginalDerLength(byte[]? originalDer) =>
         originalDer is { Length: > 0 } &&
