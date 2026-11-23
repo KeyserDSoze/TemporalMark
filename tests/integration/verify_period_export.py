@@ -25,6 +25,10 @@ MAX_DER = 1_048_576
 MAX_TOTAL_DER = 67_108_864
 MAX_MANIFEST = 8 * 1024 * 1024
 MAX_ARCHIVE = 80 * 1024 * 1024
+# #184 / ADR 0142: original V001 text metadata byte budgets from
+# TimestampRegistryService/PG17 admission, independent of JSON size.
+MAX_METADATA_FIELD = 16 * 1024
+MAX_METADATA_BATCH = 2 * 1024 * 1024
 SHA256_OID = "2.16.840.1.101.3.4.2.1"
 HEX_SHA256 = re.compile(r"[0-9a-fA-F]{64}\Z")
 UTC_TIME = re.compile(
@@ -258,6 +262,7 @@ def verify_archive(source: object) -> int:
             seen_ids: set[str] = set()
             previous_timeline: tuple[int, int] | None = None
             total = 0
+            total_metadata = 0
             for row in rows:
                 require(isinstance(row, dict) and set(row) == ENTRY_KEYS)
                 rid = parse_uuid(row["Id"])
@@ -278,6 +283,23 @@ def verify_archive(source: object) -> int:
                 parse_digest(row["DigestBase64"])
                 require(isinstance(row["PolicyOid"], str) and bool(row["PolicyOid"].strip()))
                 require(isinstance(row["ProviderId"], str) and bool(row["ProviderId"].strip()))
+                # #184 / ADR 0142: a v1 producer could NOT deliver any
+                # original mandatory metadata field over 16KiB UTF8, nor
+                # an export batch of these four texts exceeding 2MiB.
+                # Count the original decoded Unicode value's UTF8 bytes,
+                # not its JSON escapes or its Python character length.
+                # Reject before decompressing this row's TSR, preserving
+                # the raw values and using the existing generic error.
+                row_metadata = 0
+                for field in ("HashAlgorithmOid", "DigestBase64",
+                              "PolicyOid", "ProviderId"):
+                    text = row[field]
+                    require(isinstance(text, str))
+                    original_bytes = len(text.encode("utf-8"))
+                    require(original_bytes <= MAX_METADATA_FIELD)
+                    row_metadata += original_bytes
+                require(row_metadata <= MAX_METADATA_BATCH - total_metadata)
+                total_metadata += row_metadata
                 # The only state the current delegated pilot may issue.
                 # A manifest alone cannot establish any higher trust.
                 require(row["validationState"] == "Unverified")
