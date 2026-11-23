@@ -30,3 +30,8 @@ Both browser tests are excluded from the default Vite-development `playwright.co
 - No change to V015/V016 registrar issuance suspension, reviewer signed consent, FIDO MDS R46/CRL trusted root, monotonic witness production custody, WORM storage, Azure/on-prem secret management or eIDAS qualified status.
 
 Sources: [MDN Chromium installability requirements](https://developer.mozilla.org/en-US/docs/Web/Progressive_web_apps/Guides/Making_PWAs_installable), [MDN manifest id](https://developer.mozilla.org/en-US/docs/Web/Progressive_web_apps/Manifest/Reference/id).
+
+
+## HTTP cache response contract independent of offline PWA shell (#186)
+
+The Android-Chromium-emulated installability/offline-shell test observes **CacheStorage only**, not the browser's separate HTTP/disk cache. [ADR 0144](../adr/0144-api-v1-uniform-no-store-http-cache-policy.md) and the [API HTTP cache privacy runbook](API_HTTP_CACHE_PRIVACY.md) now define a **backend** response boundary: every `/api/v1` response should carry `Cache-Control: no-store` (including tenant metadata 200, authentication/validation failures 400/401/403, private 404 and unavailable issuer 503), while public `/healthz` and the installable shell remain functionally unaffected. Test-only genuine signed-Keycloak/real PostgreSQL HTTP [RED 45228057175](https://github.com/KeyserDSoze/TemporalMark/actions/runs/45228057175/attempts/1) identified 18 omissions, preceding one-file app [`17babdb9`](https://github.com/KeyserDSoze/TemporalMark/commit/17babdb9e1c3789ca3215f280a615564d26d5329). A no-store response is **not** proof that a browser destroyed earlier cached data or an OS installation completed; the mobile PWA release gates under #20 remain OPEN.
