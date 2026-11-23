@@ -120,6 +120,27 @@ public sealed class TimestampIssueServiceTests
         Assert.Equal(record, writer.Record);
     }
 
+    // #178 / ADR 0136: provider identifiers and policies are source
+    // metadata, never evidence of current EU Trusted List qualification.
+    // ProviderTimestamp has no authority to supply a validation state.
+    [Fact]
+    public async Task ProviderQualificationClaimCannotElevatePilotIssuanceState()
+    {
+        var provider = new ScriptedProvider(
+            [0x30, 0x02, 0x01, 0x00],
+            "1.2.3.4", "VerifiedQualifiedExternal");
+        var writer = new FakeWriter();
+
+        var issued = await new TimestampIssueService(provider, writer).IssueAsync(
+            Organization, Convert.ToBase64String(new byte[32]), default);
+
+        Assert.Equal(1, provider.Requests);
+        Assert.Equal("VerifiedQualifiedExternal", issued.ProviderId);
+        Assert.Equal(TimestampValidationState.Unverified, issued.ValidationState);
+        Assert.Equal(TimestampValidationState.Unverified, writer.Record!.ValidationState);
+        Assert.Equal(issued, writer.Record);
+    }
+
     [Fact]
     public async Task RejectsEmptyOrganization()
     {
