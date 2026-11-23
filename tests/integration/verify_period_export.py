@@ -315,12 +315,16 @@ def verify_archive(source: object) -> int:
                 require(hashlib.sha256(token).hexdigest() == expected_hash.lower())
 
             require(set(names) == expected)
-            # No physical archive ambiguity: first local member is the
-            # manifest, then the exact canonical manifest receipt sequence.
-            # Existing local/central header and no-gap checks above already
-            # bind these names to actual stored bytes.
+            # #185 / ADR 0143: exact current v1 ZIP creation order must
+            # agree across ALL three representations: chronological JSON,
+            # physical local headers, and central-directory records.
+            # A generic ZIP reader accepts reordered central records even
+            # when every original local byte and TSR/SHA is untouched.
+            canonical_names = ["manifest.json"] + [
+                row["responseFile"] for row in rows]
             require([info.filename for info in physical_members] ==
-                    ["manifest.json"] + [row["responseFile"] for row in rows])
+                    canonical_names)
+            require(names == canonical_names)
             return count
     except ExportVerificationError:
         raise
