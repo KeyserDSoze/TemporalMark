@@ -54,7 +54,9 @@ public static class TimestampRegistryWriteBudget
     // allocations, and round-trip ordinally to deny whitespace aliases and
     // RFC4648 nonzero unused pad bits tolerated by Convert.FromBase64String.
     // This verifies *metadata syntax*, NOT the signer or RFC3161 CMS content.
-    private static bool HasCanonicalPilotSha256Imprint(
+    // #180 / ADR 0138: shared with the authorized read-side pilot gate;
+    // pure metadata syntax only, not qualified timestamp validation.
+    internal static bool HasCanonicalPilotSha256Imprint(
         string? hashAlgorithmOid, string? digestBase64)
     {
         if (!string.Equals(hashAlgorithmOid, "2.16.840.1.101.3.4.2.1",

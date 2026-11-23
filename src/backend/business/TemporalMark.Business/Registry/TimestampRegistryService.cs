@@ -1,6 +1,7 @@
 using System.IO.Compression;
 using System.Text;
 using System.Text.Json;
+using TemporalMark.Business.Stamping;
 using TemporalMark.Domain.Stamping;
 
 namespace TemporalMark.Business.Registry;
@@ -72,6 +73,9 @@ public sealed class TimestampRegistryService(ITimestampRegistry registry)
         // Never deliver a claimed qualification or incident state from an
         // otherwise self-consistent but unsupported repository row.
         RequirePilotUnverifiedState(record);
+        // #180: legacy/owner-restored original data may predate new-write
+        // admission. Never deliver a receipt with unsupported pilot imprint.
+        RequirePilotCanonicalImprint(record);
         return record.ResponseDer;
     }
 
@@ -417,6 +421,10 @@ public sealed class TimestampRegistryService(ITimestampRegistry registry)
             // Applies before Page/Search (including lookahead)/ExportZip
             // can expose a claimed legal or incident status or DER.
             RequirePilotUnverifiedState(record);
+            // #180: Page, Search (including limit+1 lookahead), and ZIP
+            // must reject unsearchable/misleading historic imprint metadata
+            // before returning any record, hasMore or serialized evidence.
+            RequirePilotCanonicalImprint(record);
 
             if (!seenIds.Add(record.Id))
                 throw new InvalidOperationException(
@@ -454,6 +462,17 @@ public sealed class TimestampRegistryService(ITimestampRegistry registry)
         if (record.ValidationState != TimestampValidationState.Unverified)
             throw new InvalidOperationException(
                 "Repository returned an unsupported timestamp verification state.");
+    }
+
+    // New-write and historical read boundaries use the same exact
+    // SHA-256-only pilot profile without modifying stored original fields.
+    // No RFC3161 signature, custody or QTSP trust claim is inferred.
+    private static void RequirePilotCanonicalImprint(TimestampRecord record)
+    {
+        if (!TimestampRegistryWriteBudget.HasCanonicalPilotSha256Imprint(
+                record.HashAlgorithmOid, record.DigestBase64))
+            throw new InvalidOperationException(
+                "Repository returned an unsupported pilot document imprint.");
     }
 
     private static void RequireTenant(Guid organizationId)
