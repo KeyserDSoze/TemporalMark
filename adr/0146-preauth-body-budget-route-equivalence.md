@@ -1,0 +1,22 @@
+# ADR 0146 — Route-equivalent pre-auth 4 KiB request admission
+
+**Status:** Accepted for scoped implementation and verification, 2026-11-24, [#188](https://github.com/KeyserDSoze/TemporalMark/issues/188). Not a production release authorization.
+
+## Context
+
+Reviewed [ADR 0102](0102-scoped-imprint-search-body-budget-kestrel-nginx.md), [ADR 0145](0145-exact-issuance-post-preauth-body-budget.md), the API HTTP cache privacy and issuance body budget runbooks, ROADMAP, THREAT_MODEL, current API Program.cs and live imprint-search-body-budget.py. Baseline exact main `61b164cb139b1b0ede0c1678662562fef116d4bd` [CI 45410678289](https://github.com/KeyserDSoze/TemporalMark/actions/runs/45410678289) has four core jobs and ci-verdict successful, with combined status success.
+
+Both sensitive POST guards compare the raw decoded Request.Path.Value using case-insensitive exact equality. ASP.NET Core endpoint routing can match an equivalent path ending in a single slash even though this string comparison does not. The endpoint's existing RequestSizeLimit metadata remains a second defense when a signed request actually reads the body. The suspected gap is specifically early declared-length resource admission before authentication, not proof of authentication bypass or unauthorized issuance.
+
+Reference: [ASP.NET Core 10 endpoint routing](https://learn.microsoft.com/en-us/aspnet/core/fundamentals/routing?view=aspnetcore-10.0) describes case-insensitive decoded path matching and selected endpoint metadata; actual trailing-slash behavior and statuses must be established by live CI, not inferred solely from documentation.
+
+## Decision and test-first gate
+
+1. Commit this ADR, then test-only changes in the existing mandatory disposable direct Kestrel/pinned Nginx Python smoke. For both search and issuance POST, compare one trailing slash (canonical and mixed casing) with existing exact routes: 4096 declared bytes with absent/invalid bearer must retain 401, 4097 must produce generic 413 and no-store. Exercise an unmatched additional path segment to avoid unintentionally expanding the cap. Existing health, log canaries, signed tenant A/B and authorized chunked tests remain intact. No real customers, tokens or external TSA calls.
+2. Observe actual behavior-level CI RED before modifying product code. Fixture failures or an unrelated infrastructure failure do not count. If no expected failure, reassess the hypothesis rather than manufacture RED.
+3. Prefer explicit routing followed by a narrowly scoped endpoint metadata marker carrying the separate existing limits, before authentication; alternatively match exactly the canonical path or that path plus one terminal slash, ordinal case-insensitive, with explicit POST constraint if the tests establish this is sufficient. Preserve independent 4096-byte budgets, 503 fail-closed on missing/read-only request feature, early generic 413, endpoint metadata actual read limits, ADR 0144 no-store, and all tenant and provider logic. No broad StartsWith match, arbitrary slash trimming, redirect, global size limit or change to nonmatching routes. Nginx may still buffer before Kestrel; no proxy-wide cap or external ingress guarantee.
+4. Update runbooks and record actual RED and GREEN links, with final docs-inclusive exact main four core jobs, ci-verdict and combined status success before closing #188.
+
+## Residual risk
+
+This is a bounded API admission refinement, not protection against all DoS or billing/replay, nor real Azure edge controls, RLS, production retention/privacy governance, independent signed WORM, historic QTSP validation or eIDAS qualification. #115/#15/#113/#18/#17/#13 stay open. All pilot timestamps remain Unverified. No SQL migration, Terraform apply or real TSA calls.
