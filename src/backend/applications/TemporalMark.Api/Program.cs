@@ -230,6 +230,9 @@ app.Use(async (HttpContext context, RequestDelegate next) =>
 // prevents oversized declared JSON from reaching JWT/model binding and makes
 // Kestrel enforce the byte count on reads for chunked/unknown-length bodies.
 // No request body, tenant, JWT, searched digest or URI is logged or reflected.
+// #188 / ADR 0146: endpoint routing accepts one terminal slash as well.
+// Match only the canonical path and that single-slash equivalent; no prefix
+// match, redirect, arbitrary trimming or unrelated endpoint budget.
 const long ImprintSearchBodyLimitBytes = 4096;
 // #187 / ADR 0145: a canonical SHA256 issuance request is tiny too.
 // Keep an independent, exact versioned POST body cap, not a global limit.
@@ -237,8 +240,10 @@ const long IssueBodyLimitBytes = 4096;
 app.Use(async (HttpContext context, RequestDelegate next) =>
 {
     if (HttpMethods.IsPost(context.Request.Method) &&
-        string.Equals(context.Request.Path.Value, "/api/v1/stamps/search",
-            StringComparison.OrdinalIgnoreCase))
+        (string.Equals(context.Request.Path.Value, "/api/v1/stamps/search",
+            StringComparison.OrdinalIgnoreCase) ||
+         string.Equals(context.Request.Path.Value, "/api/v1/stamps/search/",
+            StringComparison.OrdinalIgnoreCase)))
     {
         var maxBody = context.Features.Get<IHttpMaxRequestBodySizeFeature>();
         if (maxBody is null || maxBody.IsReadOnly)
@@ -265,8 +270,10 @@ app.Use(async (HttpContext context, RequestDelegate next) =>
     // Exactly 4096 original JSON bytes remain admissible; 4097 is not.
     // Kestrel enforces unknown-length/chunked bodies on actual reads.
     if (HttpMethods.IsPost(context.Request.Method) &&
-        string.Equals(context.Request.Path.Value, "/api/v1/stamps/issue",
-            StringComparison.OrdinalIgnoreCase))
+        (string.Equals(context.Request.Path.Value, "/api/v1/stamps/issue",
+            StringComparison.OrdinalIgnoreCase) ||
+         string.Equals(context.Request.Path.Value, "/api/v1/stamps/issue/",
+            StringComparison.OrdinalIgnoreCase)))
     {
         var maxBody = context.Features.Get<IHttpMaxRequestBodySizeFeature>();
         if (maxBody is null || maxBody.IsReadOnly)
