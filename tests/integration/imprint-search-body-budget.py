@@ -99,10 +99,16 @@ def main():
             assert_code("direct Kestrel case variant",
                         probe(host, "/API/V1/STAMPS/SEARCH", "POST", over_limit), 413)
 
-        # Do not break other endpoints: JWT authentication should still
-        # return 401 instead of imposing this search-only 4KiB restriction.
-        assert_code(name + " other POST unaffected",
-                    probe(host, "/api/v1/stamps/issue", "POST", over_limit), 401)
+        # #187 / ADR 0145: independent issuance POST now also has
+        # its OWN 4KiB pre-auth Kestrel cap, without altering the
+        # preexisting search cap. Under-budget invalid JWT is still 401;
+        # over-budget declared JSON is 413 even without a valid JWT.
+        assert_code(name + " issuance 4096",
+                    probe(host, "/api/v1/stamps/issue", "POST", at_limit), 401)
+        issue_headers = assert_code(name + " issuance 4097",
+                    probe(host, "/api/v1/stamps/issue", "POST", over_limit), 413)
+        if "no-store" not in issue_headers.get("Cache-Control", "").lower():
+            raise AssertionError("Issuance oversize 413 lacks no-store")
 
     assert_code("Kestrel health", probe(API, "/healthz", fake_auth=False), 200)
     assert_code("Nginx health", probe(WEB, "/healthz", fake_auth=False), 200)
@@ -128,7 +134,7 @@ def main():
 
     print("PASS: direct Kestrel and pinned Nginx search POST body 4096=>401, "
           "4097=>413; no raw imprint/query/bearer in 413 or web/API logs; "
-          "other POST and health unaffected")
+          "issuance POST own 4096=>401, 4097=>413; health unaffected")
 
 
 if __name__ == "__main__":

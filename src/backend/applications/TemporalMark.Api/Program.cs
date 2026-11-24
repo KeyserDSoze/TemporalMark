@@ -231,6 +231,9 @@ app.Use(async (HttpContext context, RequestDelegate next) =>
 // Kestrel enforce the byte count on reads for chunked/unknown-length bodies.
 // No request body, tenant, JWT, searched digest or URI is logged or reflected.
 const long ImprintSearchBodyLimitBytes = 4096;
+// #187 / ADR 0145: a canonical SHA256 issuance request is tiny too.
+// Keep an independent, exact versioned POST body cap, not a global limit.
+const long IssueBodyLimitBytes = 4096;
 app.Use(async (HttpContext context, RequestDelegate next) =>
 {
     if (HttpMethods.IsPost(context.Request.Method) &&
@@ -249,6 +252,33 @@ app.Use(async (HttpContext context, RequestDelegate next) =>
 
         maxBody.MaxRequestBodySize = ImprintSearchBodyLimitBytes;
         if (context.Request.ContentLength > ImprintSearchBodyLimitBytes)
+        {
+            context.Response.Headers.CacheControl = "no-store";
+            context.Response.StatusCode = StatusCodes.Status413PayloadTooLarge;
+            return;
+        }
+    }
+
+    // #187 / ADR 0145: independent delegated-issuance input gate BEFORE
+    // JWT, JSON model binding or external TSA access, including direct
+    // Azure Container Apps API requests bypassing the on-prem web proxy.
+    // Exactly 4096 original JSON bytes remain admissible; 4097 is not.
+    // Kestrel enforces unknown-length/chunked bodies on actual reads.
+    if (HttpMethods.IsPost(context.Request.Method) &&
+        string.Equals(context.Request.Path.Value, "/api/v1/stamps/issue",
+            StringComparison.OrdinalIgnoreCase))
+    {
+        var maxBody = context.Features.Get<IHttpMaxRequestBodySizeFeature>();
+        if (maxBody is null || maxBody.IsReadOnly)
+        {
+            // No insecure fallback to the default larger Kestrel limit.
+            context.Response.Headers.CacheControl = "no-store";
+            context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
+            return;
+        }
+
+        maxBody.MaxRequestBodySize = IssueBodyLimitBytes;
+        if (context.Request.ContentLength > IssueBodyLimitBytes)
         {
             context.Response.Headers.CacheControl = "no-store";
             context.Response.StatusCode = StatusCodes.Status413PayloadTooLarge;
@@ -508,7 +538,10 @@ api.MapPost("/stamps/issue", async Task<IResult> (
         log.LogWarning("External TSA rejected: {Reason}", error.Message);
         return Results.Problem(title: error.Message, statusCode: StatusCodes.Status502BadGateway);
     }
-});
+})
+// Defense in depth for actual streamed/chunked JSON reads during binding.
+.WithMetadata(new Microsoft.AspNetCore.Mvc.RequestSizeLimitAttribute(
+    IssueBodyLimitBytes));
 
 app.Run();
 
