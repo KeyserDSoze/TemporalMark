@@ -565,6 +565,92 @@ def assert_search_body_budget_with_signed_chunked_jwt(token: str):
 
 
 
+def assert_issue_body_budget_with_real_signed_keycloak(token: str):
+    """#187 / ADR 0145: actual Kestrel direct HTTP pre-auth issuance body cap.
+
+    Request body is original UTF8 JSON, not merely Base64 field length:
+    4KiB original JSON whitespace is acceptable by the current API profile,
+    while the same digest and 4097 bytes must be refused. Chunked size is
+    unknown until Kestrel reads model-binding bytes, so Content-Length-only
+    checks cannot pass. All inputs are synthetic, disposable and fixed.
+    """
+    digest = base64.b64encode(DIGEST_A).decode("ascii")
+    minimum = json.dumps({"digestBase64": digest}, separators=(",", ":")).encode()
+    if len(minimum) >= 4096:
+        raise AssertionError("Invalid synthetic CI issuance body fixture")
+    exact = minimum + b" " * (4096 - len(minimum))
+    excessive = exact + b" "
+    if len(exact) != 4096 or len(excessive) != 4097:
+        raise AssertionError("Invalid CI issuance body byte count")
+
+    def posted(body: bytes, route="/api/v1/stamps/issue", bearer=token):
+        headers = {"Content-Type": "application/json"}
+        if bearer is not None:
+            headers["Authorization"] = "Bearer " + bearer
+        request = urllib.request.Request(API + route, data=body,
+                                         headers=headers, method="POST")
+        try:
+            with urllib.request.urlopen(request, timeout=25) as result:
+                return result.status, dict(result.headers), result.read(8192)
+        except urllib.error.HTTPError as error:
+            return error.code, dict(error.headers), error.read(8192)
+
+    def denied_without_leak(label, result):
+        status, headers, raw = result
+        if status != 413:
+            raise AssertionError(
+                f"{label}: expected 413 on 4097-byte issuance body, "
+                f"got HTTP {status} (all private content withheld)")
+        if "no-store" not in headers.get("Cache-Control", "").lower():
+            raise AssertionError(f"{label}: issuance 413 lacks no-store")
+        for secret in (digest.encode(), DIGEST_A.hex().encode(),
+                       STAMP_A.encode(), ORG_A.encode(),
+                       b"CI_ONLY_ISSUANCE_CANARY"):
+            if secret in raw:
+                raise AssertionError(f"{label}: issuance 413 reflected private input")
+
+    # The disabled external TSA produces 503 after a fully accepted 4096
+    # byte JSON request. It must NOT accidentally become 413 or issue 201.
+    status, headers, raw = posted(exact)
+    if status != 503 or "no-store" not in headers.get("Cache-Control", "").lower():
+        raise AssertionError(
+            f"Valid 4096-byte issued digest changed HTTP profile: {status} "
+            "(private response withheld)")
+    if DIGEST_A.hex().encode() in raw:
+        raise AssertionError("Under-budget issuance response reflected digest")
+    denied_without_leak("Content-Length issuance cap", posted(excessive))
+    denied_without_leak("Mixed-case exact path issuance cap",
+                        posted(excessive, route="/API/V1/STAMPS/ISSUE"))
+
+    # Pre-auth gate rejects a declared oversized request before JWT checks.
+    denied_without_leak("Pre-auth declared issuance cap",
+                        posted(excessive, bearer=None))
+    if posted(minimum, bearer=None)[0] != 401:
+        raise AssertionError("Under-budget unauthenticated issuance no longer 401")
+
+    # A real signed JWT + unknown-length chunked body exercises Kestrel's
+    # MaxRequestBodySize read boundary, not declared Content-Length.
+    conn = http.client.HTTPConnection("127.0.0.1", 8080, timeout=25)
+    try:
+        conn.putrequest("POST", "/api/v1/stamps/issue")
+        conn.putheader("Content-Type", "application/json")
+        conn.putheader("Transfer-Encoding", "chunked")
+        conn.putheader("Authorization", "Bearer " + token)
+        conn.endheaders()
+        conn.send(("%x\r\n" % len(excessive)).encode("ascii") +
+                  excessive + b"\r\n0\r\n\r\n")
+        response = conn.getresponse()
+        chunked = (response.status, dict(response.getheaders()),
+                   response.read(8192))
+    finally:
+        conn.close()
+    denied_without_leak("Signed chunked issuance cap", chunked)
+
+    print("PASS: real signed Keycloak issue JSON Kestrel 4096=>503, "
+          "4097 declared/mixed-case/chunked=>413/no-store; "
+          "unauthenticated 4096=>401; no private metadata in response")
+
+
 def assert_oversized_legacy_other_metadata_is_denied(a_token: str, b_token: str):
     """#176: original SHA-consistent DER, but provider_id has >16KiB UTF8 bytes.
 
@@ -913,6 +999,8 @@ def main():
     # Genuine signed JWT and unknown-length chunked JSON: Kestrel, not
     # Content-Length or the Nginx frontend, must enforce its body read cap.
     assert_search_body_budget_with_signed_chunked_jwt(a_token)
+    # #187 ADR 0145 genuine signed HTTP RED before any source change.
+    assert_issue_body_budget_with_real_signed_keycloak(a_token)
 
     must_status("B token before organization membership", api("/me", token=b_token), 403)
     must_status("A real DB admin before canary insert", api("/me", token=a_token), 200)
