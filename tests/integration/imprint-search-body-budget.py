@@ -110,6 +110,30 @@ def main():
         if "no-store" not in issue_headers.get("Cache-Control", "").lower():
             raise AssertionError("Issuance oversize 413 lacks no-store")
 
+    # #188 / ADR 0146: endpoint route aliases must have the SAME
+    # pre-auth declared body cap; no valid JWT is needed for this test.
+    for name, host in (("direct Kestrel", API), ("pinned Nginx", WEB)):
+        for alias in ("/api/v1/stamps/search/", "/API/V1/STAMPS/SEARCH/",
+                      "/api/v1/stamps/issue/", "/API/V1/STAMPS/ISSUE/"):
+            for fake_auth in (False, True):
+                label = f"{name} trailing slash {alias} bearer={fake_auth}"
+                assert_code(label + " 4096",
+                            probe(host, alias, "POST", at_limit,
+                                  fake_auth=fake_auth), 401)
+                alias_headers = assert_code(
+                    label + " 4097",
+                    probe(host, alias, "POST", over_limit,
+                          fake_auth=fake_auth), 413)
+                if "no-store" not in alias_headers.get("Cache-Control", "").lower():
+                    raise AssertionError("Route-equivalent 413 lacks no-store")
+
+    # No broad prefix policy: an additional segment is not either endpoint.
+    for unrelated in ("/api/v1/stamps/search/extra",
+                      "/api/v1/stamps/issue/extra"):
+        assert_code("unmatched POST remains 404",
+                    probe(API, unrelated, "POST", over_limit,
+                          fake_auth=False), 404)
+
     assert_code("Kestrel health", probe(API, "/healthz", fake_auth=False), 200)
     assert_code("Nginx health", probe(WEB, "/healthz", fake_auth=False), 200)
 
